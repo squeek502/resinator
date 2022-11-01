@@ -1,7 +1,7 @@
 resinator
 =========
 
-A (very work-in-progress) cross-platform Windows resource-definition script compiler (.rc to .res compiler). The intention is for this to eventually get merged into the Zig compiler as per [this accepted proposal](https://github.com/ziglang/zig/issues/3702).
+A (very work-in-progress) cross-platform Windows resource-definition script (.rc) to resource file (.res) compiler. The intention is for this to eventually get merged into the Zig compiler as per [this accepted proposal](https://github.com/ziglang/zig/issues/3702).
 
 ## Overview / How it will fit into Zig
 
