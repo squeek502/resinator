@@ -19,3 +19,13 @@ However, unlike `llvm-rc` and `windres`, `resinator` aims to get as close to 1:1
 
 - The `.res` output of `resinator` should match the `.res` output of the Windows `rc` tool in as many cases as possible (if not exactly, then functionally). However, `resinator` may not support all valid `.rc` files (i.e. `#pragma code_page` support might be limited to particular code pages).
 - `resinator` should fail to compile `.rc` files that the Windows `rc` tool fails to compile.
+
+## Status
+
+- Lexer
+  + Only supports a small subset of `.rc` files currently
+- Parsing
+  + Converts the token list into an AST. Only supports a small subset of `.rc` files currently
+- Compiling
+  + Converts the AST into the binary `.res` file. Only supports a (very) small subset of `.rc` files currently
+  + Will eventually need a parser for at least the `.ico` format (and possibly others). This isn't started yet
