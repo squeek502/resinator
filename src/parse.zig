@@ -88,7 +88,7 @@ pub const Parser = struct {
             try self.nextToken();
 
             switch (resource) {
-                .icon, .font, .cursor, .bitmap, .messagetable, .user_defined => {
+                .icon, .font, .cursor, .bitmap, .messagetable, .user_defined, .rcdata => {
                     var common_resource_attributes = std.ArrayList(Token).init(self.state.allocator);
                     defer common_resource_attributes.deinit();
 

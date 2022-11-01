@@ -3,6 +3,8 @@ const Allocator = std.mem.Allocator;
 const Node = @import("ast.zig").Node;
 const Lexer = @import("lex.zig").Lexer;
 const Parser = @import("parse.zig").Parser;
+const Resource = @import("rc.zig").Resource;
+const res = @import("res.zig");
 const WORD = std.os.windows.WORD;
 const DWORD = std.os.windows.DWORD;
 
@@ -48,6 +50,44 @@ pub const Compiler = struct {
         }
     }
 
+    pub const NameOrOrdinal = union(enum) {
+        name: [:0]const u16,
+        ordinal: u16,
+
+        pub fn deinit(self: NameOrOrdinal, allocator: Allocator) void {
+            switch (self) {
+                .name => |name| {
+                    allocator.free(name);
+                },
+                .ordinal => {},
+            }
+        }
+
+        /// Returns the full length of the amount of bytes that would be written by `write`
+        /// (e.g. for an ordinal it will return the length including the 0xFFFF indicator)
+        pub fn byteLen(self: NameOrOrdinal) u32 {
+            switch (self) {
+                .name => |name| {
+                    // + 1 for 0-terminated, * 2 for bytes per u16
+                    return @intCast(u32, (name.len + 1) * 2);
+                },
+                .ordinal => return 4,
+            }
+        }
+
+        pub fn write(self: NameOrOrdinal, writer: anytype) !void {
+            switch (self) {
+                .name => |name| {
+                    try writer.writeAll(std.mem.sliceAsBytes(name[0 .. name.len + 1]));
+                },
+                .ordinal => |ordinal| {
+                    try writer.writeIntLittle(WORD, 0xffff);
+                    try writer.writeIntLittle(WORD, ordinal);
+                },
+            }
+        }
+    };
+
     pub fn writeResourceExternal(self: *Compiler, node: *Node.ResourceExternal, writer: anytype) !void {
         const filename = node.filename.slice(self.source);
         // TODO: emit error on file not found
@@ -57,26 +97,34 @@ pub const Compiler = struct {
         const default_language = 0x409;
         const default_memory_flags = 0x30;
 
-        // TODO: Support for more than just user-defined (string) types
-        const type_as_utf16 = try std.unicode.utf8ToUtf16LeWithNull(self.allocator, node.type.slice(self.source));
-        const type_byte_len = (type_as_utf16.len + 1) * 2; // + 1 for 0-terminated, * 2 for bytes per u16
-        defer self.allocator.free(type_as_utf16);
+        const type_value = type: {
+            const resource_type = Resource.fromString(node.type.slice(self.source));
+            if (res.RT.fromResource(resource_type)) |rt_constant| {
+                break :type NameOrOrdinal{ .ordinal = @enumToInt(rt_constant) };
+            } else {
+                // TODO: Support for more than just user-defined (string) types
+                const type_as_utf16 = try std.unicode.utf8ToUtf16LeWithNull(self.allocator, node.type.slice(self.source));
+                break :type NameOrOrdinal{ .name = type_as_utf16 };
+            }
+        };
+        defer type_value.deinit(self.allocator);
 
-        // TODO: Support for more than just int IDs
-        const name_byte_len: u32 = 4;
-        const name_int_id = std.fmt.parseUnsigned(u16, node.id.slice(self.source), 0) catch {
-            @panic("TODO handle non-int names");
+        const name_value = name: {
+            const ordinal = std.fmt.parseUnsigned(u16, node.id.slice(self.source), 0) catch {
+                const name_as_utf16 = try std.unicode.utf8ToUtf16LeWithNull(self.allocator, node.type.slice(self.source));
+                break :name NameOrOrdinal{ .name = name_as_utf16 };
+            };
+            break :name NameOrOrdinal{ .ordinal = ordinal };
         };
 
-        const byte_length_up_to_name: u32 = 8 + name_byte_len + @intCast(u32, type_byte_len);
+        const byte_length_up_to_name: u32 = 8 + name_value.byteLen() + type_value.byteLen();
         const padding_after_name = std.mem.alignForward(byte_length_up_to_name, 4) - byte_length_up_to_name;
         const header_size: u32 = byte_length_up_to_name + @intCast(u32, padding_after_name) + 16;
 
         try writer.writeIntLittle(DWORD, @intCast(u32, contents.len)); // DataSize
         try writer.writeIntLittle(DWORD, header_size); // HeaderSize
-        try writer.writeAll(std.mem.sliceAsBytes(type_as_utf16[0 .. type_as_utf16.len + 1])); // TYPE
-        try writer.writeIntLittle(WORD, 0xffff);
-        try writer.writeIntLittle(WORD, name_int_id); // NAME
+        try type_value.write(writer); // TYPE
+        try name_value.write(writer); // NAME
         try writer.writeByteNTimes(0, padding_after_name);
 
         try writer.writeIntLittle(DWORD, 0); // DataVersion
@@ -171,6 +219,19 @@ test "empty rc" {
         "",
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
         std.fs.cwd(),
+    );
+}
+
+test "basic rcdata" {
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    try tmp_dir.dir.writeFile("file.bin", "hello world");
+
+    try testCompileWithOutput(
+        "1 RCDATA file.bin",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0b\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00hello world\x00",
+        tmp_dir.dir,
     );
 }
 
