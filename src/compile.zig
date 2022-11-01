@@ -86,6 +86,15 @@ pub const Compiler = struct {
                 },
             }
         }
+
+        pub fn fromString(allocator: Allocator, str: []const u8) !NameOrOrdinal {
+            // TODO: Needs to match the `rc` ordinal parsing
+            const ordinal = std.fmt.parseUnsigned(WORD, str, 0) catch {
+                const as_utf16 = try std.unicode.utf8ToUtf16LeWithNull(allocator, str);
+                return NameOrOrdinal{ .name = as_utf16 };
+            };
+            return NameOrOrdinal{ .ordinal = ordinal };
+        }
     };
 
     pub fn writeResourceExternal(self: *Compiler, node: *Node.ResourceExternal, writer: anytype) !void {
@@ -102,24 +111,12 @@ pub const Compiler = struct {
             if (res.RT.fromResource(resource_type)) |rt_constant| {
                 break :type NameOrOrdinal{ .ordinal = @enumToInt(rt_constant) };
             } else {
-                // TODO: Needs to match the `rc` ordinal parsing
-                const ordinal = std.fmt.parseUnsigned(u16, node.type.slice(self.source), 0) catch {
-                    const as_utf16 = try std.unicode.utf8ToUtf16LeWithNull(self.allocator, node.type.slice(self.source));
-                    break :type NameOrOrdinal{ .name = as_utf16 };
-                };
-                break :type NameOrOrdinal{ .ordinal = ordinal };
+                break :type try NameOrOrdinal.fromString(self.allocator, node.type.slice(self.source));
             }
         };
         defer type_value.deinit(self.allocator);
 
-        const name_value = name: {
-            // TODO: Needs to match the `rc` ordinal parsing
-            const ordinal = std.fmt.parseUnsigned(u16, node.id.slice(self.source), 0) catch {
-                const as_utf16 = try std.unicode.utf8ToUtf16LeWithNull(self.allocator, node.id.slice(self.source));
-                break :name NameOrOrdinal{ .name = as_utf16 };
-            };
-            break :name NameOrOrdinal{ .ordinal = ordinal };
-        };
+        const name_value = try NameOrOrdinal.fromString(self.allocator, node.id.slice(self.source));
         defer name_value.deinit(self.allocator);
 
         const byte_length_up_to_name: u32 = 8 + name_value.byteLen() + type_value.byteLen();
