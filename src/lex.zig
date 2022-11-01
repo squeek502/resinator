@@ -5,7 +5,7 @@
 //! - All comments have been removed.
 
 const std = @import("std");
-const Resource = @import("types.zig").Resource;
+const Resource = @import("rc.zig").Resource;
 const isValidNumberDataLiteral = @import("literals.zig").isValidNumberDataLiteral;
 
 const dumpTokensDuringTests = true;

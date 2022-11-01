@@ -3,7 +3,7 @@ const Lexer = @import("lex.zig").Lexer;
 const Token = @import("lex.zig").Token;
 const Node = @import("ast.zig").Node;
 const Tree = @import("ast.zig").Tree;
-const Resource = @import("types.zig").Resource;
+const Resource = @import("rc.zig").Resource;
 const Allocator = std.mem.Allocator;
 
 pub const ParseError = error{
