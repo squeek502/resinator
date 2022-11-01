@@ -6,7 +6,7 @@ const Parser = @import("parse.zig").Parser;
 const WORD = std.os.windows.WORD;
 const DWORD = std.os.windows.DWORD;
 
-pub fn compile(allocator: Allocator, source: []const u8, writer: anytype) !void {
+pub fn compile(allocator: Allocator, source: []const u8, writer: anytype, cwd: std.fs.Dir) !void {
     var lexer = Lexer.init(source);
     var parser = Parser.init(&lexer);
     var tree = try parser.parse(allocator);
@@ -20,6 +20,7 @@ pub fn compile(allocator: Allocator, source: []const u8, writer: anytype) !void 
         .source = source,
         .arena = arena,
         .allocator = allocator,
+        .cwd = cwd,
     };
 
     try compiler.writeRoot(tree.root(), writer);
@@ -29,6 +30,7 @@ pub const Compiler = struct {
     source: []const u8,
     arena: Allocator,
     allocator: Allocator,
+    cwd: std.fs.Dir,
 
     pub const State = struct {};
 
@@ -49,7 +51,7 @@ pub const Compiler = struct {
     pub fn writeResourceExternal(self: *Compiler, node: *Node.ResourceExternal, writer: anytype) !void {
         const filename = node.filename.slice(self.source);
         // TODO: emit error on file not found
-        const contents: []const u8 = std.fs.cwd().readFileAlloc(self.allocator, filename, std.math.maxInt(u32)) catch "";
+        const contents: []const u8 = self.cwd.readFileAlloc(self.allocator, filename, std.math.maxInt(u32)) catch "";
         defer self.allocator.free(contents);
 
         const default_language = 0x409;
@@ -104,11 +106,11 @@ pub const Compiler = struct {
     }
 };
 
-fn testCompile(source: []const u8) !void {
+fn testCompile(source: []const u8, cwd: std.fs.Dir) !void {
     var buffer = std.ArrayList(u8).init(std.testing.allocator);
     defer buffer.deinit();
 
-    try compile(std.testing.allocator, source, buffer.writer());
+    try compile(std.testing.allocator, source, buffer.writer(), cwd);
 
     const expected_res = try getExpectedFromWindres(std.testing.allocator, source);
     defer std.testing.allocator.free(expected_res);
@@ -116,11 +118,11 @@ fn testCompile(source: []const u8) !void {
     try std.testing.expectEqualSlices(u8, expected_res, buffer.items);
 }
 
-fn testCompileWithOutput(source: []const u8, expected_output: []const u8) !void {
+fn testCompileWithOutput(source: []const u8, expected_output: []const u8, cwd: std.fs.Dir) !void {
     var buffer = std.ArrayList(u8).init(std.testing.allocator);
     defer buffer.deinit();
 
-    try compile(std.testing.allocator, source, buffer.writer());
+    try compile(std.testing.allocator, source, buffer.writer(), cwd);
 
     std.testing.expectEqualSlices(u8, expected_output, buffer.items) catch |e| {
         std.debug.print("got:\n{}\n", .{std.zig.fmtEscapes(buffer.items)});
@@ -168,12 +170,19 @@ test "empty rc" {
     try testCompileWithOutput(
         "",
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+        std.fs.cwd(),
     );
 }
 
 test "basic but with tricky type" {
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    try tmp_dir.dir.writeFile("file.bin", "hello world");
+
     try testCompileWithOutput(
         "1 \"RCDATA\" file.bin",
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0b\x00\x00\x000\x00\x00\x00\"\x00R\x00C\x00D\x00A\x00T\x00A\x00\"\x00\x00\x00\xff\xff\x01\x00\x00\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00hello world\x00",
+        tmp_dir.dir,
     );
 }
