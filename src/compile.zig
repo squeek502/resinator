@@ -58,8 +58,8 @@ pub const Compiler = struct {
         const default_memory_flags = 0x30;
 
         // TODO: Support for more than just user-defined (string) types
-        const type_byte_len = (node.type.slice(self.source).len + 1) * 2; // + 1 for 0-terminated, * 2 for UTF-16
         const type_as_utf16 = try std.unicode.utf8ToUtf16LeWithNull(self.allocator, node.type.slice(self.source));
+        const type_byte_len = (type_as_utf16.len + 1) * 2; // + 1 for 0-terminated, * 2 for bytes per u16
         defer self.allocator.free(type_as_utf16);
 
         // TODO: Support for more than just int IDs
