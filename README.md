@@ -20,6 +20,8 @@ However, unlike `llvm-rc` and `windres`, `resinator` aims to get as close to 1:1
 - The `.res` output of `resinator` should match the `.res` output of the Windows `rc` tool in as many cases as possible (if not exactly, then functionally). However, `resinator` may not support all valid `.rc` files (i.e. `#pragma code_page` support might be limited to particular code pages).
 - `resinator` should fail to compile `.rc` files that the Windows `rc` tool fails to compile.
 
+The plan is to use fuzz testing with the `rc` tool as an oracle to ensure that `resinator` generates the same output for every input.
+
 ## Status
 
 - Lexer
