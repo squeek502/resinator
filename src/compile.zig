@@ -102,20 +102,25 @@ pub const Compiler = struct {
             if (res.RT.fromResource(resource_type)) |rt_constant| {
                 break :type NameOrOrdinal{ .ordinal = @enumToInt(rt_constant) };
             } else {
-                // TODO: Support for more than just user-defined (string) types
-                const type_as_utf16 = try std.unicode.utf8ToUtf16LeWithNull(self.allocator, node.type.slice(self.source));
-                break :type NameOrOrdinal{ .name = type_as_utf16 };
+                // TODO: Needs to match the `rc` ordinal parsing
+                const ordinal = std.fmt.parseUnsigned(u16, node.type.slice(self.source), 0) catch {
+                    const as_utf16 = try std.unicode.utf8ToUtf16LeWithNull(self.allocator, node.type.slice(self.source));
+                    break :type NameOrOrdinal{ .name = as_utf16 };
+                };
+                break :type NameOrOrdinal{ .ordinal = ordinal };
             }
         };
         defer type_value.deinit(self.allocator);
 
         const name_value = name: {
+            // TODO: Needs to match the `rc` ordinal parsing
             const ordinal = std.fmt.parseUnsigned(u16, node.id.slice(self.source), 0) catch {
-                const name_as_utf16 = try std.unicode.utf8ToUtf16LeWithNull(self.allocator, node.type.slice(self.source));
-                break :name NameOrOrdinal{ .name = name_as_utf16 };
+                const as_utf16 = try std.unicode.utf8ToUtf16LeWithNull(self.allocator, node.id.slice(self.source));
+                break :name NameOrOrdinal{ .name = as_utf16 };
             };
             break :name NameOrOrdinal{ .ordinal = ordinal };
         };
+        defer name_value.deinit(self.allocator);
 
         const byte_length_up_to_name: u32 = 8 + name_value.byteLen() + type_value.byteLen();
         const padding_after_name = std.mem.alignForward(byte_length_up_to_name, 4) - byte_length_up_to_name;
