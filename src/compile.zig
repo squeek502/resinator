@@ -108,8 +108,12 @@ pub const Compiler = struct {
 
         const type_value = type: {
             const resource_type = Resource.fromString(node.type.slice(self.source));
-            if (res.RT.fromResource(resource_type)) |rt_constant| {
-                break :type NameOrOrdinal{ .ordinal = @enumToInt(rt_constant) };
+            if (resource_type != .user_defined) {
+                if (res.RT.fromResource(resource_type)) |rt_constant| {
+                    break :type NameOrOrdinal{ .ordinal = @enumToInt(rt_constant) };
+                } else {
+                    @panic("TODO: unhandled resource -> RT constant conversion");
+                }
             } else {
                 break :type try NameOrOrdinal.fromString(self.allocator, node.type.slice(self.source));
             }
