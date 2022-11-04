@@ -98,7 +98,44 @@ pub const Parser = struct {
                         try self.nextToken();
                     }
 
-                    try self.checkString();
+                    if (try self.testBegin()) {
+                        var raw_data = std.ArrayList(Token).init(self.state.allocator);
+                        defer raw_data.deinit();
+                        while (true) {
+                            switch (self.state.token.id) {
+                                .literal => {
+                                    if (std.mem.eql(u8, "END", self.tokenSlice())) {
+                                        break;
+                                    }
+                                    try raw_data.append(self.state.token);
+                                },
+                                .comma => {},
+                                .quoted_ascii_string, .quoted_wide_string => {
+                                    try raw_data.append(self.state.token);
+                                },
+                                .close_brace => {
+                                    try self.nextToken();
+                                    break;
+                                },
+                                .eof => break, // TODO: emit an error probably
+                                else => {
+                                    std.debug.print("unhandled token: {any}\n", .{self.state.token});
+                                    @panic("TODO: Unhandled token type in raw data block");
+                                },
+                            }
+                            try self.nextToken();
+                        }
+
+                        const node = try self.state.arena.create(Node.ResourceRawData);
+                        node.* = .{
+                            .id = id_token,
+                            .type = type_token,
+                            .common_resource_attributes = try self.state.arena.dupe(Token, common_resource_attributes.items),
+                            .raw_data = try self.state.arena.dupe(Token, raw_data.items),
+                        };
+                        return &node.base;
+                    }
+
                     const filename_token = self.state.token;
                     try self.nextToken();
 
@@ -120,25 +157,45 @@ pub const Parser = struct {
         self.state.token = try self.lexer.next();
     }
 
+    fn tokenSlice(self: *Self) []const u8 {
+        return self.state.token.slice(self.lexer.buffer);
+    }
+
     /// Check that the current token is something that can be used as an ID
     fn checkId(self: *Self) !void {
         switch (self.state.token.id) {
             .literal => {},
-            .quoted_ascii_string, .quoted_wide_string => {},
             else => {
+                std.debug.print("expected literal, got {}\n", .{self.state.token.id});
                 return ParseError.ExpectedDifferentToken;
             },
         }
     }
 
-    // TODO: This is the same as checkId, there should be a difference
-    fn checkString(self: *Self) !void {
+    fn testQuotedString(self: *Self) !bool {
         switch (self.state.token.id) {
-            .literal => {},
-            .quoted_ascii_string, .quoted_wide_string => {},
-            else => {
-                return ParseError.ExpectedDifferentToken;
+            .quoted_ascii_string, .quoted_wide_string => {
+                try self.nextToken();
+                return true;
             },
+            else => return false,
+        }
+    }
+
+    fn testBegin(self: *Self) !bool {
+        switch (self.state.token.id) {
+            .open_brace => {
+                try self.nextToken();
+                return true;
+            },
+            .literal => {
+                if (std.mem.eql(u8, "BEGIN", self.state.token.slice(self.lexer.buffer))) {
+                    try self.nextToken();
+                    return true;
+                }
+                return false;
+            },
+            else => return false,
         }
     }
 
@@ -152,8 +209,6 @@ pub const Parser = struct {
         std.debug.print("{any}\n", .{self.state.token});
         switch (self.state.token.id) {
             .literal => return Resource.fromString(self.state.token.slice(self.lexer.buffer)),
-            // TODO: Should quoted strings be matched with predefined resource types (i.e. "ICON" == ICON)?
-            .quoted_ascii_string, .quoted_wide_string => return .user_defined,
             else => {
                 return ParseError.ExpectedDifferentToken;
             },
@@ -229,6 +284,46 @@ test "user-defined" {
     try testParse("id \"quoted\" file.bin",
         \\root
         \\ resource_external id "quoted" [0 common_resource_attributes] file.bin
+        \\
+    );
+}
+
+test "raw data" {
+    try testParse("id RCDATA {}",
+        \\root
+        \\ resource_raw_data id RCDATA [0 common_resource_attributes] raw data: 0
+        \\
+    );
+    try testParse("id RCDATA { 1,2,3 }",
+        \\root
+        \\ resource_raw_data id RCDATA [0 common_resource_attributes] raw data: 3
+        \\  1
+        \\  2
+        \\  3
+        \\
+    );
+    try testParse("id RCDATA { L\"1\",\"2\",3 }",
+        \\root
+        \\ resource_raw_data id RCDATA [0 common_resource_attributes] raw data: 3
+        \\  L"1"
+        \\  "2"
+        \\  3
+        \\
+    );
+    try testParse("id RCDATA { 1\t,,  ,,,2,,  ,  3 ,,,  , }",
+        \\root
+        \\ resource_raw_data id RCDATA [0 common_resource_attributes] raw data: 3
+        \\  1
+        \\  2
+        \\  3
+        \\
+    );
+    try testParse("id RCDATA { 1 2 3 }",
+        \\root
+        \\ resource_raw_data id RCDATA [0 common_resource_attributes] raw data: 3
+        \\  1
+        \\  2
+        \\  3
         \\
     );
 }

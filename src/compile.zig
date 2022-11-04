@@ -4,6 +4,8 @@ const Node = @import("ast.zig").Node;
 const Lexer = @import("lex.zig").Lexer;
 const Parser = @import("parse.zig").Parser;
 const Resource = @import("rc.zig").Resource;
+const parseQuotedAsciiString = @import("literals.zig").parseQuotedAsciiString;
+const parseQuotedWideStringAlloc = @import("literals.zig").parseQuotedWideStringAlloc;
 const res = @import("res.zig");
 const WORD = std.os.windows.WORD;
 const DWORD = std.os.windows.DWORD;
@@ -47,6 +49,7 @@ pub const Compiler = struct {
         switch (node.id) {
             .root => unreachable, // writeRoot should be called directly instead
             .resource_external => try self.writeResourceExternal(@fieldParentPtr(Node.ResourceExternal, "base", node), writer),
+            .resource_raw_data => try self.writeResourceRawData(@fieldParentPtr(Node.ResourceRawData, "base", node), writer),
         }
     }
 
@@ -88,11 +91,20 @@ pub const Compiler = struct {
         }
 
         pub fn fromString(allocator: Allocator, str: []const u8) !NameOrOrdinal {
+            if (maybeOrdinalFromString(str)) |ordinal| {
+                return ordinal;
+            }
+            return nameFromString(allocator, str);
+        }
+
+        pub fn nameFromString(allocator: Allocator, str: []const u8) !NameOrOrdinal {
+            const as_utf16 = try std.unicode.utf8ToUtf16LeWithNull(allocator, str);
+            return NameOrOrdinal{ .name = as_utf16 };
+        }
+
+        pub fn maybeOrdinalFromString(str: []const u8) ?NameOrOrdinal {
             // TODO: Needs to match the `rc` ordinal parsing
-            const ordinal = std.fmt.parseUnsigned(WORD, str, 0) catch {
-                const as_utf16 = try std.unicode.utf8ToUtf16LeWithNull(allocator, str);
-                return NameOrOrdinal{ .name = as_utf16 };
-            };
+            const ordinal = std.fmt.parseUnsigned(WORD, str, 0) catch return null;
             return NameOrOrdinal{ .ordinal = ordinal };
         }
     };
@@ -120,6 +132,10 @@ pub const Compiler = struct {
         };
         defer type_value.deinit(self.allocator);
 
+        // TODO: The type can change how the resource is written to the file
+        //       (i.e. if it's an ICON then the contents should be parsed as a .ico, among
+        //       other things)
+
         const name_value = try NameOrOrdinal.fromString(self.allocator, node.id.slice(self.source));
         defer name_value.deinit(self.allocator);
 
@@ -142,6 +158,79 @@ pub const Compiler = struct {
         try writer.writeAll(contents);
 
         const padding_after_data = std.mem.alignForward(contents.len, 4) - contents.len;
+        try writer.writeByteNTimes(0, padding_after_data);
+    }
+
+    pub fn writeResourceRawData(self: *Compiler, node: *Node.ResourceRawData, writer: anytype) !void {
+        var data_buffer = std.ArrayList(u8).init(self.allocator);
+        defer data_buffer.deinit();
+
+        for (node.raw_data) |token| {
+            switch (token.id) {
+                // Any literal here must be a number
+                .literal => {
+                    // TODO: On overflow, the number should wrap; unsure how big can the literal itself can be before things start breaking more though
+                    const number = std.fmt.parseUnsigned(WORD, token.slice(self.source), 0) catch unreachable;
+                    var data_writer = data_buffer.writer();
+                    try data_writer.writeIntLittle(WORD, number);
+                },
+                .quoted_ascii_string => {
+                    const slice = token.slice(self.source);
+                    try data_buffer.appendSlice(parseQuotedAsciiString(slice));
+                },
+                .quoted_wide_string => {
+                    const slice = token.slice(self.source);
+                    const parsed_string = try parseQuotedWideStringAlloc(self.allocator, slice);
+                    defer self.allocator.free(parsed_string);
+                    try data_buffer.appendSlice(std.mem.sliceAsBytes(parsed_string));
+                },
+                else => unreachable,
+            }
+        }
+
+        const default_language = 0x409;
+        const default_memory_flags = 0x30;
+
+        const type_value = type: {
+            const resource_type = Resource.fromString(node.type.slice(self.source));
+            if (resource_type != .user_defined) {
+                if (res.RT.fromResource(resource_type)) |rt_constant| {
+                    break :type NameOrOrdinal{ .ordinal = @enumToInt(rt_constant) };
+                } else {
+                    @panic("TODO: unhandled resource -> RT constant conversion");
+                }
+            } else {
+                break :type try NameOrOrdinal.fromString(self.allocator, node.type.slice(self.source));
+            }
+        };
+        defer type_value.deinit(self.allocator);
+
+        // TODO: The type can change how the resource is written to the file
+        //       (i.e. if it's an ICON then the contents should be parsed as a .ico, among
+        //       other things)
+
+        const name_value = try NameOrOrdinal.fromString(self.allocator, node.id.slice(self.source));
+        defer name_value.deinit(self.allocator);
+
+        const byte_length_up_to_name: u32 = 8 + name_value.byteLen() + type_value.byteLen();
+        const padding_after_name = std.mem.alignForward(byte_length_up_to_name, 4) - byte_length_up_to_name;
+        const header_size: u32 = byte_length_up_to_name + @intCast(u32, padding_after_name) + 16;
+
+        try writer.writeIntLittle(DWORD, @intCast(u32, data_buffer.items.len)); // DataSize
+        try writer.writeIntLittle(DWORD, header_size); // HeaderSize
+        try type_value.write(writer); // TYPE
+        try name_value.write(writer); // NAME
+        try writer.writeByteNTimes(0, padding_after_name);
+
+        try writer.writeIntLittle(DWORD, 0); // DataVersion
+        try writer.writeIntLittle(WORD, default_memory_flags); // MemoryFlags
+        try writer.writeIntLittle(WORD, default_language); // LanguageId
+        try writer.writeIntLittle(DWORD, 0); // Version
+        try writer.writeIntLittle(DWORD, 0); // Characteristics
+
+        try writer.writeAll(data_buffer.items);
+
+        const padding_after_data = std.mem.alignForward(data_buffer.items.len, 4) - data_buffer.items.len;
         try writer.writeByteNTimes(0, padding_after_data);
     }
 
@@ -238,6 +327,22 @@ test "basic rcdata" {
         "1 RCDATA file.bin",
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0b\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00hello world\x00",
         tmp_dir.dir,
+    );
+}
+
+test "basic rcdata with empty raw data" {
+    try testCompileWithOutput(
+        "1 RCDATA {}",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00",
+        std.fs.cwd(),
+    );
+}
+
+test "basic rcdata with raw data" {
+    try testCompileWithOutput(
+        "1 RCDATA { 1, \"2\", L\"3\" }",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x05\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x01\x0023\x00\x00\x00\x00",
+        std.fs.cwd(),
     );
 }
 

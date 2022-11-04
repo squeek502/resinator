@@ -30,11 +30,13 @@ pub const Node = struct {
     pub const Id = enum {
         root,
         resource_external,
+        resource_raw_data,
 
         pub fn Type(id: Id) type {
             return switch (id) {
                 .root => Root,
                 .resource_external => ResourceExternal,
+                .resource_raw_data => ResourceRawData,
             };
         }
     };
@@ -59,6 +61,14 @@ pub const Node = struct {
         filename: Token,
     };
 
+    pub const ResourceRawData = struct {
+        base: Node = .{ .id = .resource_raw_data },
+        id: Token,
+        type: Token,
+        common_resource_attributes: []Token,
+        raw_data: []Token,
+    };
+
     pub fn dump(
         node: *const Node,
         tree: *const Tree,
@@ -78,6 +88,14 @@ pub const Node = struct {
             .resource_external => {
                 const resource = @fieldParentPtr(Node.ResourceExternal, "base", node);
                 try writer.print(" {s} {s} [{d} common_resource_attributes] {s}\n", .{ resource.id.slice(tree.source), resource.type.slice(tree.source), resource.common_resource_attributes.len, resource.filename.slice(tree.source) });
+            },
+            .resource_raw_data => {
+                const resource = @fieldParentPtr(Node.ResourceRawData, "base", node);
+                try writer.print(" {s} {s} [{d} common_resource_attributes] raw data: {}\n", .{ resource.id.slice(tree.source), resource.type.slice(tree.source), resource.common_resource_attributes.len, resource.raw_data.len });
+                for (resource.raw_data) |data_token| {
+                    try writer.writeByteNTimes(' ', indent + 1);
+                    try writer.print("{s}\n", .{data_token.slice(tree.source)});
+                }
             },
         }
     }

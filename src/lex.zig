@@ -335,7 +335,9 @@ pub const Lexer = struct {
                             // TODO: `rc` has two separate errors depending on whether or not the
                             //       literal is a keyword or not.
                             // error RC2104 : undefined keyword or key name: foo
+                            // ^ this stops parsing completely
                             // error RC2164 : unexpected value in RCDATA
+                            // ^ this is emitted and parsing continues
                             self.state_modifier = .none;
                         }
                         // TODO: Check for END
