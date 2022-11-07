@@ -20,9 +20,13 @@ pub const Token = struct {
         literal,
         quoted_ascii_string,
         quoted_wide_string,
+        operator,
         open_brace,
         close_brace,
         comma,
+        open_paren,
+        close_paren,
+        invalid,
         eof,
     };
 
@@ -147,6 +151,8 @@ pub const Lexer = struct {
         quoted_ascii_string,
         quoted_wide_string,
         literal,
+        minus,
+        number_literal,
         preprocessor,
     };
 
@@ -174,12 +180,26 @@ pub const Lexer = struct {
                     ' ', '\t', '\x0b', '\x0c' => {
                         result.start = self.index + 1;
                     },
-                    'L' => {
+                    'L', 'l' => {
                         state = .literal_or_quoted_wide_string;
                         self.at_start_of_line = false;
                     },
                     '"' => {
                         state = .quoted_ascii_string;
+                        self.at_start_of_line = false;
+                    },
+                    '+', '&', '|', '~' => {
+                        self.index += 1;
+                        result.id = .operator;
+                        self.at_start_of_line = false;
+                        break;
+                    },
+                    '-' => {
+                        state = .minus;
+                        self.at_start_of_line = false;
+                    },
+                    '0'...'9' => {
+                        state = .number_literal;
                         self.at_start_of_line = false;
                     },
                     '#' => {
@@ -218,6 +238,25 @@ pub const Lexer = struct {
                         result.start = self.index + 1;
                         state = .start;
                         result.line_number = self.incrementLineNumber(&last_line_ending_index);
+                    },
+                    else => {},
+                },
+                .minus => switch (c) {
+                    ' ', '\t', '\x0b', '\x0c', '\r', '\n', '"', ',', '{', '}', '+', '-', '|', '&', '~', '(', ')' => {
+                        result.id = .operator;
+                        break;
+                    },
+                    '0'...'9' => {
+                        state = .number_literal;
+                    },
+                    else => {
+                        state = .literal;
+                    },
+                },
+                .number_literal => switch (c) {
+                    ' ', '\t', '\x0b', '\x0c', '\r', '\n', '"', ',', '{', '}', '+', '-', '|', '&', '~', '(', ')' => {
+                        result.id = .literal;
+                        break;
                     },
                     else => {},
                 },
@@ -263,6 +302,12 @@ pub const Lexer = struct {
                 .preprocessor => {
                     result.start = self.index;
                 },
+                .number_literal => {
+                    result.id = .literal; // TODO: Separate number literal token?
+                },
+                .minus => {
+                    result.id = .operator; // TODO: This seems too context dependent, might need a separate token id
+                },
                 .quoted_ascii_string,
                 .quoted_wide_string,
                 => return LexError.UnfinishedStringLiteral,
@@ -273,91 +318,102 @@ pub const Lexer = struct {
         return result;
     }
 
-    pub fn next(self: *Self) LexError!Token {
-        switch (self.state_modifier) {
-            .none => {
-                const token = try self.nextWhitespaceDelimeterOnly();
-                if (token.id == .literal) {
-                    if (std.mem.eql(u8, "LANGUAGE", token.slice(self.buffer))) {
-                        self.state_modifier = .language;
-                    } else {
-                        self.state_modifier = .seen_id;
-                    }
-                }
-                return token;
-            },
-            .language => {
-                @panic("TODO: top-level LANGUAGE statements");
-            },
-            .seen_id => {
-                const token = try self.nextWhitespaceDelimeterOnly();
-                if (token.id == .literal) {
-                    self.state_modifier = .seen_type;
-                }
-                return token;
-            },
-            .seen_type => {
-                const token = try self.nextNormal();
-                switch (token.id) {
-                    .quoted_ascii_string, .quoted_wide_string => {
-                        // definite filename
-                        self.state_modifier = .none;
+    const StateNumberExpression = enum {
+        start,
+        invalid,
+        minus,
+        number_literal,
+    };
+
+    pub fn nextNumberExpression(self: *Lexer) LexError!Token {
+        const start_index = self.index;
+        var result = Token{
+            .id = .eof,
+            .start = start_index,
+            .end = undefined,
+            .line_number = self.line_number,
+        };
+        var state = StateNumberExpression.start;
+
+        var last_line_ending_index: ?usize = null;
+        while (self.index < self.buffer.len) : (self.index += 1) {
+            const c = self.buffer[self.index];
+            switch (state) {
+                .start => switch (c) {
+                    '\r', '\n' => {
+                        result.start = self.index + 1;
+                        result.line_number = self.incrementLineNumber(&last_line_ending_index);
                     },
-                    .literal => {
-                        // if it's not a common resource attribute, it will be treated as a filename
-                        if (!common_resource_attributes_set.has(token.slice(self.buffer))) {
-                            self.state_modifier = .none;
-                        }
-                        // TODO: check for BEGIN/END
+                    // space, tab, vertical tab, form feed
+                    ' ', '\t', '\x0b', '\x0c' => {
+                        result.start = self.index + 1;
                     },
-                    .open_brace => {
-                        self.state_modifier = .scope_data;
+                    '+', '&', '|', '~' => {
+                        self.index += 1;
+                        result.id = .operator;
+                        self.at_start_of_line = false;
+                        break;
                     },
-                    .comma, .close_brace => {
-                        // TODO: This seemingly forces the previous token to be reintrepreted
-                        //       as a filename, even if that token is already something else
-                        // e.g. foo RCDATA } causes RCDATA to be both the type and the filename
-                        self.state_modifier = .none;
+                    '-' => {
+                        state = .minus;
+                        self.at_start_of_line = false;
                     },
-                    .eof => {},
-                }
-                if (self.state_modifier == .none) {
-                    std.debug.print("filename: ", .{});
-                }
-                return token;
-            },
-            .scope_data => {
-                const token = try self.nextNormal();
-                switch (token.id) {
-                    .quoted_ascii_string, .quoted_wide_string => {},
-                    .literal => {
-                        if (!isValidNumberDataLiteral(token.slice(self.buffer))) {
-                            // TODO: `rc` has two separate errors depending on whether or not the
-                            //       literal is a keyword or not.
-                            // error RC2104 : undefined keyword or key name: foo
-                            // ^ this stops parsing completely
-                            // error RC2164 : unexpected value in RCDATA
-                            // ^ this is emitted and parsing continues
-                            self.state_modifier = .none;
-                        }
-                        // TODO: Check for END
+                    '0'...'9' => {
+                        state = .number_literal;
+                        self.at_start_of_line = false;
                     },
-                    .comma => {
-                        // TODO: Only allow if there's a valid data type preceding it, otherwise
-                        //       "emit Unexpected value in <TYPE>" error
+                    '(', ')' => {
+                        self.index += 1;
+                        result.id = if (c == '(') .open_paren else .close_paren;
+                        self.at_start_of_line = false;
+                        break;
                     },
-                    .open_brace => {
-                        // TODO: "Unexpected value in <TYPE>" error
-                        self.state_modifier = .none;
+                    else => {
+                        state = .invalid;
+                        self.at_start_of_line = false;
                     },
-                    .close_brace => {
-                        self.state_modifier = .none;
+                },
+                .minus => switch (c) {
+                    '0'...'9' => {
+                        state = .number_literal;
                     },
-                    .eof => {},
-                }
-                return token;
-            },
+                    else => {
+                        result.id = .operator;
+                        break;
+                    },
+                },
+                .number_literal => switch (c) {
+                    ' ', '\t', '\x0b', '\x0c', '\r', '\n', '"', ',', '{', '}', '+', '-', '|', '&', '~', '(', ')' => {
+                        result.id = .literal;
+                        break;
+                    },
+                    else => {},
+                },
+                .invalid => switch (c) {
+                    ' ', '\t', '\x0b', '\x0c', '\r', '\n', '"', ',', '{', '}', '+', '-', '|', '&', '~', '(', ')' => {
+                        result.id = .invalid;
+                        break;
+                    },
+                    else => {},
+                },
+            }
+        } else { // got EOF
+            switch (state) {
+                .start => {},
+                .invalid => {
+                    result.id = .invalid;
+                },
+                .number_literal => {
+                    result.id = .literal; // TODO: Separate number literal token?
+                },
+                .minus => {
+                    result.id = .operator; // TODO: This seems too context dependent, might need a separate token id
+                },
+            }
         }
+
+        result.end = self.index;
+        return result;
     }
 
     /// Like incrementLineNumber but checks that the current char is a line ending first
@@ -417,22 +473,27 @@ const common_resource_attributes_set = std.ComptimeStringMap(void, .{
     .{"NONSHARED"},
 });
 
-fn testLex(source: []const u8, expected_tokens: []const Token.Id) !void {
-    // remove comments
-    const source_without_comments = try @import("comments.zig").removeCommentsAlloc(std.testing.allocator, source);
-    defer std.testing.allocator.free(source_without_comments);
-    var lexer = Lexer.init(source_without_comments);
-    return testLexInitialized(&lexer, expected_tokens);
-}
-
-fn testLexInitialized(lexer: *Lexer, expected_tokens: []const Token.Id) !void {
+fn testLexNormal(source: []const u8, expected_tokens: []const Token.Id) !void {
+    var lexer = Lexer.init(source);
     if (dumpTokensDuringTests) std.debug.print("\n----------------------\n{s}\n----------------------\n", .{lexer.buffer});
     for (expected_tokens) |expected_token_id| {
-        const token = try lexer.next();
+        const token = try lexer.nextNormal();
         if (dumpTokensDuringTests) lexer.dump(&token);
         try std.testing.expectEqual(expected_token_id, token.id);
     }
-    const last_token = try lexer.next();
+    const last_token = try lexer.nextNormal();
+    try std.testing.expectEqual(Token.Id.eof, last_token.id);
+}
+
+fn testLexNumberExpression(source: []const u8, expected_tokens: []const Token.Id) !void {
+    var lexer = Lexer.init(source);
+    if (dumpTokensDuringTests) std.debug.print("\n----------------------\n{s}\n----------------------\n", .{lexer.buffer});
+    for (expected_tokens) |expected_token_id| {
+        const token = try lexer.nextNumberExpression();
+        if (dumpTokensDuringTests) lexer.dump(&token);
+        try std.testing.expectEqual(expected_token_id, token.id);
+    }
+    const last_token = try lexer.nextNumberExpression();
     try std.testing.expectEqual(Token.Id.eof, last_token.id);
 }
 
@@ -441,144 +502,19 @@ fn expectLexError(expected: LexError, actual: anytype) !void {
     if (dumpTokensDuringTests) std.debug.print("{!}\n", .{actual});
 }
 
-test "basic" {
-    try testLex("id ICON \"string\"", &[_]Token.Id{ .literal, .literal, .quoted_ascii_string });
-    try testLex("id ICON MOVEABLE filename.ico", &[_]Token.Id{ .literal, .literal, .literal, .literal });
+test "normal: numbers and literals" {
+    try testLexNormal("1", &.{.literal});
+    try testLexNormal("-1", &.{.literal});
+    try testLexNormal("- 1", &.{ .operator, .literal });
+    try testLexNormal("-a", &.{.literal});
 }
 
-// TODO: re-enable this maybe
-// test "double quote terminates literals" {
-//     try testLex("id\"string\"", &[_]Token.Id{ .literal, .quoted_ascii_string });
-// }
-
-test "comments" {
-    // NOTE: Comments are meant to be removed before lexing; the testLex function
-    //       does this for us.
-    try testLex(
-        \\id // comment
-        \\/*
-        \\ multiline
-        \\*/
-        \\ICON
-    ,
-        &[_]Token.Id{
-            .literal,
-            .literal,
-        },
-    );
-    try testLex(
-        \\IC/*test*/ON
-    ,
-        &[_]Token.Id{
-            .literal,
-        },
-    );
-    try testLex(
-        \\L/*test*/
-    ,
-        &[_]Token.Id{
-            .literal,
-        },
-    );
-}
-
-test "quoted strings" {
-    try testLex(
-        \\foo RCDATA "/*test*/"
-    ,
-        &[_]Token.Id{ .literal, .literal, .quoted_ascii_string },
-    );
-}
-
-test "braces" {
-    try testLex("foo RCDATA {}", &[_]Token.Id{ .literal, .literal, .open_brace, .close_brace });
-}
-
-test "preprocessor" {
-    try testLex("#define blah 1", &[_]Token.Id{});
-    try testLex("something #define blah", &[_]Token.Id{ .literal, .literal, .literal });
-    try testLex("  /* whitespace and comments */\t#define blah 1", &[_]Token.Id{});
-    try testLex(
-        \\  # define blah 1
-        \\#define blah 1
-        \\something
-        \\#define blah 1
-    ,
-        &[_]Token.Id{
-            .literal,
-        },
-    );
-}
-
-test "user-defined resource example" {
-    try testLex(
-        \\array   MYRES   data.res
-        \\14      300     custom.res
-        \\18 MYRES2
-        \\{
-        \\   "Here is an ANSI string\0",    // explicitly null-terminated 
-        \\   L"Here is a Unicode string\0", // explicitly null-terminated 
-        \\   1024,                          // integer, stored as WORD 
-        \\   7L,                            // integer, stored as DWORD 
-        \\   0x029a,                        // hex integer 
-        \\   0o733,                         // octal integer 
-        \\}
-    ,
-    // zig fmt: off
-        &[_]Token.Id{
-            .literal, .literal, .literal,
-            .literal, .literal, .literal,
-            .literal, .literal,
-            .open_brace,
-            .quoted_ascii_string, .comma,
-            .quoted_wide_string, .comma,
-            .literal, .comma,
-            .literal, .comma,
-            .literal, .comma,
-            .literal, .comma,
-            .close_brace,
-        },
-    // zig fmt: on
-    );
-}
-
-test "sample resource-definition file" {
-    return error.SkipZigTest;
-
-    // try testLex(
-    //     \\#include "shapes.h"
-    //     \\
-    //     \\ShapesCursor  CURSOR  SHAPES.CUR
-    //     \\ShapesIcon    ICON    SHAPES.ICO
-    //     \\
-    //     \\ShapesMenu MENU
-    //     \\{
-    //     \\    POPUP "&Shape"
-    //     \\    {
-    //     \\        MENUITEM "&Clear", ID_CLEAR
-    //     \\        MENUITEM "&Rectangle", ID_RECT
-    //     \\        MENUITEM "&Triangle", ID_TRIANGLE
-    //     \\        MENUITEM "&Star", ID_STAR
-    //     \\        MENUITEM "&Ellipse", ID_ELLIPSE
-    //     \\    }
-    //     \\}
-    // ,
-    // // zig fmt: off
-    //     &[_]Token.Id{
-    //         .literal, .literal, .literal,
-    //         .literal, .literal, .literal,
-    //         .literal, .literal,
-    //         .open_brace,
-    //             .literal, .quoted_ascii_string,
-    //             .open_brace,
-    //                 .literal, .quoted_ascii_string, .comma, .literal,
-    //                 .literal, .quoted_ascii_string, .comma, .literal,
-    //                 .literal, .quoted_ascii_string, .comma, .literal,
-    //                 .literal, .quoted_ascii_string, .comma, .literal,
-    //                 .literal, .quoted_ascii_string, .comma, .literal,
-    //             .close_brace,
-    //         .close_brace,
-    //     },
-    // // zig fmt: on
-    // );
+test "number expressions" {
+    try testLexNumberExpression("1-a", &.{ .literal, .operator, .invalid });
+    try testLexNumberExpression("1-\"hello", &.{ .literal, .operator, .invalid });
+    try testLexNumberExpression("1-{", &.{ .literal, .operator, .invalid });
+    try testLexNumberExpression("-- 1", &.{ .operator, .operator, .literal });
+    // TODO: This is broken, but might need to be handled differently
+    //       `rc` treats this as - (interpretted as a number literal) minus 1
+    //try testLexNumberExpression("--1", &.{ .operator, .operator, .literal });
 }

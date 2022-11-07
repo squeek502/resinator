@@ -31,12 +31,14 @@ pub const Node = struct {
         root,
         resource_external,
         resource_raw_data,
+        literal,
 
         pub fn Type(id: Id) type {
             return switch (id) {
                 .root => Root,
                 .resource_external => ResourceExternal,
                 .resource_raw_data => ResourceRawData,
+                .literal => Literal,
             };
         }
     };
@@ -58,7 +60,7 @@ pub const Node = struct {
         id: Token,
         type: Token,
         common_resource_attributes: []Token,
-        filename: Token,
+        filename: *Node,
     };
 
     pub const ResourceRawData = struct {
@@ -67,6 +69,11 @@ pub const Node = struct {
         type: Token,
         common_resource_attributes: []Token,
         raw_data: []Token,
+    };
+
+    pub const Literal = struct {
+        base: Node = .{ .id = .literal },
+        token: Token,
     };
 
     pub fn dump(
@@ -87,7 +94,8 @@ pub const Node = struct {
             },
             .resource_external => {
                 const resource = @fieldParentPtr(Node.ResourceExternal, "base", node);
-                try writer.print(" {s} {s} [{d} common_resource_attributes] {s}\n", .{ resource.id.slice(tree.source), resource.type.slice(tree.source), resource.common_resource_attributes.len, resource.filename.slice(tree.source) });
+                try writer.print(" {s} {s} [{d} common_resource_attributes]\n", .{ resource.id.slice(tree.source), resource.type.slice(tree.source), resource.common_resource_attributes.len });
+                try resource.filename.dump(tree, writer, indent + 1);
             },
             .resource_raw_data => {
                 const resource = @fieldParentPtr(Node.ResourceRawData, "base", node);
@@ -96,6 +104,12 @@ pub const Node = struct {
                     try writer.writeByteNTimes(' ', indent + 1);
                     try writer.print("{s}\n", .{data_token.slice(tree.source)});
                 }
+            },
+            .literal => {
+                const literal = @fieldParentPtr(Node.Literal, "base", node);
+                try writer.writeAll(" ");
+                try writer.writeAll(literal.token.slice(tree.source));
+                try writer.writeAll("\n");
             },
         }
     }

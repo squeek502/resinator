@@ -50,6 +50,7 @@ pub const Compiler = struct {
             .root => unreachable, // writeRoot should be called directly instead
             .resource_external => try self.writeResourceExternal(@fieldParentPtr(Node.ResourceExternal, "base", node), writer),
             .resource_raw_data => try self.writeResourceRawData(@fieldParentPtr(Node.ResourceRawData, "base", node), writer),
+            .literal => unreachable, // this is context dependent and should be handled by its parent
         }
     }
 
@@ -110,7 +111,15 @@ pub const Compiler = struct {
     };
 
     pub fn writeResourceExternal(self: *Compiler, node: *Node.ResourceExternal, writer: anytype) !void {
-        const filename = node.filename.slice(self.source);
+        const filename = filename: {
+            switch (node.filename.id) {
+                .literal => {
+                    const literal = @fieldParentPtr(Node.Literal, "base", node.filename);
+                    break :filename literal.token.slice(self.source);
+                },
+                else => unreachable,
+            }
+        };
         // TODO: emit error on file not found
         const contents: []const u8 = self.cwd.readFileAlloc(self.allocator, filename, std.math.maxInt(u32)) catch "";
         defer self.allocator.free(contents);

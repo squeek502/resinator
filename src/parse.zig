@@ -4,6 +4,7 @@ const Token = @import("lex.zig").Token;
 const Node = @import("ast.zig").Node;
 const Tree = @import("ast.zig").Tree;
 const Resource = @import("rc.zig").Resource;
+const isValidNumberDataLiteral = @import("literals.zig").isValidNumberDataLiteral;
 const Allocator = std.mem.Allocator;
 
 pub const ParseError = error{
@@ -37,7 +38,7 @@ pub const Parser = struct {
         errdefer arena.deinit();
 
         self.state = Parser.State{
-            .token = try self.lexer.next(),
+            .token = try self.lexer.nextWhitespaceDelimeterOnly(),
             .allocator = allocator,
             .arena = arena.allocator(),
         };
@@ -82,10 +83,10 @@ pub const Parser = struct {
         } else {
             try self.checkId();
             const id_token = first_token;
-            try self.nextToken();
+            try self.nextTokenWhitespaceDelimiterOnly();
             const resource = try self.checkResource();
             const type_token = self.state.token;
-            try self.nextToken();
+            try self.nextTokenNormal();
 
             switch (resource) {
                 .icon, .font, .cursor, .bitmap, .messagetable, .user_defined, .rcdata => {
@@ -95,10 +96,12 @@ pub const Parser = struct {
                     // TODO: Can user-defined resources have common resource attributes?
                     while (self.state.token.id == .literal and common_resource_attributes_set.has(self.state.token.slice(self.lexer.buffer))) {
                         try common_resource_attributes.append(self.state.token);
-                        try self.nextToken();
+                        try self.nextTokenNormal();
                     }
 
                     if (try self.testBegin()) {
+                        try self.nextTokenNormal();
+
                         var raw_data = std.ArrayList(Token).init(self.state.allocator);
                         defer raw_data.deinit();
                         while (true) {
@@ -114,7 +117,7 @@ pub const Parser = struct {
                                     try raw_data.append(self.state.token);
                                 },
                                 .close_brace => {
-                                    try self.nextToken();
+                                    try self.nextTokenWhitespaceDelimiterOnly();
                                     break;
                                 },
                                 .eof => break, // TODO: emit an error probably
@@ -123,7 +126,7 @@ pub const Parser = struct {
                                     @panic("TODO: Unhandled token type in raw data block");
                                 },
                             }
-                            try self.nextToken();
+                            try self.nextTokenNormal();
                         }
 
                         const node = try self.state.arena.create(Node.ResourceRawData);
@@ -136,15 +139,15 @@ pub const Parser = struct {
                         return &node.base;
                     }
 
-                    const filename_token = self.state.token;
-                    try self.nextToken();
+                    var filename_expression = try self.parseExpression();
+                    try self.nextTokenWhitespaceDelimiterOnly();
 
                     const node = try self.state.arena.create(Node.ResourceExternal);
                     node.* = .{
                         .id = id_token,
                         .type = type_token,
                         .common_resource_attributes = try self.state.arena.dupe(Token, common_resource_attributes.items),
-                        .filename = filename_token,
+                        .filename = filename_expression,
                     };
                     return &node.base;
                 },
@@ -153,8 +156,40 @@ pub const Parser = struct {
         }
     }
 
-    fn nextToken(self: *Self) Lexer.Error!void {
-        self.state.token = try self.lexer.next();
+    fn parseExpression(self: *Self) Error!*Node {
+        switch (self.state.token.id) {
+            .quoted_ascii_string, .quoted_wide_string => {
+                const node = try self.state.arena.create(Node.Literal);
+                node.* = .{
+                    .token = self.state.token,
+                };
+                return &node.base;
+            },
+            .literal => {
+                if (!isValidNumberDataLiteral(self.tokenSlice())) {
+                    const node = try self.state.arena.create(Node.Literal);
+                    node.* = .{
+                        .token = self.state.token,
+                    };
+                    return &node.base;
+                } else {}
+            },
+            else => {},
+        }
+        std.debug.print("Unhandled token: {any}\n", .{self.state.token});
+        @panic("TODO parseExpression");
+    }
+
+    fn nextTokenWhitespaceDelimiterOnly(self: *Self) Lexer.Error!void {
+        self.state.token = try self.lexer.nextWhitespaceDelimeterOnly();
+    }
+
+    fn nextTokenNormal(self: *Self) Lexer.Error!void {
+        self.state.token = try self.lexer.nextNormal();
+    }
+
+    fn nextTokenNumberExpression(self: *Self) Lexer.Error!void {
+        self.state.token = try self.lexer.nextNumberExpression();
     }
 
     fn tokenSlice(self: *Self) []const u8 {
@@ -172,25 +207,13 @@ pub const Parser = struct {
         }
     }
 
-    fn testQuotedString(self: *Self) !bool {
-        switch (self.state.token.id) {
-            .quoted_ascii_string, .quoted_wide_string => {
-                try self.nextToken();
-                return true;
-            },
-            else => return false,
-        }
-    }
-
     fn testBegin(self: *Self) !bool {
         switch (self.state.token.id) {
             .open_brace => {
-                try self.nextToken();
                 return true;
             },
             .literal => {
                 if (std.mem.eql(u8, "BEGIN", self.state.token.slice(self.lexer.buffer))) {
-                    try self.nextToken();
                     return true;
                 }
                 return false;
@@ -249,7 +272,8 @@ fn expectParseError(expected: ParseError, source: []const u8) !void {
 test "basic icons" {
     try testParse("id ICON MOVEABLE filename.ico",
         \\root
-        \\ resource_external id ICON [1 common_resource_attributes] filename.ico
+        \\ resource_external id ICON [1 common_resource_attributes]
+        \\  literal filename.ico
         \\
     );
     try testParse(
@@ -257,16 +281,20 @@ test "basic icons" {
         \\id2 ICON filename.ico
     ,
         \\root
-        \\ resource_external id1 ICON [1 common_resource_attributes] filename.ico
-        \\ resource_external id2 ICON [0 common_resource_attributes] filename.ico
+        \\ resource_external id1 ICON [1 common_resource_attributes]
+        \\  literal filename.ico
+        \\ resource_external id2 ICON [0 common_resource_attributes]
+        \\  literal filename.ico
         \\
     );
     try testParse(
         \\id1 ICON MOVEABLE filename.ico id2 ICON filename.ico
     ,
         \\root
-        \\ resource_external id1 ICON [1 common_resource_attributes] filename.ico
-        \\ resource_external id2 ICON [0 common_resource_attributes] filename.ico
+        \\ resource_external id1 ICON [1 common_resource_attributes]
+        \\  literal filename.ico
+        \\ resource_external id2 ICON [0 common_resource_attributes]
+        \\  literal filename.ico
         \\
     );
     try testParse(
@@ -274,8 +302,10 @@ test "basic icons" {
         \\L"id2" ICON L"filename.ico"
     ,
         \\root
-        \\ resource_external "id1" ICON [0 common_resource_attributes] "filename.ico"
-        \\ resource_external L"id2" ICON [0 common_resource_attributes] L"filename.ico"
+        \\ resource_external "id1" ICON [0 common_resource_attributes]
+        \\  literal "filename.ico"
+        \\ resource_external L"id2" ICON [0 common_resource_attributes]
+        \\  literal L"filename.ico"
         \\
     );
 }
@@ -283,7 +313,8 @@ test "basic icons" {
 test "user-defined" {
     try testParse("id \"quoted\" file.bin",
         \\root
-        \\ resource_external id "quoted" [0 common_resource_attributes] file.bin
+        \\ resource_external id "quoted" [0 common_resource_attributes]
+        \\  literal file.bin
         \\
     );
 }
