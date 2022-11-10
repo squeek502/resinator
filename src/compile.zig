@@ -5,6 +5,8 @@ const Lexer = @import("lex.zig").Lexer;
 const Parser = @import("parse.zig").Parser;
 const Resource = @import("rc.zig").Resource;
 const Token = @import("lex.zig").Token;
+const Number = @import("literals.zig").Number;
+const parseNumberLiteral = @import("literals.zig").parseNumberLiteral;
 const parseQuotedAsciiString = @import("literals.zig").parseQuotedAsciiString;
 const parseQuotedWideStringAlloc = @import("literals.zig").parseQuotedWideStringAlloc;
 const res = @import("res.zig");
@@ -176,15 +178,13 @@ pub const Compiler = struct {
     }
 
     pub const DataType = enum {
-        word,
-        dword,
+        number,
         ascii_string,
         wide_string,
     };
 
     pub const Data = union(DataType) {
-        word: u16,
-        dword: u32,
+        number: Number,
         ascii_string: []const u8,
         wide_string: []const u16,
 
@@ -199,11 +199,9 @@ pub const Compiler = struct {
 
         pub fn write(self: Data, writer: anytype) !void {
             switch (self) {
-                .word => |word| {
-                    try writer.writeIntLittle(WORD, word);
-                },
-                .dword => |dword| {
-                    try writer.writeIntLittle(DWORD, dword);
+                .number => |number| switch (number.is_long) {
+                    false => try writer.writeIntLittle(WORD, number.asWord()),
+                    true => try writer.writeIntLittle(DWORD, number.value),
                 },
                 .ascii_string => |ascii_string| {
                     try writer.writeAll(ascii_string);
@@ -215,26 +213,19 @@ pub const Compiler = struct {
         }
 
         pub fn evaluateOperator(operator_char: u8, lhs: Data, rhs: Data) Data {
-            // TODO: dword, mismatched sizes
-            switch (operator_char) {
-                '-' => {
-                    const result = lhs.word -% rhs.word;
-                    return .{ .word = result };
-                },
-                '+' => {
-                    const result = lhs.word +% rhs.word;
-                    return .{ .word = result };
-                },
-                '|' => {
-                    const result = lhs.word | rhs.word;
-                    return .{ .word = result };
-                },
-                '&' => {
-                    const result = lhs.word & rhs.word;
-                    return .{ .word = result };
-                },
+            std.debug.assert(lhs == .number);
+            std.debug.assert(rhs == .number);
+            const result = switch (operator_char) {
+                '-' => lhs.number.value -% rhs.number.value,
+                '+' => lhs.number.value +% rhs.number.value,
+                '|' => lhs.number.value | rhs.number.value,
+                '&' => lhs.number.value & rhs.number.value,
                 else => unreachable, // invalid operator, this would be a lexer/parser bug
-            }
+            };
+            return .{ .number = .{
+                .value = result,
+                .is_long = lhs.number.is_long or rhs.number.is_long,
+            } };
         }
     };
 
@@ -244,11 +235,8 @@ pub const Compiler = struct {
                 const literal_node = expression_node.cast(.literal).?;
                 switch (literal_node.token.id) {
                     .number => {
-                        // TODO: Proper number parsing
-                        // TODO: Promotion to DWORD
-                        // TODO: On overflow, the number should wrap; unsure how big can the literal itself can be before things start breaking more though
-                        const number = std.fmt.parseUnsigned(WORD, literal_node.token.slice(self.source), 0) catch unreachable;
-                        return .{ .word = number };
+                        const number = parseNumberLiteral(literal_node.token.slice(self.source));
+                        return .{ .number = number };
                     },
                     .quoted_ascii_string => {
                         const slice = literal_node.token.slice(self.source);
@@ -362,7 +350,7 @@ fn testCompile(source: []const u8, cwd: std.fs.Dir) !void {
 
     try compile(std.testing.allocator, source, buffer.writer(), cwd);
 
-    const expected_res = try getExpectedFromWindres(std.testing.allocator, source);
+    const expected_res = try getExpectedFromWindowsRC(std.testing.allocator, source);
     defer std.testing.allocator.free(expected_res);
 
     try std.testing.expectEqualSlices(u8, expected_res, buffer.items);
@@ -381,7 +369,7 @@ fn testCompileWithOutput(source: []const u8, expected_output: []const u8, cwd: s
     };
 }
 
-fn getExpectedFromWindres(allocator: Allocator, source: []const u8) ![]const u8 {
+fn getExpectedFromWindowsRC(allocator: Allocator, source: []const u8) ![]const u8 {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
@@ -486,6 +474,12 @@ test "raw data with number expression" {
     try testCompileWithOutput(
         "1 RCDATA { 65535+1 }",
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+        std.fs.cwd(),
+    );
+    // binary operators promote to the largest size of their operands
+    try testCompileWithOutput(
+        "1 RCDATA { 65535 + 1L }",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x04\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00",
         std.fs.cwd(),
     );
 }
