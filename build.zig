@@ -25,10 +25,22 @@ pub fn build(b: *std.build.Builder) void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
-    const exe_tests = b.addTest("src/main.zig");
+    const exe_tests = b.addTest("src/resinator.zig");
     exe_tests.setTarget(target);
     exe_tests.setBuildMode(mode);
 
-    const test_step = b.step("test", "Run unit tests");
+    const test_step = b.step("test", "Run library tests");
     test_step.dependOn(&exe_tests.step);
+
+    const resinator = std.build.Pkg{
+        .name = "resinator",
+        .source = .{ .path = "src/resinator.zig" },
+    };
+
+    var fuzzy_numbers = b.addTest("test/fuzzy_numbers.zig");
+    fuzzy_numbers.setBuildMode(mode);
+    fuzzy_numbers.setTarget(target);
+    fuzzy_numbers.addPackage(resinator);
+    const fuzzy_numbers_step = b.step("test_fuzzy_numbers", "Simple fuzz testing for number literals");
+    fuzzy_numbers_step.dependOn(&fuzzy_numbers.step);
 }

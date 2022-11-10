@@ -369,7 +369,7 @@ fn testCompileWithOutput(source: []const u8, expected_output: []const u8, cwd: s
     };
 }
 
-fn getExpectedFromWindowsRC(allocator: Allocator, source: []const u8) ![]const u8 {
+pub fn getExpectedFromWindowsRC(allocator: Allocator, source: []const u8) ![]const u8 {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
