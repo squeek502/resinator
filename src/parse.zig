@@ -196,8 +196,8 @@ pub const Parser = struct {
                     try self.nextTokenNormal();
                     const expression_result = try self.parseExpression();
 
-                    if (expression_result.has_unconsumed_token) {
-                        @panic("TODO deal with unconsumed token in after lhs grouped expression");
+                    if (!expression_result.has_unconsumed_token) {
+                        try self.nextTokenNormal();
                     }
 
                     const node = try self.state.arena.create(Node.GroupedExpression);
@@ -427,6 +427,26 @@ test "number expressions" {
         \\  binary_expression -
         \\   literal 1
         \\   literal -
+        \\
+    );
+    try testParse("id RCDATA { (1) }",
+        \\root
+        \\ resource_raw_data id RCDATA [0 common_resource_attributes] raw data: 1
+        \\  grouped_expression
+        \\  (
+        \\   literal 1
+        \\  )
+        \\
+    );
+    try testParse("id RCDATA { (1+-1) }",
+        \\root
+        \\ resource_raw_data id RCDATA [0 common_resource_attributes] raw data: 1
+        \\  grouped_expression
+        \\  (
+        \\   binary_expression +
+        \\    literal 1
+        \\    literal -1
+        \\  )
         \\
     );
 }
