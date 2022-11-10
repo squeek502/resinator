@@ -4,6 +4,7 @@ const Node = @import("ast.zig").Node;
 const Lexer = @import("lex.zig").Lexer;
 const Parser = @import("parse.zig").Parser;
 const Resource = @import("rc.zig").Resource;
+const Token = @import("lex.zig").Token;
 const parseQuotedAsciiString = @import("literals.zig").parseQuotedAsciiString;
 const parseQuotedWideStringAlloc = @import("literals.zig").parseQuotedWideStringAlloc;
 const res = @import("res.zig");
@@ -171,50 +172,7 @@ pub const Compiler = struct {
         const contents: []const u8 = self.cwd.readFileAlloc(self.allocator, filename.utf8, std.math.maxInt(u32)) catch "";
         defer self.allocator.free(contents);
 
-        const default_language = 0x409;
-        const default_memory_flags = 0x30;
-
-        const type_value = type: {
-            const resource_type = Resource.fromString(node.type.slice(self.source));
-            if (resource_type != .user_defined) {
-                if (res.RT.fromResource(resource_type)) |rt_constant| {
-                    break :type NameOrOrdinal{ .ordinal = @enumToInt(rt_constant) };
-                } else {
-                    @panic("TODO: unhandled resource -> RT constant conversion");
-                }
-            } else {
-                break :type try NameOrOrdinal.fromString(self.allocator, node.type.slice(self.source));
-            }
-        };
-        defer type_value.deinit(self.allocator);
-
-        // TODO: The type can change how the resource is written to the file
-        //       (i.e. if it's an ICON then the contents should be parsed as a .ico, among
-        //       other things)
-
-        const name_value = try NameOrOrdinal.fromString(self.allocator, node.id.slice(self.source));
-        defer name_value.deinit(self.allocator);
-
-        const byte_length_up_to_name: u32 = 8 + name_value.byteLen() + type_value.byteLen();
-        const padding_after_name = std.mem.alignForward(byte_length_up_to_name, 4) - byte_length_up_to_name;
-        const header_size: u32 = byte_length_up_to_name + @intCast(u32, padding_after_name) + 16;
-
-        try writer.writeIntLittle(DWORD, @intCast(u32, contents.len)); // DataSize
-        try writer.writeIntLittle(DWORD, header_size); // HeaderSize
-        try type_value.write(writer); // TYPE
-        try name_value.write(writer); // NAME
-        try writer.writeByteNTimes(0, padding_after_name);
-
-        try writer.writeIntLittle(DWORD, 0); // DataVersion
-        try writer.writeIntLittle(WORD, default_memory_flags); // MemoryFlags
-        try writer.writeIntLittle(WORD, default_language); // LanguageId
-        try writer.writeIntLittle(DWORD, 0); // Version
-        try writer.writeIntLittle(DWORD, 0); // Characteristics
-
-        try writer.writeAll(contents);
-
-        const padding_after_data = std.mem.alignForward(contents.len, 4) - contents.len;
-        try writer.writeByteNTimes(0, padding_after_data);
+        try self.writeResource(writer, node.id, node.type, contents);
     }
 
     pub const DataType = enum {
@@ -333,11 +291,15 @@ pub const Compiler = struct {
             try data.write(data_writer);
         }
 
+        try self.writeResource(writer, node.id, node.type, data_buffer.items);
+    }
+
+    pub fn writeResource(self: *Compiler, writer: anytype, id_token: Token, type_token: Token, data: []const u8) !void {
         const default_language = 0x409;
         const default_memory_flags = 0x30;
 
         const type_value = type: {
-            const resource_type = Resource.fromString(node.type.slice(self.source));
+            const resource_type = Resource.fromString(type_token.slice(self.source));
             if (resource_type != .user_defined) {
                 if (res.RT.fromResource(resource_type)) |rt_constant| {
                     break :type NameOrOrdinal{ .ordinal = @enumToInt(rt_constant) };
@@ -345,7 +307,7 @@ pub const Compiler = struct {
                     @panic("TODO: unhandled resource -> RT constant conversion");
                 }
             } else {
-                break :type try NameOrOrdinal.fromString(self.allocator, node.type.slice(self.source));
+                break :type try NameOrOrdinal.fromString(self.allocator, type_token.slice(self.source));
             }
         };
         defer type_value.deinit(self.allocator);
@@ -354,14 +316,14 @@ pub const Compiler = struct {
         //       (i.e. if it's an ICON then the contents should be parsed as a .ico, among
         //       other things)
 
-        const name_value = try NameOrOrdinal.fromString(self.allocator, node.id.slice(self.source));
+        const name_value = try NameOrOrdinal.fromString(self.allocator, id_token.slice(self.source));
         defer name_value.deinit(self.allocator);
 
         const byte_length_up_to_name: u32 = 8 + name_value.byteLen() + type_value.byteLen();
         const padding_after_name = std.mem.alignForward(byte_length_up_to_name, 4) - byte_length_up_to_name;
         const header_size: u32 = byte_length_up_to_name + @intCast(u32, padding_after_name) + 16;
 
-        try writer.writeIntLittle(DWORD, @intCast(u32, data_buffer.items.len)); // DataSize
+        try writer.writeIntLittle(DWORD, @intCast(u32, data.len)); // DataSize
         try writer.writeIntLittle(DWORD, header_size); // HeaderSize
         try type_value.write(writer); // TYPE
         try name_value.write(writer); // NAME
@@ -373,9 +335,9 @@ pub const Compiler = struct {
         try writer.writeIntLittle(DWORD, 0); // Version
         try writer.writeIntLittle(DWORD, 0); // Characteristics
 
-        try writer.writeAll(data_buffer.items);
+        try writer.writeAll(data);
 
-        const padding_after_data = std.mem.alignForward(data_buffer.items.len, 4) - data_buffer.items.len;
+        const padding_after_data = std.mem.alignForward(data.len, 4) - data.len;
         try writer.writeByteNTimes(0, padding_after_data);
     }
 
