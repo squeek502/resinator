@@ -211,6 +211,29 @@ pub const Compiler = struct {
                 },
             }
         }
+
+        pub fn evaluateOperator(operator_char: u8, lhs: Data, rhs: Data) Data {
+            // TODO: dword, mismatched sizes
+            switch (operator_char) {
+                '-' => {
+                    const result = lhs.word -% rhs.word;
+                    return .{ .word = result };
+                },
+                '+' => {
+                    const result = lhs.word +% rhs.word;
+                    return .{ .word = result };
+                },
+                '|' => {
+                    const result = lhs.word | rhs.word;
+                    return .{ .word = result };
+                },
+                '&' => {
+                    const result = lhs.word & rhs.word;
+                    return .{ .word = result };
+                },
+                else => unreachable, // invalid operator, this would be a lexer/parser bug
+            }
+        }
     };
 
     pub fn evaluateDataExpression(self: *Compiler, expression_node: *Node) !Data {
@@ -236,8 +259,17 @@ pub const Compiler = struct {
                         errdefer self.allocator.free(parsed_string);
                         return .{ .wide_string = parsed_string };
                     },
-                    else => unreachable, // no other token types should be in a literal node
+                    else => unreachable, // no other token types should be in a data literal node
                 }
+            },
+            .binary_expression => {
+                const binary_expression_node = expression_node.cast(.binary_expression).?;
+                const lhs = try self.evaluateDataExpression(binary_expression_node.left);
+                defer lhs.deinit(self.allocator);
+                const rhs = try self.evaluateDataExpression(binary_expression_node.right);
+                defer rhs.deinit(self.allocator);
+                const operator_char = binary_expression_node.operator.slice(self.source)[0];
+                return Data.evaluateOperator(operator_char, lhs, rhs);
             },
             else => {
                 std.debug.print("{}\n", .{expression_node.id});
@@ -425,5 +457,19 @@ test "basic but with tricky type" {
         "1 \"RCDATA\" file.bin",
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0b\x00\x00\x000\x00\x00\x00\"\x00R\x00C\x00D\x00A\x00T\x00A\x00\"\x00\x00\x00\xff\xff\x01\x00\x00\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00hello world\x00",
         tmp_dir.dir,
+    );
+}
+
+test "raw data with number expression" {
+    try testCompileWithOutput(
+        "1 RCDATA { 1+1 }",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x00\x00",
+        std.fs.cwd(),
+    );
+    // overflow is wrapping
+    try testCompileWithOutput(
+        "1 RCDATA { 65535+1 }",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+        std.fs.cwd(),
     );
 }
