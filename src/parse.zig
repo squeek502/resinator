@@ -102,31 +102,34 @@ pub const Parser = struct {
                     if (try self.testBegin()) {
                         try self.nextTokenNormal();
 
-                        var raw_data = std.ArrayList(Token).init(self.state.allocator);
+                        var raw_data = std.ArrayList(*Node).init(self.state.allocator);
                         defer raw_data.deinit();
                         while (true) {
                             switch (self.state.token.id) {
                                 .literal => {
+                                    // TODO: Handle this differently, might be nice to fold this into .close_brace
                                     if (std.mem.eql(u8, "END", self.tokenSlice())) {
                                         break;
                                     }
-                                    try raw_data.append(self.state.token);
                                 },
-                                .comma => {},
-                                .quoted_ascii_string, .quoted_wide_string => {
-                                    try raw_data.append(self.state.token);
+                                .comma => {
+                                    // skip over commas
+                                    try self.nextTokenNormal();
+                                    continue;
                                 },
                                 .close_brace => {
                                     try self.nextTokenWhitespaceDelimiterOnly();
                                     break;
                                 },
                                 .eof => break, // TODO: emit an error probably
-                                else => {
-                                    std.debug.print("unhandled token: {any}\n", .{self.state.token});
-                                    @panic("TODO: Unhandled token type in raw data block");
-                                },
+                                else => {},
                             }
-                            try self.nextTokenNormal();
+                            const expression_result = try self.parseExpression();
+                            try raw_data.append(expression_result.node);
+
+                            if (!expression_result.has_unconsumed_token) {
+                                try self.nextTokenNormal();
+                            }
                         }
 
                         const node = try self.state.arena.create(Node.ResourceRawData);
@@ -134,20 +137,22 @@ pub const Parser = struct {
                             .id = id_token,
                             .type = type_token,
                             .common_resource_attributes = try self.state.arena.dupe(Token, common_resource_attributes.items),
-                            .raw_data = try self.state.arena.dupe(Token, raw_data.items),
+                            .raw_data = try self.state.arena.dupe(*Node, raw_data.items),
                         };
                         return &node.base;
                     }
 
-                    var filename_expression = try self.parseExpression();
-                    try self.nextTokenWhitespaceDelimiterOnly();
+                    var filename_expression_result = try self.parseExpression();
+                    if (!filename_expression_result.has_unconsumed_token) {
+                        try self.nextTokenWhitespaceDelimiterOnly();
+                    }
 
                     const node = try self.state.arena.create(Node.ResourceExternal);
                     node.* = .{
                         .id = id_token,
                         .type = type_token,
                         .common_resource_attributes = try self.state.arena.dupe(Token, common_resource_attributes.items),
-                        .filename = filename_expression,
+                        .filename = filename_expression_result.node,
                     };
                     return &node.base;
                 },
@@ -156,28 +161,88 @@ pub const Parser = struct {
         }
     }
 
-    fn parseExpression(self: *Self) Error!*Node {
-        switch (self.state.token.id) {
-            .quoted_ascii_string, .quoted_wide_string => {
-                const node = try self.state.arena.create(Node.Literal);
-                node.* = .{
-                    .token = self.state.token,
-                };
-                return &node.base;
-            },
-            .literal => {
-                if (!isValidNumberDataLiteral(self.tokenSlice())) {
+    const ExpressionResult = struct {
+        node: *Node,
+        has_unconsumed_token: bool = false,
+    };
+
+    fn parseExpression(self: *Self) Error!ExpressionResult {
+        const possible_lhs: *Node = lhs: {
+            switch (self.state.token.id) {
+                .quoted_ascii_string, .quoted_wide_string => {
                     const node = try self.state.arena.create(Node.Literal);
                     node.* = .{
                         .token = self.state.token,
                     };
-                    return &node.base;
-                } else {}
+                    return .{ .node = &node.base };
+                },
+                .literal => {
+                    const node = try self.state.arena.create(Node.Literal);
+                    node.* = .{
+                        .token = self.state.token,
+                    };
+                    return .{ .node = &node.base };
+                },
+                .number => {
+                    const node = try self.state.arena.create(Node.Literal);
+                    node.* = .{
+                        .token = self.state.token,
+                    };
+                    break :lhs &node.base;
+                },
+                .open_paren => {
+                    const open_paren_token = self.state.token;
+
+                    try self.nextTokenNormal();
+                    const expression_result = try self.parseExpression();
+
+                    if (expression_result.has_unconsumed_token) {
+                        @panic("TODO deal with unconsumed token in after lhs grouped expression");
+                    }
+
+                    const node = try self.state.arena.create(Node.GroupedExpression);
+                    node.* = .{
+                        .open_token = open_paren_token,
+                        .expression = expression_result.node,
+                        .close_token = self.state.token,
+                    };
+
+                    try self.check(.close_paren);
+
+                    break :lhs &node.base;
+                },
+                else => {},
+            }
+            std.debug.print("Unhandled token: {any}\n", .{self.state.token});
+            @panic("TODO parseExpression");
+        };
+
+        self.state.token = try self.lexer.nextNormalWithContext(.expect_operator);
+        const possible_operator = self.state.token;
+        switch (possible_operator.id) {
+            .operator => {},
+            else => {
+                return .{
+                    .node = possible_lhs,
+                    .has_unconsumed_token = true,
+                };
             },
-            else => {},
         }
-        std.debug.print("Unhandled token: {any}\n", .{self.state.token});
-        @panic("TODO parseExpression");
+
+        self.state.token = try self.lexer.nextNormal();
+        const rhs_result = try self.parseExpression();
+
+        const node = try self.state.arena.create(Node.BinaryExpression);
+        node.* = .{
+            .left = possible_lhs,
+            .operator = possible_operator,
+            .right = rhs_result.node,
+        };
+
+        return .{
+            .node = &node.base,
+            .has_unconsumed_token = rhs_result.has_unconsumed_token,
+        };
     }
 
     fn nextTokenWhitespaceDelimiterOnly(self: *Self) Lexer.Error!void {
@@ -186,10 +251,6 @@ pub const Parser = struct {
 
     fn nextTokenNormal(self: *Self) Lexer.Error!void {
         self.state.token = try self.lexer.nextNormal();
-    }
-
-    fn nextTokenNumberExpression(self: *Self) Lexer.Error!void {
-        self.state.token = try self.lexer.nextNumberExpression();
     }
 
     fn tokenSlice(self: *Self) []const u8 {
@@ -328,33 +389,44 @@ test "raw data" {
     try testParse("id RCDATA { 1,2,3 }",
         \\root
         \\ resource_raw_data id RCDATA [0 common_resource_attributes] raw data: 3
-        \\  1
-        \\  2
-        \\  3
+        \\  literal 1
+        \\  literal 2
+        \\  literal 3
         \\
     );
     try testParse("id RCDATA { L\"1\",\"2\",3 }",
         \\root
         \\ resource_raw_data id RCDATA [0 common_resource_attributes] raw data: 3
-        \\  L"1"
-        \\  "2"
-        \\  3
+        \\  literal L"1"
+        \\  literal "2"
+        \\  literal 3
         \\
     );
     try testParse("id RCDATA { 1\t,,  ,,,2,,  ,  3 ,,,  , }",
         \\root
         \\ resource_raw_data id RCDATA [0 common_resource_attributes] raw data: 3
-        \\  1
-        \\  2
-        \\  3
+        \\  literal 1
+        \\  literal 2
+        \\  literal 3
         \\
     );
     try testParse("id RCDATA { 1 2 3 }",
         \\root
         \\ resource_raw_data id RCDATA [0 common_resource_attributes] raw data: 3
-        \\  1
-        \\  2
-        \\  3
+        \\  literal 1
+        \\  literal 2
+        \\  literal 3
+        \\
+    );
+}
+
+test "number expressions" {
+    try testParse("id RCDATA { 1-- }",
+        \\root
+        \\ resource_raw_data id RCDATA [0 common_resource_attributes] raw data: 1
+        \\  binary_expression -
+        \\   literal 1
+        \\   literal -
         \\
     );
 }

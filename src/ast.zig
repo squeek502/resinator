@@ -32,13 +32,19 @@ pub const Node = struct {
         resource_external,
         resource_raw_data,
         literal,
+        binary_expression,
+        grouped_expression,
+        invalid,
 
-        pub fn Type(id: Id) type {
+        pub fn Type(comptime id: Id) type {
             return switch (id) {
                 .root => Root,
                 .resource_external => ResourceExternal,
                 .resource_raw_data => ResourceRawData,
                 .literal => Literal,
+                .binary_expression => BinaryExpression,
+                .grouped_expression => GroupedExpression,
+                .invalid => Invalid,
             };
         }
     };
@@ -68,12 +74,31 @@ pub const Node = struct {
         id: Token,
         type: Token,
         common_resource_attributes: []Token,
-        raw_data: []Token,
+        raw_data: []*Node,
     };
 
     pub const Literal = struct {
         base: Node = .{ .id = .literal },
         token: Token,
+    };
+
+    pub const BinaryExpression = struct {
+        base: Node = .{ .id = .binary_expression },
+        operator: Token,
+        left: *Node,
+        right: *Node,
+    };
+
+    pub const GroupedExpression = struct {
+        base: Node = .{ .id = .grouped_expression },
+        open_token: Token,
+        expression: *Node,
+        close_token: Token,
+    };
+
+    pub const Invalid = struct {
+        base: Node = .{ .id = .invalid },
+        context: []*Node,
     };
 
     pub fn dump(
@@ -100,9 +125,8 @@ pub const Node = struct {
             .resource_raw_data => {
                 const resource = @fieldParentPtr(Node.ResourceRawData, "base", node);
                 try writer.print(" {s} {s} [{d} common_resource_attributes] raw data: {}\n", .{ resource.id.slice(tree.source), resource.type.slice(tree.source), resource.common_resource_attributes.len, resource.raw_data.len });
-                for (resource.raw_data) |data_token| {
-                    try writer.writeByteNTimes(' ', indent + 1);
-                    try writer.print("{s}\n", .{data_token.slice(tree.source)});
+                for (resource.raw_data) |data_expression| {
+                    try data_expression.dump(tree, writer, indent + 1);
                 }
             },
             .literal => {
@@ -110,6 +134,32 @@ pub const Node = struct {
                 try writer.writeAll(" ");
                 try writer.writeAll(literal.token.slice(tree.source));
                 try writer.writeAll("\n");
+            },
+            .binary_expression => {
+                const binary = @fieldParentPtr(Node.BinaryExpression, "base", node);
+                try writer.writeAll(" ");
+                try writer.writeAll(binary.operator.slice(tree.source));
+                try writer.writeAll("\n");
+                try binary.left.dump(tree, writer, indent + 1);
+                try binary.right.dump(tree, writer, indent + 1);
+            },
+            .grouped_expression => {
+                const grouped = @fieldParentPtr(Node.GroupedExpression, "base", node);
+                try writer.writeAll("\n");
+                try writer.writeByteNTimes(' ', indent);
+                try writer.writeAll(grouped.open_token.slice(tree.source));
+                try writer.writeAll("\n");
+                try grouped.expression.dump(tree, writer, indent + 1);
+                try writer.writeByteNTimes(' ', indent);
+                try writer.writeAll(grouped.close_token.slice(tree.source));
+                try writer.writeAll("\n");
+            },
+            .invalid => {
+                const invalid = @fieldParentPtr(Node.Invalid, "base", node);
+                try writer.print(" context.len: {}\n", .{invalid.context.len});
+                for (invalid.context) |context_node| {
+                    try context_node.dump(tree, writer, indent + 1);
+                }
             },
         }
     }

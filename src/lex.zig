@@ -18,6 +18,7 @@ pub const Token = struct {
 
     pub const Id = enum {
         literal,
+        number,
         quoted_ascii_string,
         quoted_wide_string,
         operator,
@@ -151,13 +152,16 @@ pub const Lexer = struct {
         quoted_ascii_string,
         quoted_wide_string,
         literal,
-        minus,
         number_literal,
         preprocessor,
     };
 
     /// TODO: A not-terrible name
     pub fn nextNormal(self: *Self) LexError!Token {
+        return self.nextNormalWithContext(.any);
+    }
+
+    pub fn nextNormalWithContext(self: *Self, context: enum { expect_operator, any }) LexError!Token {
         const start_index = self.index;
         var result = Token{
             .id = .eof,
@@ -188,17 +192,24 @@ pub const Lexer = struct {
                         state = .quoted_ascii_string;
                         self.at_start_of_line = false;
                     },
-                    '+', '&', '|', '~' => {
+                    '+', '&', '|' => {
                         self.index += 1;
                         result.id = .operator;
                         self.at_start_of_line = false;
                         break;
                     },
                     '-' => {
-                        state = .minus;
-                        self.at_start_of_line = false;
+                        if (context == .expect_operator) {
+                            self.index += 1;
+                            result.id = .operator;
+                            self.at_start_of_line = false;
+                            break;
+                        } else {
+                            state = .number_literal;
+                            self.at_start_of_line = false;
+                        }
                     },
-                    '0'...'9' => {
+                    '0'...'9', '~' => {
                         state = .number_literal;
                         self.at_start_of_line = false;
                     },
@@ -210,15 +221,15 @@ pub const Lexer = struct {
                         }
                         self.at_start_of_line = false;
                     },
-                    '{' => {
+                    '{', '}' => {
                         self.index += 1;
-                        result.id = .open_brace;
+                        result.id = if (c == '{') .open_brace else .close_brace;
                         self.at_start_of_line = false;
                         break;
                     },
-                    '}' => {
+                    '(', ')' => {
                         self.index += 1;
-                        result.id = .close_brace;
+                        result.id = if (c == '(') .open_paren else .close_paren;
                         self.at_start_of_line = false;
                         break;
                     },
@@ -241,21 +252,9 @@ pub const Lexer = struct {
                     },
                     else => {},
                 },
-                .minus => switch (c) {
-                    ' ', '\t', '\x0b', '\x0c', '\r', '\n', '"', ',', '{', '}', '+', '-', '|', '&', '~', '(', ')' => {
-                        result.id = .operator;
-                        break;
-                    },
-                    '0'...'9' => {
-                        state = .number_literal;
-                    },
-                    else => {
-                        state = .literal;
-                    },
-                },
                 .number_literal => switch (c) {
                     ' ', '\t', '\x0b', '\x0c', '\r', '\n', '"', ',', '{', '}', '+', '-', '|', '&', '~', '(', ')' => {
-                        result.id = .literal;
+                        result.id = .number;
                         break;
                     },
                     else => {},
@@ -303,10 +302,7 @@ pub const Lexer = struct {
                     result.start = self.index;
                 },
                 .number_literal => {
-                    result.id = .literal; // TODO: Separate number literal token?
-                },
-                .minus => {
-                    result.id = .operator; // TODO: This seems too context dependent, might need a separate token id
+                    result.id = .number;
                 },
                 .quoted_ascii_string,
                 .quoted_wide_string,
@@ -321,100 +317,8 @@ pub const Lexer = struct {
     const StateNumberExpression = enum {
         start,
         invalid,
-        minus,
         number_literal,
     };
-
-    pub fn nextNumberExpression(self: *Lexer) LexError!Token {
-        const start_index = self.index;
-        var result = Token{
-            .id = .eof,
-            .start = start_index,
-            .end = undefined,
-            .line_number = self.line_number,
-        };
-        var state = StateNumberExpression.start;
-
-        var last_line_ending_index: ?usize = null;
-        while (self.index < self.buffer.len) : (self.index += 1) {
-            const c = self.buffer[self.index];
-            switch (state) {
-                .start => switch (c) {
-                    '\r', '\n' => {
-                        result.start = self.index + 1;
-                        result.line_number = self.incrementLineNumber(&last_line_ending_index);
-                    },
-                    // space, tab, vertical tab, form feed
-                    ' ', '\t', '\x0b', '\x0c' => {
-                        result.start = self.index + 1;
-                    },
-                    '+', '&', '|', '~' => {
-                        self.index += 1;
-                        result.id = .operator;
-                        self.at_start_of_line = false;
-                        break;
-                    },
-                    '-' => {
-                        state = .minus;
-                        self.at_start_of_line = false;
-                    },
-                    '0'...'9' => {
-                        state = .number_literal;
-                        self.at_start_of_line = false;
-                    },
-                    '(', ')' => {
-                        self.index += 1;
-                        result.id = if (c == '(') .open_paren else .close_paren;
-                        self.at_start_of_line = false;
-                        break;
-                    },
-                    else => {
-                        state = .invalid;
-                        self.at_start_of_line = false;
-                    },
-                },
-                .minus => switch (c) {
-                    '0'...'9' => {
-                        state = .number_literal;
-                    },
-                    else => {
-                        result.id = .operator;
-                        break;
-                    },
-                },
-                .number_literal => switch (c) {
-                    ' ', '\t', '\x0b', '\x0c', '\r', '\n', '"', ',', '{', '}', '+', '-', '|', '&', '~', '(', ')' => {
-                        result.id = .literal;
-                        break;
-                    },
-                    else => {},
-                },
-                .invalid => switch (c) {
-                    ' ', '\t', '\x0b', '\x0c', '\r', '\n', '"', ',', '{', '}', '+', '-', '|', '&', '~', '(', ')' => {
-                        result.id = .invalid;
-                        break;
-                    },
-                    else => {},
-                },
-            }
-        } else { // got EOF
-            switch (state) {
-                .start => {},
-                .invalid => {
-                    result.id = .invalid;
-                },
-                .number_literal => {
-                    result.id = .literal; // TODO: Separate number literal token?
-                },
-                .minus => {
-                    result.id = .operator; // TODO: This seems too context dependent, might need a separate token id
-                },
-            }
-        }
-
-        result.end = self.index;
-        return result;
-    }
 
     /// Like incrementLineNumber but checks that the current char is a line ending first
     fn maybeIncrementLineNumber(self: *Self, last_line_ending_index: *?usize) usize {
@@ -485,36 +389,14 @@ fn testLexNormal(source: []const u8, expected_tokens: []const Token.Id) !void {
     try std.testing.expectEqual(Token.Id.eof, last_token.id);
 }
 
-fn testLexNumberExpression(source: []const u8, expected_tokens: []const Token.Id) !void {
-    var lexer = Lexer.init(source);
-    if (dumpTokensDuringTests) std.debug.print("\n----------------------\n{s}\n----------------------\n", .{lexer.buffer});
-    for (expected_tokens) |expected_token_id| {
-        const token = try lexer.nextNumberExpression();
-        if (dumpTokensDuringTests) lexer.dump(&token);
-        try std.testing.expectEqual(expected_token_id, token.id);
-    }
-    const last_token = try lexer.nextNumberExpression();
-    try std.testing.expectEqual(Token.Id.eof, last_token.id);
-}
-
 fn expectLexError(expected: LexError, actual: anytype) !void {
     try std.testing.expectError(expected, actual);
     if (dumpTokensDuringTests) std.debug.print("{!}\n", .{actual});
 }
 
-test "normal: numbers and literals" {
-    try testLexNormal("1", &.{.literal});
-    try testLexNormal("-1", &.{.literal});
-    try testLexNormal("- 1", &.{ .operator, .literal });
-    try testLexNormal("-a", &.{.literal});
-}
-
-test "number expressions" {
-    try testLexNumberExpression("1-a", &.{ .literal, .operator, .invalid });
-    try testLexNumberExpression("1-\"hello", &.{ .literal, .operator, .invalid });
-    try testLexNumberExpression("1-{", &.{ .literal, .operator, .invalid });
-    try testLexNumberExpression("-- 1", &.{ .operator, .operator, .literal });
-    // TODO: This is broken, but might need to be handled differently
-    //       `rc` treats this as - (interpretted as a number literal) minus 1
-    //try testLexNumberExpression("--1", &.{ .operator, .operator, .literal });
+test "normal: numbers" {
+    try testLexNormal("1", &.{.number});
+    try testLexNormal("-1", &.{.number});
+    try testLexNormal("- 1", &.{ .number, .number });
+    try testLexNormal("-a", &.{.number});
 }

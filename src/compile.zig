@@ -51,6 +51,9 @@ pub const Compiler = struct {
             .resource_external => try self.writeResourceExternal(@fieldParentPtr(Node.ResourceExternal, "base", node), writer),
             .resource_raw_data => try self.writeResourceRawData(@fieldParentPtr(Node.ResourceRawData, "base", node), writer),
             .literal => unreachable, // this is context dependent and should be handled by its parent
+            .binary_expression => @panic("TODO"),
+            .grouped_expression => @panic("TODO"),
+            .invalid => @panic("TODO"),
         }
     }
 
@@ -170,31 +173,88 @@ pub const Compiler = struct {
         try writer.writeByteNTimes(0, padding_after_data);
     }
 
+    pub const DataType = enum {
+        word,
+        dword,
+        ascii_string,
+        wide_string,
+    };
+
+    pub const Data = union(DataType) {
+        word: u16,
+        dword: u32,
+        ascii_string: []const u8,
+        wide_string: []const u16,
+
+        pub fn deinit(self: Data, allocator: Allocator) void {
+            switch (self) {
+                .wide_string => |wide_string| {
+                    allocator.free(wide_string);
+                },
+                else => {},
+            }
+        }
+
+        pub fn write(self: Data, writer: anytype) !void {
+            switch (self) {
+                .word => |word| {
+                    try writer.writeIntLittle(WORD, word);
+                },
+                .dword => |dword| {
+                    try writer.writeIntLittle(DWORD, dword);
+                },
+                .ascii_string => |ascii_string| {
+                    try writer.writeAll(ascii_string);
+                },
+                .wide_string => |wide_string| {
+                    try writer.writeAll(std.mem.sliceAsBytes(wide_string));
+                },
+            }
+        }
+    };
+
+    pub fn evaluateDataExpression(self: *Compiler, expression_node: *Node) !Data {
+        switch (expression_node.id) {
+            .literal => {
+                const literal_node = expression_node.cast(.literal).?;
+                switch (literal_node.token.id) {
+                    .number => {
+                        // TODO: Proper number parsing
+                        // TODO: Promotion to DWORD
+                        // TODO: On overflow, the number should wrap; unsure how big can the literal itself can be before things start breaking more though
+                        const number = std.fmt.parseUnsigned(WORD, literal_node.token.slice(self.source), 0) catch unreachable;
+                        return .{ .word = number };
+                    },
+                    .quoted_ascii_string => {
+                        const slice = literal_node.token.slice(self.source);
+                        const parsed = parseQuotedAsciiString(slice);
+                        return .{ .ascii_string = parsed };
+                    },
+                    .quoted_wide_string => {
+                        const slice = literal_node.token.slice(self.source);
+                        const parsed_string = try parseQuotedWideStringAlloc(self.allocator, slice);
+                        errdefer self.allocator.free(parsed_string);
+                        return .{ .wide_string = parsed_string };
+                    },
+                    else => unreachable, // no other token types should be in a literal node
+                }
+            },
+            else => {
+                std.debug.print("{}\n", .{expression_node.id});
+                @panic("TODO: evaluateDataExpression");
+            },
+        }
+    }
+
     pub fn writeResourceRawData(self: *Compiler, node: *Node.ResourceRawData, writer: anytype) !void {
         var data_buffer = std.ArrayList(u8).init(self.allocator);
         defer data_buffer.deinit();
+        const data_writer = data_buffer.writer();
 
-        for (node.raw_data) |token| {
-            switch (token.id) {
-                // Any literal here must be a number
-                .literal => {
-                    // TODO: On overflow, the number should wrap; unsure how big can the literal itself can be before things start breaking more though
-                    const number = std.fmt.parseUnsigned(WORD, token.slice(self.source), 0) catch unreachable;
-                    var data_writer = data_buffer.writer();
-                    try data_writer.writeIntLittle(WORD, number);
-                },
-                .quoted_ascii_string => {
-                    const slice = token.slice(self.source);
-                    try data_buffer.appendSlice(parseQuotedAsciiString(slice));
-                },
-                .quoted_wide_string => {
-                    const slice = token.slice(self.source);
-                    const parsed_string = try parseQuotedWideStringAlloc(self.allocator, slice);
-                    defer self.allocator.free(parsed_string);
-                    try data_buffer.appendSlice(std.mem.sliceAsBytes(parsed_string));
-                },
-                else => unreachable,
-            }
+        for (node.raw_data) |expression| {
+            const data = try self.evaluateDataExpression(expression);
+            defer data.deinit(self.allocator);
+            try data.write(data_writer);
         }
 
         const default_language = 0x409;
