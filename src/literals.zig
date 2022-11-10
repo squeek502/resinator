@@ -39,7 +39,19 @@ pub fn parseNumberLiteral(str: []const u8) Number {
     var radix: u8 = 10;
     var buf = str;
 
-    // TODO: - and ~ prefixes
+    const Prefix = enum { none, minus, complement };
+    var prefix: Prefix = .none;
+    switch (buf[0]) {
+        '-' => {
+            prefix = .minus;
+            buf = buf[1..];
+        },
+        '~' => {
+            prefix = .complement;
+            buf = buf[1..];
+        },
+        else => {},
+    }
 
     if (buf.len > 2 and buf[0] == '0') {
         switch (std.ascii.toLower(str[1])) {
@@ -68,6 +80,12 @@ pub fn parseNumberLiteral(str: []const u8) Number {
         result.value +%= digit;
     }
 
+    switch (prefix) {
+        .none => {},
+        .minus => result.value = 0 -% result.value,
+        .complement => result.value = ~result.value,
+    }
+
     return result;
 }
 
@@ -94,4 +112,9 @@ test "parse number literal" {
     try std.testing.expectEqual(Number{ .value = 0o20, .is_long = false }, parseNumberLiteral("0o20"));
     try std.testing.expectEqual(Number{ .value = 0o20, .is_long = true }, parseNumberLiteral("0o20L"));
     try std.testing.expectEqual(Number{ .value = 0o2, .is_long = false }, parseNumberLiteral("0o29"));
+
+    try std.testing.expectEqual(Number{ .value = 0xFFFFFFFF, .is_long = false }, parseNumberLiteral("-1"));
+    try std.testing.expectEqual(Number{ .value = 0xFFFFFFFE, .is_long = false }, parseNumberLiteral("~1"));
+    try std.testing.expectEqual(Number{ .value = 0xFFFFFFFF, .is_long = true }, parseNumberLiteral("-4294967297L"));
+    try std.testing.expectEqual(Number{ .value = 0xFFFFFFFE, .is_long = true }, parseNumberLiteral("~4294967297L"));
 }
