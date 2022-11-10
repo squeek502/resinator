@@ -113,18 +113,62 @@ pub const Compiler = struct {
         }
     };
 
-    pub fn writeResourceExternal(self: *Compiler, node: *Node.ResourceExternal, writer: anytype) !void {
-        const filename = filename: {
-            switch (node.filename.id) {
-                .literal => {
-                    const literal = @fieldParentPtr(Node.Literal, "base", node.filename);
-                    break :filename literal.token.slice(self.source);
-                },
-                else => unreachable,
+    const Filename = struct {
+        utf8: []const u8,
+        needs_free: bool = false,
+
+        pub fn deinit(self: Filename, allocator: Allocator) void {
+            if (self.needs_free) {
+                allocator.free(self.utf8);
             }
-        };
+        }
+    };
+
+    pub fn evaluateFilenameExpression(self: *Compiler, expression_node: *Node) !Filename {
+        switch (expression_node.id) {
+            .literal => {
+                const literal_node = expression_node.cast(.literal).?;
+                switch (literal_node.token.id) {
+                    .literal, .number => {
+                        const literal_as_string = literal_node.token.slice(self.source);
+                        return .{ .utf8 = literal_as_string };
+                    },
+                    .quoted_ascii_string => {
+                        const slice = literal_node.token.slice(self.source);
+                        const parsed = parseQuotedAsciiString(slice);
+                        return .{ .utf8 = parsed };
+                    },
+                    .quoted_wide_string => {
+                        // TODO: No need to parse this to UTF-16 and then back to UTF-8
+                        // if it's already UTF-8. Should have a function that parses wide
+                        // strings directly to UTF-8.
+                        const slice = literal_node.token.slice(self.source);
+                        const parsed_string = try parseQuotedWideStringAlloc(self.allocator, slice);
+                        defer self.allocator.free(parsed_string);
+                        const parsed_as_utf8 = try std.unicode.utf16leToUtf8Alloc(self.allocator, parsed_string);
+                        return .{ .utf8 = parsed_as_utf8, .needs_free = true };
+                    },
+                    else => unreachable, // no other token types should be in a filename literal node
+                }
+            },
+            .binary_expression => {
+                const binary_expression_node = expression_node.cast(.binary_expression).?;
+                return self.evaluateFilenameExpression(binary_expression_node.right);
+            },
+            .grouped_expression => {
+                const grouped_expression_node = expression_node.cast(.grouped_expression).?;
+                return self.evaluateFilenameExpression(grouped_expression_node.expression);
+            },
+            else => unreachable,
+        }
+    }
+
+    pub fn writeResourceExternal(self: *Compiler, node: *Node.ResourceExternal, writer: anytype) !void {
+        const filename = try self.evaluateFilenameExpression(node.filename);
+        defer filename.deinit(self.allocator);
+
         // TODO: emit error on file not found
-        const contents: []const u8 = self.cwd.readFileAlloc(self.allocator, filename, std.math.maxInt(u32)) catch "";
+        const contents: []const u8 = self.cwd.readFileAlloc(self.allocator, filename.utf8, std.math.maxInt(u32)) catch "";
         defer self.allocator.free(contents);
 
         const default_language = 0x409;
@@ -429,6 +473,16 @@ test "basic rcdata" {
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0b\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00hello world\x00",
         tmp_dir.dir,
     );
+    try testCompileWithOutput(
+        "1 RCDATA \"file.bin\"",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0b\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00hello world\x00",
+        tmp_dir.dir,
+    );
+    try testCompileWithOutput(
+        "1 RCDATA L\"file.bin\"",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0b\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00hello world\x00",
+        tmp_dir.dir,
+    );
 }
 
 test "basic rcdata with empty raw data" {
@@ -472,4 +526,50 @@ test "raw data with number expression" {
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
         std.fs.cwd(),
     );
+}
+
+test "filenames as numeric expressions" {
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    try tmp_dir.dir.writeFile("-1", "hello world");
+    try testCompileWithOutput(
+        "1 RCDATA -1",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0b\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00hello world\x00",
+        tmp_dir.dir,
+    );
+    try tmp_dir.dir.deleteFile("-1");
+
+    try tmp_dir.dir.writeFile("~1", "hello world");
+    try testCompileWithOutput(
+        "1 RCDATA ~1",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0b\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00hello world\x00",
+        tmp_dir.dir,
+    );
+    try tmp_dir.dir.deleteFile("~1");
+
+    try tmp_dir.dir.writeFile("1", "hello world");
+    try testCompileWithOutput(
+        "1 RCDATA 1+1",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0b\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00hello world\x00",
+        tmp_dir.dir,
+    );
+    try tmp_dir.dir.deleteFile("1");
+
+    try tmp_dir.dir.writeFile("-1", "hello world");
+    try testCompileWithOutput(
+        "1 RCDATA 1+-1",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0b\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00hello world\x00",
+        tmp_dir.dir,
+    );
+    try tmp_dir.dir.deleteFile("-1");
+
+    // TODO
+    // try tmp_dir.dir.writeFile("-1", "hello world");
+    // try testCompileWithOutput(
+    //     "1 RCDATA (1+-1)",
+    //     "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0b\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00hello world\x00",
+    //     tmp_dir.dir,
+    // );
+    // try tmp_dir.dir.deleteFile("-1");
 }
