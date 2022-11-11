@@ -65,3 +65,9 @@ pub fn randomAlphanumeric(rand: std.rand.Random) u8 {
 pub fn randomNumeric(rand: std.rand.Random) u8 {
     return rand.uintLessThanBiased(u8, 10) + '0';
 }
+
+pub fn randomOperator(rand: std.rand.Random) u8 {
+    const dict = [_]u8{ '-', '+', '|', '&' };
+    const index = rand.uintLessThanBiased(u8, dict.len);
+    return dict[index];
+}
