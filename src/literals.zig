@@ -28,7 +28,7 @@ pub fn isValidNumberDataLiteral(str: []const u8) bool {
 ///  <\t> => 1-8 spaces, dependent on columns in the source rc file itself
 ///  <\r> => <nothing>
 ///  <\n+><\w+?\n?> => <space><\n>
-pub fn parseQuotedAsciiString(allocator: std.mem.Allocator, str: []const u8) ![]u8 {
+pub fn parseQuotedAsciiString(allocator: std.mem.Allocator, str: []const u8, start_column: usize) ![]u8 {
     std.debug.assert(str.len >= 2); // must at least have 2 double quote chars
 
     var buf = try std.ArrayList(u8).initCapacity(allocator, str.len);
@@ -47,7 +47,6 @@ pub fn parseQuotedAsciiString(allocator: std.mem.Allocator, str: []const u8) ![]
         escaped_hex,
     };
 
-    var start_column: usize = 0; // TODO: Take this as an input parameter?
     var column: usize = start_column + 1; // The starting " is included
     var state: State = .normal;
     var string_escape_n: u8 = 0;
@@ -201,7 +200,7 @@ pub fn parseQuotedAsciiString(allocator: std.mem.Allocator, str: []const u8) ![]
     return buf.toOwnedSlice();
 }
 
-fn columnsUntilTabStop(column: usize) usize {
+pub fn columnsUntilTabStop(column: usize) usize {
     // 0 => 8, 1 => 7, 2 => 6, 3 => 5, 4 => 4
     // 5 => 3, 6 => 2, 7 => 1, 8 => 8
     return 8 - (column % 8);
@@ -214,89 +213,99 @@ test "parse quoted ascii string" {
 
     try std.testing.expectEqualSlices(u8, "hello", try parseQuotedAsciiString(arena,
         \\"hello"
-    ));
+    , 0));
     // hex with 0 digits
     try std.testing.expectEqualSlices(u8, "\x00", try parseQuotedAsciiString(arena,
         \\"\x"
-    ));
+    , 0));
     // hex max of 2 digits
     try std.testing.expectEqualSlices(u8, "\xFFf", try parseQuotedAsciiString(arena,
         \\"\XfFf"
-    ));
+    , 0));
     // octal with invalid octal digit
     try std.testing.expectEqualSlices(u8, "\x019", try parseQuotedAsciiString(arena,
         \\"\19"
-    ));
+    , 0));
     // escaped quotes
     try std.testing.expectEqualSlices(u8, " \" ", try parseQuotedAsciiString(arena,
         \\" "" "
-    ));
+    , 0));
     // octal overflow
     try std.testing.expectEqualSlices(u8, "\x01", try parseQuotedAsciiString(arena,
         \\"\401"
-    ));
+    , 0));
     // escapes
     try std.testing.expectEqualSlices(u8, "\x08\n\r\t\\", try parseQuotedAsciiString(arena,
         \\"\a\n\r\t\\"
-    ));
+    , 0));
     // uppercase escapes
     try std.testing.expectEqualSlices(u8, "\x08\\N\\R\t\\", try parseQuotedAsciiString(arena,
         \\"\A\N\R\T\\"
-    ));
+    , 0));
     // backslash on its own
     try std.testing.expectEqualSlices(u8, "\\", try parseQuotedAsciiString(arena,
         \\"\"
-    ));
+    , 0));
     // unrecognized escapes
     try std.testing.expectEqualSlices(u8, "\\b", try parseQuotedAsciiString(arena,
         \\"\b"
-    ));
+    , 0));
     // escaped carriage returns
     try std.testing.expectEqualSlices(u8, "\\", try parseQuotedAsciiString(
         arena,
         "\"\\\r\r\r\r\r\"",
+        0,
     ));
     // escaped newlines
     try std.testing.expectEqualSlices(u8, "", try parseQuotedAsciiString(
         arena,
         "\"\\\n\n\n\n\n\"",
+        0,
     ));
     // escaped CRLF pairs
     try std.testing.expectEqualSlices(u8, "", try parseQuotedAsciiString(
         arena,
         "\"\\\r\n\r\n\r\n\r\n\r\n\"",
+        0,
     ));
     // escaped newlines with other whitespace
     try std.testing.expectEqualSlices(u8, "", try parseQuotedAsciiString(
         arena,
         "\"\\\n    \t\r\n \r\t\n  \t\"",
+        0,
     ));
     // literal tab characters get converted to spaces (dependent on source file columns)
     try std.testing.expectEqualSlices(u8, "       ", try parseQuotedAsciiString(
         arena,
         "\"\t\"",
+        0,
     ));
     try std.testing.expectEqualSlices(u8, "abc    ", try parseQuotedAsciiString(
         arena,
         "\"abc\t\"",
+        0,
     ));
     try std.testing.expectEqualSlices(u8, "abcdefg        ", try parseQuotedAsciiString(
         arena,
         "\"abcdefg\t\"",
+        0,
     ));
     try std.testing.expectEqualSlices(u8, "\\      ", try parseQuotedAsciiString(
         arena,
         "\"\\\t\"",
+        0,
     ));
     // literal CR's get dropped
     try std.testing.expectEqualSlices(u8, "", try parseQuotedAsciiString(
         arena,
         "\"\r\r\r\r\r\"",
+        0,
     ));
     // contiguous newlines and whitespace get collapsed to <space><newline>
     try std.testing.expectEqualSlices(u8, " \n", try parseQuotedAsciiString(
         arena,
         "\"\n\r\r  \r\n \t  \"",
+        0,
     ));
 }
 

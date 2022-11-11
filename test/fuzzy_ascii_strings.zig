@@ -1,6 +1,5 @@
 const std = @import("std");
 const resinator = @import("resinator");
-const utils = @import("utils.zig");
 
 test "single chars" {
     const allocator = std.testing.allocator;

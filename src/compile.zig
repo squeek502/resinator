@@ -127,6 +127,28 @@ pub const Compiler = struct {
         }
     };
 
+    pub fn calculateColumnOfToken(self: *Compiler, token: Token) usize {
+        const line_start = line_start: {
+            var index = token.start;
+            while (true) {
+                if (self.source[index] == '\n') break :line_start index + 1;
+                if (index != 0) index -= 1 else break;
+            }
+            break :line_start 0;
+        };
+
+        var i: usize = line_start;
+        var column: usize = 0;
+        while (i < token.start) : (i += 1) {
+            const c = self.source[i];
+            switch (c) {
+                '\t' => column += @import("literals.zig").columnsUntilTabStop(column),
+                else => column += 1,
+            }
+        }
+        return column;
+    }
+
     pub fn evaluateFilenameExpression(self: *Compiler, expression_node: *Node) !Filename {
         switch (expression_node.id) {
             .literal => {
@@ -138,7 +160,8 @@ pub const Compiler = struct {
                     },
                     .quoted_ascii_string => {
                         const slice = literal_node.token.slice(self.source);
-                        const parsed = try parseQuotedAsciiString(self.allocator, slice);
+                        const column = self.calculateColumnOfToken(literal_node.token);
+                        const parsed = try parseQuotedAsciiString(self.allocator, slice, column);
                         return .{ .utf8 = parsed, .needs_free = true };
                     },
                     .quoted_wide_string => {
@@ -243,7 +266,8 @@ pub const Compiler = struct {
                     },
                     .quoted_ascii_string => {
                         const slice = literal_node.token.slice(self.source);
-                        const parsed = try parseQuotedAsciiString(self.allocator, slice);
+                        const column = self.calculateColumnOfToken(literal_node.token);
+                        const parsed = try parseQuotedAsciiString(self.allocator, slice, column);
                         errdefer self.allocator.free(parsed);
                         return .{ .ascii_string = parsed };
                     },
