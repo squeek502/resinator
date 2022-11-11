@@ -290,7 +290,6 @@ pub const Parser = struct {
     }
 
     fn checkResource(self: *Self) !Resource {
-        std.debug.print("{any}\n", .{self.state.token});
         switch (self.state.token.id) {
             .literal => return Resource.fromString(self.state.token.slice(self.lexer.buffer)),
             else => {

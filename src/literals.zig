@@ -33,6 +33,14 @@ pub const Number = struct {
     }
 };
 
+/// Assumes that number literals normally rejected by RC's preprocessor
+/// are similarly rejected before being parsed.
+///
+/// Relevant RC preprocessor errors:
+///  RC2021: expected exponent value, not '<digit>'
+///   example that is rejected: 1e1
+///   example that is accepted: 1ea
+///   (this function will parse the two examples above the same)
 pub fn parseNumberLiteral(str: []const u8) Number {
     std.debug.assert(str.len > 0);
     var result = Number{ .value = 0, .is_long = false };
@@ -54,12 +62,12 @@ pub fn parseNumberLiteral(str: []const u8) Number {
     }
 
     if (buf.len > 2 and buf[0] == '0') {
-        switch (std.ascii.toLower(str[1])) {
-            'o' => {
+        switch (buf[1]) {
+            'o' => { // octal radix prefix is case-sensitive
                 radix = 8;
                 buf = buf[2..];
             },
-            'x' => {
+            'x', 'X' => {
                 radix = 16;
                 buf = buf[2..];
             },
@@ -112,9 +120,11 @@ test "parse number literal" {
     try std.testing.expectEqual(Number{ .value = 0o20, .is_long = false }, parseNumberLiteral("0o20"));
     try std.testing.expectEqual(Number{ .value = 0o20, .is_long = true }, parseNumberLiteral("0o20L"));
     try std.testing.expectEqual(Number{ .value = 0o2, .is_long = false }, parseNumberLiteral("0o29"));
+    try std.testing.expectEqual(Number{ .value = 0, .is_long = false }, parseNumberLiteral("0O29"));
 
     try std.testing.expectEqual(Number{ .value = 0xFFFFFFFF, .is_long = false }, parseNumberLiteral("-1"));
     try std.testing.expectEqual(Number{ .value = 0xFFFFFFFE, .is_long = false }, parseNumberLiteral("~1"));
     try std.testing.expectEqual(Number{ .value = 0xFFFFFFFF, .is_long = true }, parseNumberLiteral("-4294967297L"));
     try std.testing.expectEqual(Number{ .value = 0xFFFFFFFE, .is_long = true }, parseNumberLiteral("~4294967297L"));
+    try std.testing.expectEqual(Number{ .value = 0xFFFFFFFD, .is_long = false }, parseNumberLiteral("-0X3"));
 }
