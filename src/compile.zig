@@ -7,7 +7,7 @@ const Resource = @import("rc.zig").Resource;
 const Token = @import("lex.zig").Token;
 const Number = @import("literals.zig").Number;
 const parseNumberLiteral = @import("literals.zig").parseNumberLiteral;
-const parseQuotedAsciiString = @import("literals.zig").parseQuotedAsciiString;
+const parseQuotedAsciiStringAlloc = @import("literals.zig").parseQuotedAsciiStringAlloc;
 const parseQuotedWideStringAlloc = @import("literals.zig").parseQuotedWideStringAlloc;
 const res = @import("res.zig");
 const WORD = std.os.windows.WORD;
@@ -138,8 +138,8 @@ pub const Compiler = struct {
                     },
                     .quoted_ascii_string => {
                         const slice = literal_node.token.slice(self.source);
-                        const parsed = parseQuotedAsciiString(slice);
-                        return .{ .utf8 = parsed };
+                        const parsed = try parseQuotedAsciiStringAlloc(self.allocator, slice);
+                        return .{ .utf8 = parsed, .needs_free = true };
                     },
                     .quoted_wide_string => {
                         // TODO: No need to parse this to UTF-16 and then back to UTF-8
@@ -193,6 +193,9 @@ pub const Compiler = struct {
                 .wide_string => |wide_string| {
                     allocator.free(wide_string);
                 },
+                .ascii_string => |ascii_string| {
+                    allocator.free(ascii_string);
+                },
                 else => {},
             }
         }
@@ -240,7 +243,8 @@ pub const Compiler = struct {
                     },
                     .quoted_ascii_string => {
                         const slice = literal_node.token.slice(self.source);
-                        const parsed = parseQuotedAsciiString(slice);
+                        const parsed = try parseQuotedAsciiStringAlloc(self.allocator, slice);
+                        errdefer self.allocator.free(parsed);
                         return .{ .ascii_string = parsed };
                     },
                     .quoted_wide_string => {

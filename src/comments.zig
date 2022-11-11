@@ -15,6 +15,7 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const UncheckedSliceWriter = @import("utils.zig").UncheckedSliceWriter;
 
 /// `buf` must be at least as long as `source`
 /// In-place transformation is supported (i.e. `source` and `buf` can be the same slice)
@@ -154,29 +155,6 @@ pub fn removeCommentsAlloc(allocator: Allocator, source: []const u8) ![]u8 {
     var result = removeComments(source, buf);
     return allocator.shrink(buf, result.len);
 }
-
-/// Like std.io.FixedBufferStream but does no bounds checking
-const UncheckedSliceWriter = struct {
-    const Self = @This();
-
-    pos: usize = 0,
-    slice: []u8,
-
-    fn write(self: *Self, char: u8) void {
-        self.slice[self.pos] = char;
-        self.pos += 1;
-    }
-
-    fn writeSlice(self: *Self, slice: []const u8) void {
-        for (slice) |c| {
-            self.write(c);
-        }
-    }
-
-    fn getWritten(self: Self) []u8 {
-        return self.slice[0..self.pos];
-    }
-};
 
 fn testRemoveComments(expected: []const u8, source: []const u8) !void {
     const result = try removeCommentsAlloc(std.testing.allocator, source);

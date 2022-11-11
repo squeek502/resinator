@@ -1,4 +1,5 @@
 const std = @import("std");
+const UncheckedSliceWriter = @import("utils.zig").UncheckedSliceWriter;
 
 /// rc is maximally liberal in terms of what it accepts as a number literal
 /// for data values. As long as it starts with a number or - or ~, that's good enough.
@@ -10,10 +11,177 @@ pub fn isValidNumberDataLiteral(str: []const u8) bool {
     }
 }
 
-/// TODO: Real implementation
-pub fn parseQuotedAsciiString(str: []const u8) []const u8 {
+/// Valid escapes:
+///  "" -> "
+///  \a => 0x08 (not 0x07 like in C)
+///  \n => 0x0A
+///  \r => 0x0D
+///  \t => 0x09
+///  \\ => \
+///  \nnn => byte with numeric value given by nnn interpreted as octal
+///          (wraps on overflow, number of digits can be 1-3)
+///  \xhh => byte with numeric value given by hh interpreted as hex
+///          (number of digits can be 0-2)
+pub fn parseQuotedAsciiString(str: []const u8, dest_buf: []u8) []u8 {
     std.debug.assert(str.len >= 2); // must at least have 2 double quote chars
-    return str[1..(str.len - 1)];
+    std.debug.assert(dest_buf.len >= str.len);
+
+    var source = str[1..(str.len - 1)]; // remove start and end "
+    var writer = UncheckedSliceWriter{ .slice = dest_buf };
+
+    const State = enum {
+        normal,
+        quote,
+        escaped,
+        escaped_octal,
+        escaped_hex,
+    };
+
+    var state: State = .normal;
+    var string_escape_n: u8 = 0;
+    var string_escape_i: std.math.IntFittingRange(0, 3) = 0;
+    var index: usize = 0;
+    while (index < source.len) : (index += 1) {
+        const c = source[index];
+        switch (state) {
+            .normal => switch (c) {
+                '\\' => state = .escaped,
+                '"' => state = .quote,
+                else => writer.write(c),
+            },
+            .quote => switch (c) {
+                '"' => {
+                    // "" => "
+                    writer.write(c);
+                    state = .normal;
+                },
+                else => unreachable, // this is a bug in the lexer
+            },
+            .escaped => switch (c) {
+                '0'...'7' => {
+                    string_escape_n = std.fmt.charToDigit(c, 8) catch unreachable;
+                    string_escape_i = 1;
+                    state = .escaped_octal;
+                },
+                'x' => {
+                    string_escape_n = 0;
+                    string_escape_i = 0;
+                    state = .escaped_hex;
+                },
+                else => {
+                    switch (c) {
+                        'a' => writer.write('\x08'), // might be a bug in RC, but matches its behavior
+                        'n' => writer.write('\n'),
+                        'r' => writer.write('\r'),
+                        't' => writer.write('\t'),
+                        '\\' => writer.write('\\'),
+                        else => {
+                            writer.write('\\');
+                            writer.write(c);
+                        },
+                    }
+                    state = .normal;
+                },
+            },
+            .escaped_octal => switch (c) {
+                '0'...'7' => {
+                    string_escape_n *%= 8;
+                    string_escape_n +%= std.fmt.charToDigit(c, 8) catch unreachable;
+                    string_escape_i += 1;
+                    if (string_escape_i == 3) {
+                        writer.write(string_escape_n);
+                        state = .normal;
+                    }
+                },
+                else => {
+                    // write out whatever byte we have parsed so far
+                    writer.write(string_escape_n);
+                    // backtrack so that we handle the current char properly
+                    index -= 1;
+                    state = .normal;
+                },
+            },
+            .escaped_hex => switch (c) {
+                '0'...'9', 'a'...'f', 'A'...'F' => {
+                    string_escape_n *= 16;
+                    string_escape_n += std.fmt.charToDigit(c, 16) catch unreachable;
+                    string_escape_i += 1;
+                    if (string_escape_i == 2) {
+                        writer.write(string_escape_n);
+                        state = .normal;
+                    }
+                },
+                else => {
+                    // write out whatever byte we have parsed so far
+                    // (even with 0 actual digits, \x alone parses to 0)
+                    writer.write(string_escape_n);
+                    // backtrack so that we handle the current char properly
+                    index -= 1;
+                    state = .normal;
+                },
+            },
+        }
+    }
+
+    switch (state) {
+        .normal => {},
+        .escaped => writer.write('\\'),
+        .escaped_octal, .escaped_hex => writer.write(string_escape_n),
+        .quote => unreachable, // this is a bug in the lexer
+    }
+
+    return writer.getWritten();
+}
+
+pub fn parseQuotedAsciiStringAlloc(allocator: std.mem.Allocator, str: []const u8) ![]u8 {
+    var buf = try std.ArrayList(u8).initCapacity(allocator, str.len);
+    errdefer buf.deinit();
+
+    buf.expandToCapacity();
+    const parsed = parseQuotedAsciiString(str, buf.items);
+    buf.shrinkRetainingCapacity(parsed.len);
+    return buf.toOwnedSlice();
+}
+
+test "parse quoted ascii string" {
+    var buf_arr: [100]u8 = undefined;
+    var buf: []u8 = &buf_arr;
+
+    try std.testing.expectEqualSlices(u8, "hello", parseQuotedAsciiString(
+        \\"hello"
+    , buf));
+    // hex with 0 digits
+    try std.testing.expectEqualSlices(u8, "\x00", parseQuotedAsciiString(
+        \\"\x"
+    , buf));
+    // hex max of 2 digits
+    try std.testing.expectEqualSlices(u8, "\xFFf", parseQuotedAsciiString(
+        \\"\xfff"
+    , buf));
+    // octal with invalid octal digit
+    try std.testing.expectEqualSlices(u8, "\x019", parseQuotedAsciiString(
+        \\"\19"
+    , buf));
+    // escaped quotes
+    try std.testing.expectEqualSlices(u8, " \" ", parseQuotedAsciiString(
+        \\" "" "
+    , buf));
+    // octal overflow
+    try std.testing.expectEqualSlices(u8, "\x01", parseQuotedAsciiString(
+        \\"\401"
+    , buf));
+    // escapes
+    try std.testing.expectEqualSlices(u8, "\x08\n\r\t\\", parseQuotedAsciiString(
+        \\"\a\n\r\t\\"
+    , buf));
+    // backslash on its own
+    try std.testing.expectEqualSlices(u8, "\\", parseQuotedAsciiString(
+        \\"\"
+    , buf));
+    // unrecognized escapes
+    try std.testing.expectEqualSlices(u8, "\\b", parseQuotedAsciiString(
+        \\"\b"
+    , buf));
 }
 
 /// TODO: Real implemenation, probably needing to take code_page into account
