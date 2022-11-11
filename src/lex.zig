@@ -151,6 +151,8 @@ pub const Lexer = struct {
         literal_or_quoted_wide_string,
         quoted_ascii_string,
         quoted_wide_string,
+        quoted_ascii_string_maybe_end,
+        quoted_wide_string_maybe_end,
         literal,
         number_literal,
         preprocessor,
@@ -283,13 +285,19 @@ pub const Lexer = struct {
                     '\r', '\n' => {
                         return LexError.UnfinishedStringLiteral;
                     },
-                    // TODO escaped "
                     '"' => {
-                        result.id = if (state == .quoted_ascii_string) .quoted_ascii_string else .quoted_wide_string;
-                        self.index += 1;
-                        break;
+                        state = if (state == .quoted_ascii_string) .quoted_ascii_string_maybe_end else .quoted_wide_string_maybe_end;
                     },
                     else => {},
+                },
+                .quoted_ascii_string_maybe_end, .quoted_wide_string_maybe_end => switch (c) {
+                    '"' => {
+                        state = if (state == .quoted_ascii_string_maybe_end) .quoted_ascii_string else .quoted_wide_string;
+                    },
+                    else => {
+                        result.id = if (state == .quoted_ascii_string_maybe_end) .quoted_ascii_string else .quoted_wide_string;
+                        break;
+                    },
                 },
             }
         } else { // got EOF
@@ -303,6 +311,9 @@ pub const Lexer = struct {
                 },
                 .number_literal => {
                     result.id = .number;
+                },
+                .quoted_ascii_string_maybe_end, .quoted_wide_string_maybe_end => {
+                    result.id = if (state == .quoted_ascii_string_maybe_end) .quoted_ascii_string else .quoted_wide_string;
                 },
                 .quoted_ascii_string,
                 .quoted_wide_string,
@@ -399,4 +410,10 @@ test "normal: numbers" {
     try testLexNormal("-1", &.{.number});
     try testLexNormal("- 1", &.{ .number, .number });
     try testLexNormal("-a", &.{.number});
+}
+
+test "normal: string literals" {
+    try testLexNormal("\"\"", &.{.quoted_ascii_string});
+    // "" is an escaped "
+    try testLexNormal("\" \"\" \"", &.{.quoted_ascii_string});
 }
