@@ -169,7 +169,8 @@ pub const Compiler = struct {
                         // if it's already UTF-8. Should have a function that parses wide
                         // strings directly to UTF-8.
                         const slice = literal_node.token.slice(self.source);
-                        const parsed_string = try parseQuotedWideStringAlloc(self.allocator, slice);
+                        const column = self.calculateColumnOfToken(literal_node.token);
+                        const parsed_string = try parseQuotedWideStringAlloc(self.allocator, slice, column);
                         defer self.allocator.free(parsed_string);
                         const parsed_as_utf8 = try std.unicode.utf16leToUtf8Alloc(self.allocator, parsed_string);
                         return .{ .utf8 = parsed_as_utf8, .needs_free = true };
@@ -273,7 +274,8 @@ pub const Compiler = struct {
                     },
                     .quoted_wide_string => {
                         const slice = literal_node.token.slice(self.source);
-                        const parsed_string = try parseQuotedWideStringAlloc(self.allocator, slice);
+                        const column = self.calculateColumnOfToken(literal_node.token);
+                        const parsed_string = try parseQuotedWideStringAlloc(self.allocator, slice, column);
                         errdefer self.allocator.free(parsed_string);
                         return .{ .wide_string = parsed_string };
                     },

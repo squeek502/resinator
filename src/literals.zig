@@ -310,10 +310,11 @@ test "parse quoted ascii string" {
 }
 
 /// TODO: Real implemenation, probably needing to take code_page into account
-pub fn parseQuotedWideStringAlloc(allocator: std.mem.Allocator, str: []const u8) ![:0]u16 {
+pub fn parseQuotedWideStringAlloc(allocator: std.mem.Allocator, str: []const u8, start_column: usize) ![:0]u16 {
     std.debug.assert(str.len >= 3); // L""
-    const without_quotes = str[2..(str.len - 1)];
-    return try std.unicode.utf8ToUtf16LeWithNull(allocator, without_quotes);
+    const parsed = try parseQuotedAsciiString(allocator, str[1..], start_column);
+    defer allocator.free(parsed);
+    return try std.unicode.utf8ToUtf16LeWithNull(allocator, parsed);
 }
 
 pub const Number = struct {
