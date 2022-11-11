@@ -63,17 +63,17 @@ pub fn parseQuotedAsciiString(str: []const u8, dest_buf: []u8) []u8 {
                     string_escape_i = 1;
                     state = .escaped_octal;
                 },
-                'x' => {
+                'x', 'X' => {
                     string_escape_n = 0;
                     string_escape_i = 0;
                     state = .escaped_hex;
                 },
                 else => {
                     switch (c) {
-                        'a' => writer.write('\x08'), // might be a bug in RC, but matches its behavior
-                        'n' => writer.write('\n'),
-                        'r' => writer.write('\r'),
-                        't' => writer.write('\t'),
+                        'a', 'A' => writer.write('\x08'), // might be a bug in RC, but matches its behavior
+                        'n', 'N' => writer.write('\n'),
+                        'r', 'R' => writer.write('\r'),
+                        't', 'T' => writer.write('\t'),
                         '\\' => writer.write('\\'),
                         else => {
                             writer.write('\\');
@@ -156,7 +156,7 @@ test "parse quoted ascii string" {
     , buf));
     // hex max of 2 digits
     try std.testing.expectEqualSlices(u8, "\xFFf", parseQuotedAsciiString(
-        \\"\xfff"
+        \\"\XfFf"
     , buf));
     // octal with invalid octal digit
     try std.testing.expectEqualSlices(u8, "\x019", parseQuotedAsciiString(
@@ -173,6 +173,10 @@ test "parse quoted ascii string" {
     // escapes
     try std.testing.expectEqualSlices(u8, "\x08\n\r\t\\", parseQuotedAsciiString(
         \\"\a\n\r\t\\"
+    , buf));
+    // uppercase escapes
+    try std.testing.expectEqualSlices(u8, "\x08\n\r\t\\", parseQuotedAsciiString(
+        \\"\A\N\R\T\\"
     , buf));
     // backslash on its own
     try std.testing.expectEqualSlices(u8, "\\", parseQuotedAsciiString(
