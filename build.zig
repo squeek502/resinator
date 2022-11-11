@@ -50,4 +50,11 @@ pub fn build(b: *std.build.Builder) void {
     fuzzy_number_expressions.addPackage(resinator);
     const fuzzy_number_expressions_step = b.step("test_fuzzy_number_expressions", "Simple fuzz testing for number expressions");
     fuzzy_number_expressions_step.dependOn(&fuzzy_number_expressions.step);
+
+    var fuzzy_ascii_strings = b.addTest("test/fuzzy_ascii_strings.zig");
+    fuzzy_ascii_strings.setBuildMode(mode);
+    fuzzy_ascii_strings.setTarget(target);
+    fuzzy_ascii_strings.addPackage(resinator);
+    const fuzzy_ascii_strings_step = b.step("test_fuzzy_ascii_strings", "Simple fuzz testing for ascii string literals");
+    fuzzy_ascii_strings_step.dependOn(&fuzzy_ascii_strings.step);
 }

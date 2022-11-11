@@ -71,3 +71,18 @@ pub fn randomOperator(rand: std.rand.Random) u8 {
     const index = rand.uintLessThanBiased(u8, dict.len);
     return dict[index];
 }
+
+pub fn randomAsciiStringLiteral(allocator: Allocator, rand: std.rand.Random) ![]const u8 {
+    var buf = std.ArrayList(u8).init(allocator);
+    errdefer buf.deinit();
+
+    try buf.append('"');
+
+    // for now, just a backslash and then a random alphanumeric
+    try buf.append('\\');
+    try buf.append(randomAlphanumeric(rand));
+
+    try buf.append('"');
+
+    return buf.toOwnedSlice();
+}
