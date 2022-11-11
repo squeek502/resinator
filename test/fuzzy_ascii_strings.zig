@@ -2,6 +2,39 @@ const std = @import("std");
 const resinator = @import("resinator");
 const utils = @import("utils.zig");
 
+test "single chars" {
+    const allocator = std.testing.allocator;
+    var buffer = std.ArrayList(u8).init(allocator);
+    defer buffer.deinit();
+
+    var source_buf = "1 RCDATA { \"?\" }".*;
+    var source: []u8 = &source_buf;
+    const byte_index = std.mem.indexOfScalar(u8, source, '?').?;
+    var byte: u8 = 0;
+    while (true) : (byte += 1) {
+        // quotes are a special case that shouldn't be tested here
+        if (byte == '"') continue;
+
+        source[byte_index] = byte;
+
+        const expected_res = resinator.compile.getExpectedFromWindowsRC(allocator, source) catch {
+            std.debug.print("\n^^^^^^^^^^^^\nFound input that is rejected by the Windows RC compiler:\n\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
+            if (byte != 255) continue else break;
+        };
+        defer allocator.free(expected_res);
+
+        buffer.shrinkRetainingCapacity(0);
+        try resinator.compile.compile(allocator, source, buffer.writer(), std.fs.cwd());
+
+        std.testing.expectEqualSlices(u8, expected_res, buffer.items) catch {
+            std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
+            continue;
+        };
+
+        if (byte == 255) break;
+    }
+}
+
 test "single char escapes" {
     const allocator = std.testing.allocator;
     var buffer = std.ArrayList(u8).init(allocator);
@@ -16,7 +49,6 @@ test "single char escapes" {
         if (escaped_byte == '"') continue;
 
         source[escaped_byte_index] = escaped_byte;
-        std.debug.print("Testing byte: {x}\n", .{escaped_byte});
 
         const expected_res = resinator.compile.getExpectedFromWindowsRC(allocator, source) catch {
             std.debug.print("\n^^^^^^^^^^^^\nFound input that is rejected by the Windows RC compiler:\n\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
@@ -28,7 +60,7 @@ test "single char escapes" {
         try resinator.compile.compile(allocator, source, buffer.writer(), std.fs.cwd());
 
         std.testing.expectEqualSlices(u8, expected_res, buffer.items) catch {
-            std.debug.print("\nSource:\n{s}\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
+            std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
             continue;
         };
 
