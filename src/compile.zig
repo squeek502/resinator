@@ -7,7 +7,7 @@ const Resource = @import("rc.zig").Resource;
 const Token = @import("lex.zig").Token;
 const Number = @import("literals.zig").Number;
 const parseNumberLiteral = @import("literals.zig").parseNumberLiteral;
-const parseQuotedAsciiStringAlloc = @import("literals.zig").parseQuotedAsciiStringAlloc;
+const parseQuotedAsciiString = @import("literals.zig").parseQuotedAsciiString;
 const parseQuotedWideStringAlloc = @import("literals.zig").parseQuotedWideStringAlloc;
 const res = @import("res.zig");
 const WORD = std.os.windows.WORD;
@@ -138,7 +138,7 @@ pub const Compiler = struct {
                     },
                     .quoted_ascii_string => {
                         const slice = literal_node.token.slice(self.source);
-                        const parsed = try parseQuotedAsciiStringAlloc(self.allocator, slice);
+                        const parsed = try parseQuotedAsciiString(self.allocator, slice);
                         return .{ .utf8 = parsed, .needs_free = true };
                     },
                     .quoted_wide_string => {
@@ -243,7 +243,7 @@ pub const Compiler = struct {
                     },
                     .quoted_ascii_string => {
                         const slice = literal_node.token.slice(self.source);
-                        const parsed = try parseQuotedAsciiStringAlloc(self.allocator, slice);
+                        const parsed = try parseQuotedAsciiString(self.allocator, slice);
                         errdefer self.allocator.free(parsed);
                         return .{ .ascii_string = parsed };
                     },

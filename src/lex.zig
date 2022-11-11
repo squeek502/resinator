@@ -282,9 +282,6 @@ pub const Lexer = struct {
                     else => {},
                 },
                 .quoted_ascii_string, .quoted_wide_string => switch (c) {
-                    '\r', '\n' => {
-                        return LexError.UnfinishedStringLiteral;
-                    },
                     '"' => {
                         state = if (state == .quoted_ascii_string) .quoted_ascii_string_maybe_end else .quoted_wide_string_maybe_end;
                     },

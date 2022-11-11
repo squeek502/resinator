@@ -1,5 +1,4 @@
 const std = @import("std");
-const UncheckedSliceWriter = @import("utils.zig").UncheckedSliceWriter;
 
 /// rc is maximally liberal in terms of what it accepts as a number literal
 /// for data values. As long as it starts with a number or - or ~, that's good enough.
@@ -13,51 +12,97 @@ pub fn isValidNumberDataLiteral(str: []const u8) bool {
 
 /// Valid escapes:
 ///  "" -> "
-///  \a => 0x08 (not 0x07 like in C)
+///  \a, \A => 0x08 (not 0x07 like in C)
 ///  \n => 0x0A
 ///  \r => 0x0D
-///  \t => 0x09
+///  \t, \T => 0x09
 ///  \\ => \
 ///  \nnn => byte with numeric value given by nnn interpreted as octal
 ///          (wraps on overflow, number of digits can be 1-3)
 ///  \xhh => byte with numeric value given by hh interpreted as hex
 ///          (number of digits can be 0-2)
-pub fn parseQuotedAsciiString(str: []const u8, dest_buf: []u8) []u8 {
+///  \<\r> => \
+///  \<[\r\n\t ]+> => <nothing>
+///
+/// Special cases:
+///  <\t> => 1-8 spaces, dependent on columns in the source rc file itself
+///  <\r> => <nothing>
+///  <\n+><\w+?\n?> => <space>\n
+pub fn parseQuotedAsciiString(allocator: std.mem.Allocator, str: []const u8) ![]u8 {
     std.debug.assert(str.len >= 2); // must at least have 2 double quote chars
-    std.debug.assert(dest_buf.len >= str.len);
+
+    var buf = try std.ArrayList(u8).initCapacity(allocator, str.len);
+    errdefer buf.deinit();
 
     var source = str[1..(str.len - 1)]; // remove start and end "
-    var writer = UncheckedSliceWriter{ .slice = dest_buf };
 
     const State = enum {
         normal,
         quote,
+        newline,
         escaped,
+        escaped_cr,
+        escaped_newlines,
         escaped_octal,
         escaped_hex,
     };
 
+    var start_column: usize = 0; // TODO: Take this as an input parameter?
+    var column: usize = start_column + 1; // The starting " is included
     var state: State = .normal;
     var string_escape_n: u8 = 0;
     var string_escape_i: std.math.IntFittingRange(0, 3) = 0;
     var index: usize = 0;
     while (index < source.len) : (index += 1) {
         const c = source[index];
+        var backtrack = false;
+        defer {
+            if (backtrack) {
+                index -= 1;
+            } else {
+                if (c == '\t') {
+                    column += columnsUntilTabStop(column);
+                } else {
+                    column += 1;
+                }
+            }
+        }
         switch (state) {
             .normal => switch (c) {
                 '\\' => state = .escaped,
                 '"' => state = .quote,
-                else => writer.write(c),
+                '\r' => {},
+                '\n' => state = .newline,
+                '\t' => {
+                    var space_i: usize = 0;
+                    const cols = columnsUntilTabStop(column);
+                    while (space_i < cols) : (space_i += 1) {
+                        try buf.append(' ');
+                    }
+                },
+                else => try buf.append(c),
             },
             .quote => switch (c) {
                 '"' => {
                     // "" => "
-                    writer.write(c);
+                    try buf.append(c);
                     state = .normal;
                 },
                 else => unreachable, // this is a bug in the lexer
             },
+            .newline => switch (c) {
+                '\r', ' ', '\t', '\n' => {},
+                else => {
+                    try buf.append(' ');
+                    try buf.append('\n');
+                    // backtrack so that we handle the current char properly
+                    backtrack = true;
+                    state = .normal;
+                },
+            },
             .escaped => switch (c) {
+                '\r' => state = .escaped_cr,
+                '\n' => state = .escaped_newlines,
                 '0'...'7' => {
                     string_escape_n = std.fmt.charToDigit(c, 8) catch unreachable;
                     string_escape_i = 1;
@@ -70,16 +115,35 @@ pub fn parseQuotedAsciiString(str: []const u8, dest_buf: []u8) []u8 {
                 },
                 else => {
                     switch (c) {
-                        'a', 'A' => writer.write('\x08'), // might be a bug in RC, but matches its behavior
-                        'n', 'N' => writer.write('\n'),
-                        'r', 'R' => writer.write('\r'),
-                        't', 'T' => writer.write('\t'),
-                        '\\' => writer.write('\\'),
+                        'a', 'A' => try buf.append('\x08'), // might be a bug in RC, but matches its behavior
+                        'n' => try buf.append('\n'),
+                        'r' => try buf.append('\r'),
+                        't', 'T' => try buf.append('\t'),
+                        '\\' => try buf.append('\\'),
                         else => {
-                            writer.write('\\');
-                            writer.write(c);
+                            try buf.append('\\');
+                            // backtrack so that we handle the current char properly
+                            backtrack = true;
                         },
                     }
+                    state = .normal;
+                },
+            },
+            .escaped_cr => switch (c) {
+                '\r' => {},
+                '\n' => state = .escaped_newlines,
+                else => {
+                    try buf.append('\\');
+                    // backtrack so that we handle the current char properly
+                    backtrack = true;
+                    state = .normal;
+                },
+            },
+            .escaped_newlines => switch (c) {
+                '\r', '\n', '\t', ' ' => {},
+                else => {
+                    // backtrack so that we handle the current char properly
+                    backtrack = true;
                     state = .normal;
                 },
             },
@@ -89,15 +153,15 @@ pub fn parseQuotedAsciiString(str: []const u8, dest_buf: []u8) []u8 {
                     string_escape_n +%= std.fmt.charToDigit(c, 8) catch unreachable;
                     string_escape_i += 1;
                     if (string_escape_i == 3) {
-                        writer.write(string_escape_n);
+                        try buf.append(string_escape_n);
                         state = .normal;
                     }
                 },
                 else => {
                     // write out whatever byte we have parsed so far
-                    writer.write(string_escape_n);
+                    try buf.append(string_escape_n);
                     // backtrack so that we handle the current char properly
-                    index -= 1;
+                    backtrack = true;
                     state = .normal;
                 },
             },
@@ -107,16 +171,16 @@ pub fn parseQuotedAsciiString(str: []const u8, dest_buf: []u8) []u8 {
                     string_escape_n += std.fmt.charToDigit(c, 16) catch unreachable;
                     string_escape_i += 1;
                     if (string_escape_i == 2) {
-                        writer.write(string_escape_n);
+                        try buf.append(string_escape_n);
                         state = .normal;
                     }
                 },
                 else => {
                     // write out whatever byte we have parsed so far
                     // (even with 0 actual digits, \x alone parses to 0)
-                    writer.write(string_escape_n);
+                    try buf.append(string_escape_n);
                     // backtrack so that we handle the current char properly
-                    index -= 1;
+                    backtrack = true;
                     state = .normal;
                 },
             },
@@ -124,68 +188,116 @@ pub fn parseQuotedAsciiString(str: []const u8, dest_buf: []u8) []u8 {
     }
 
     switch (state) {
-        .normal => {},
-        .escaped => writer.write('\\'),
-        .escaped_octal, .escaped_hex => writer.write(string_escape_n),
+        .normal, .escaped_newlines => {},
+        .newline => {
+            try buf.append(' ');
+            try buf.append('\n');
+        },
+        .escaped, .escaped_cr => try buf.append('\\'),
+        .escaped_octal, .escaped_hex => try buf.append(string_escape_n),
         .quote => unreachable, // this is a bug in the lexer
     }
 
-    return writer.getWritten();
-}
-
-pub fn parseQuotedAsciiStringAlloc(allocator: std.mem.Allocator, str: []const u8) ![]u8 {
-    var buf = try std.ArrayList(u8).initCapacity(allocator, str.len);
-    errdefer buf.deinit();
-
-    buf.expandToCapacity();
-    const parsed = parseQuotedAsciiString(str, buf.items);
-    buf.shrinkRetainingCapacity(parsed.len);
     return buf.toOwnedSlice();
 }
 
-test "parse quoted ascii string" {
-    var buf_arr: [100]u8 = undefined;
-    var buf: []u8 = &buf_arr;
+fn columnsUntilTabStop(column: usize) usize {
+    // 0 => 8, 1 => 7, 2 => 6, 3 => 5, 4 => 4
+    // 5 => 3, 6 => 2, 7 => 1, 8 => 8
+    return 8 - (column % 8);
+}
 
-    try std.testing.expectEqualSlices(u8, "hello", parseQuotedAsciiString(
+test "parse quoted ascii string" {
+    var arena_allocator = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_allocator.deinit();
+    const arena = arena_allocator.allocator();
+
+    try std.testing.expectEqualSlices(u8, "hello", try parseQuotedAsciiString(arena,
         \\"hello"
-    , buf));
+    ));
     // hex with 0 digits
-    try std.testing.expectEqualSlices(u8, "\x00", parseQuotedAsciiString(
+    try std.testing.expectEqualSlices(u8, "\x00", try parseQuotedAsciiString(arena,
         \\"\x"
-    , buf));
+    ));
     // hex max of 2 digits
-    try std.testing.expectEqualSlices(u8, "\xFFf", parseQuotedAsciiString(
+    try std.testing.expectEqualSlices(u8, "\xFFf", try parseQuotedAsciiString(arena,
         \\"\XfFf"
-    , buf));
+    ));
     // octal with invalid octal digit
-    try std.testing.expectEqualSlices(u8, "\x019", parseQuotedAsciiString(
+    try std.testing.expectEqualSlices(u8, "\x019", try parseQuotedAsciiString(arena,
         \\"\19"
-    , buf));
+    ));
     // escaped quotes
-    try std.testing.expectEqualSlices(u8, " \" ", parseQuotedAsciiString(
+    try std.testing.expectEqualSlices(u8, " \" ", try parseQuotedAsciiString(arena,
         \\" "" "
-    , buf));
+    ));
     // octal overflow
-    try std.testing.expectEqualSlices(u8, "\x01", parseQuotedAsciiString(
+    try std.testing.expectEqualSlices(u8, "\x01", try parseQuotedAsciiString(arena,
         \\"\401"
-    , buf));
+    ));
     // escapes
-    try std.testing.expectEqualSlices(u8, "\x08\n\r\t\\", parseQuotedAsciiString(
+    try std.testing.expectEqualSlices(u8, "\x08\n\r\t\\", try parseQuotedAsciiString(arena,
         \\"\a\n\r\t\\"
-    , buf));
+    ));
     // uppercase escapes
-    try std.testing.expectEqualSlices(u8, "\x08\n\r\t\\", parseQuotedAsciiString(
+    try std.testing.expectEqualSlices(u8, "\x08\\N\\R\t\\", try parseQuotedAsciiString(arena,
         \\"\A\N\R\T\\"
-    , buf));
+    ));
     // backslash on its own
-    try std.testing.expectEqualSlices(u8, "\\", parseQuotedAsciiString(
+    try std.testing.expectEqualSlices(u8, "\\", try parseQuotedAsciiString(arena,
         \\"\"
-    , buf));
+    ));
     // unrecognized escapes
-    try std.testing.expectEqualSlices(u8, "\\b", parseQuotedAsciiString(
+    try std.testing.expectEqualSlices(u8, "\\b", try parseQuotedAsciiString(arena,
         \\"\b"
-    , buf));
+    ));
+    // escaped carriage returns
+    try std.testing.expectEqualSlices(u8, "\\", try parseQuotedAsciiString(
+        arena,
+        "\"\\\r\r\r\r\r\"",
+    ));
+    // escaped newlines
+    try std.testing.expectEqualSlices(u8, "", try parseQuotedAsciiString(
+        arena,
+        "\"\\\n\n\n\n\n\"",
+    ));
+    // escaped CRLF pairs
+    try std.testing.expectEqualSlices(u8, "", try parseQuotedAsciiString(
+        arena,
+        "\"\\\r\n\r\n\r\n\r\n\r\n\"",
+    ));
+    // escaped newlines with other whitespace
+    try std.testing.expectEqualSlices(u8, "", try parseQuotedAsciiString(
+        arena,
+        "\"\\\n    \t\r\n \r\t\n  \t\"",
+    ));
+    // literal tab characters get converted to spaces (dependent on source file columns)
+    try std.testing.expectEqualSlices(u8, "       ", try parseQuotedAsciiString(
+        arena,
+        "\"\t\"",
+    ));
+    try std.testing.expectEqualSlices(u8, "abc    ", try parseQuotedAsciiString(
+        arena,
+        "\"abc\t\"",
+    ));
+    try std.testing.expectEqualSlices(u8, "abcdefg        ", try parseQuotedAsciiString(
+        arena,
+        "\"abcdefg\t\"",
+    ));
+    try std.testing.expectEqualSlices(u8, "\\      ", try parseQuotedAsciiString(
+        arena,
+        "\"\\\t\"",
+    ));
+    // literal CR's get dropped
+    try std.testing.expectEqualSlices(u8, "", try parseQuotedAsciiString(
+        arena,
+        "\"\r\r\r\r\r\"",
+    ));
+    // contiguous newlines and whitespace get collapsed to <space><newline>
+    try std.testing.expectEqualSlices(u8, " \n", try parseQuotedAsciiString(
+        arena,
+        "\"\n\r\r  \r\n \t  \"",
+    ));
 }
 
 /// TODO: Real implemenation, probably needing to take code_page into account
