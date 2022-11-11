@@ -21,13 +21,13 @@ pub fn isValidNumberDataLiteral(str: []const u8) bool {
 ///          (wraps on overflow, number of digits can be 1-3)
 ///  \xhh => byte with numeric value given by hh interpreted as hex
 ///          (number of digits can be 0-2)
-///  \<\r> => \
+///  \<\r+> => \
 ///  \<[\r\n\t ]+> => <nothing>
 ///
 /// Special cases:
 ///  <\t> => 1-8 spaces, dependent on columns in the source rc file itself
 ///  <\r> => <nothing>
-///  <\n+><\w+?\n?> => <space>\n
+///  <\n+><\w+?\n?> => <space><\n>
 pub fn parseQuotedAsciiString(allocator: std.mem.Allocator, str: []const u8) ![]u8 {
     std.debug.assert(str.len >= 2); // must at least have 2 double quote chars
 
