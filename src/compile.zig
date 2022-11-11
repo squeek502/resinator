@@ -129,10 +129,13 @@ pub const Compiler = struct {
 
     pub fn calculateColumnOfToken(self: *Compiler, token: Token) usize {
         const line_start = line_start: {
-            var index = token.start;
-            while (true) {
-                if (self.source[index] == '\n') break :line_start index + 1;
-                if (index != 0) index -= 1 else break;
+            if (token.start != 0) {
+                // start checking at the byte before the token
+                var index = token.start - 1;
+                while (true) {
+                    if (self.source[index] == '\n') break :line_start index + 1;
+                    if (index != 0) index -= 1 else break;
+                }
             }
             break :line_start 0;
         };
