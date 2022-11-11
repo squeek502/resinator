@@ -17,17 +17,32 @@ pub fn randomNumberLiteral(allocator: Allocator, rand: std.rand.Random) ![]const
     const has_radix = rand.boolean();
     if (has_radix) {
         try buf.append('0');
-        try buf.append(randomAlphanumeric(rand));
+        var radix_specifier = randomAlphanumeric(rand);
+        // The Windows RC preprocessor rejects number literals of the pattern \d+[eE]\d
+        // so just switch to x to avoid this cropping up a ton.
+        //
+        // Note: This \d+[eE]\d pattern is still possible to generate in the
+        // main number literal component stuff below)
+        if (std.ascii.toLower(radix_specifier) == 'e') radix_specifier += 'x' - 'e';
+        try buf.append(radix_specifier);
     } else {
         // needs to start with a digit
         try buf.append(randomNumeric(rand));
     }
 
     // TODO: increase this limit?
-    const length = rand.int(u8);
+    var length = rand.int(u8);
+    if (length == 0 and !has_radix and prefix == .none) {
+        length = 1;
+    }
+    const num_numeric_digits = rand.uintLessThanBiased(usize, @as(usize, length) + 1);
     var i: usize = 0;
     while (i < length) : (i += 1) {
-        try buf.append(randomAlphanumeric(rand));
+        if (i < num_numeric_digits) {
+            try buf.append(randomNumeric(rand));
+        } else {
+            try buf.append(randomAlphanumeric(rand));
+        }
     }
 
     return buf.toOwnedSlice();
