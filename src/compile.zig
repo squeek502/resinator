@@ -9,6 +9,7 @@ const Number = @import("literals.zig").Number;
 const parseNumberLiteral = @import("literals.zig").parseNumberLiteral;
 const parseQuotedAsciiString = @import("literals.zig").parseQuotedAsciiString;
 const parseQuotedWideStringAlloc = @import("literals.zig").parseQuotedWideStringAlloc;
+const columnsUntilTabStop = @import("literals.zig").columnsUntilTabStop;
 const res = @import("res.zig");
 const WORD = std.os.windows.WORD;
 const DWORD = std.os.windows.DWORD;
@@ -145,7 +146,7 @@ pub const Compiler = struct {
         while (i < token.start) : (i += 1) {
             const c = self.source[i];
             switch (c) {
-                '\t' => column += @import("literals.zig").columnsUntilTabStop(column),
+                '\t' => column += columnsUntilTabStop(column),
                 else => column += 1,
             }
         }
