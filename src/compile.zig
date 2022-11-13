@@ -402,17 +402,14 @@ pub const Compiler = struct {
     };
 
     pub fn writeEmptyResource(writer: anytype) !void {
-        try writer.writeIntLittle(DWORD, 0); // DataSize
-        try writer.writeIntLittle(DWORD, 32); // HeaderSize
-        try writer.writeIntLittle(WORD, 0xffff);
-        try writer.writeIntLittle(WORD, 0x0000); // TYPE
-        try writer.writeIntLittle(WORD, 0xffff);
-        try writer.writeIntLittle(WORD, 0x0000); // NAME
-        try writer.writeIntLittle(DWORD, 0); // DataVersion
-        try writer.writeIntLittle(WORD, 0); // MemoryFlags
-        try writer.writeIntLittle(WORD, 0); // LanguageId
-        try writer.writeIntLittle(DWORD, 0); // Version
-        try writer.writeIntLittle(DWORD, 0); // Characteristics
+        const header = ResourceHeader{
+            .name_value = .{ .ordinal = 0 },
+            .type_value = .{ .ordinal = 0 },
+            .language = 0,
+            .memory_flags = 0,
+            .data_size = 0,
+        };
+        try header.write(writer);
     }
 };
 
