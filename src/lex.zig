@@ -5,8 +5,6 @@
 //! - All comments have been removed.
 
 const std = @import("std");
-const Resource = @import("rc.zig").Resource;
-const isValidNumberDataLiteral = @import("literals.zig").isValidNumberDataLiteral;
 
 const dumpTokensDuringTests = true;
 
@@ -38,7 +36,6 @@ pub const Token = struct {
 
 pub const LexError = error{
     UnfinishedStringLiteral,
-    UnfinishedComment,
 };
 
 pub const Lexer = struct {
@@ -48,8 +45,6 @@ pub const Lexer = struct {
     index: usize,
     line_number: usize = 1,
     at_start_of_line: bool = true,
-    state_modifier: StateModifier = .none,
-    resource_type_seen: ?Resource = null,
 
     pub const Error = LexError;
 
@@ -63,14 +58,6 @@ pub const Lexer = struct {
     pub fn dump(self: *Self, token: *const Token) void {
         std.debug.print("{s}:{d}: {s}\n", .{ @tagName(token.id), token.line_number, std.fmt.fmtSliceEscapeLower(token.slice(self.buffer)) });
     }
-
-    const StateModifier = enum {
-        none,
-        seen_id,
-        seen_type,
-        scope_data,
-        language,
-    };
 
     const StateWhitespaceDelimiterOnly = enum {
         start,
@@ -322,12 +309,6 @@ pub const Lexer = struct {
         return result;
     }
 
-    const StateNumberExpression = enum {
-        start,
-        invalid,
-        number_literal,
-    };
-
     /// Like incrementLineNumber but checks that the current char is a line ending first
     fn maybeIncrementLineNumber(self: *Self, last_line_ending_index: *?usize) usize {
         const c = self.buffer[self.index];
@@ -372,18 +353,6 @@ pub const Lexer = struct {
         return true;
     }
 };
-
-const common_resource_attributes_set = std.ComptimeStringMap(void, .{
-    .{"PRELOAD"},
-    .{"LOADONCALL"},
-    .{"FIXED"},
-    .{"MOVEABLE"},
-    .{"DISCARDABLE"},
-    .{"PURE"},
-    .{"IMPURE"},
-    .{"SHARED"},
-    .{"NONSHARED"},
-});
 
 fn testLexNormal(source: []const u8, expected_tokens: []const Token.Id) !void {
     var lexer = Lexer.init(source);

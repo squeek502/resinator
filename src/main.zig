@@ -55,5 +55,5 @@ pub fn main() !void {
     var output_file = try std.fs.cwd().createFile(output_filename, .{});
     defer output_file.close();
 
-    try compile(allocator, preprocessed_input, output_file.writer());
+    try compile(allocator, preprocessed_input, output_file.writer(), std.fs.cwd());
 }

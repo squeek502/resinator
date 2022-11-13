@@ -218,6 +218,9 @@ pub const Compiler = struct {
                     const icon_dir = try ico.read(self.allocator, file.reader());
                     defer icon_dir.deinit();
 
+                    // TODO: Could emit a warning if `icon_dir.image_type` doesn't match the predefined type.
+                    //       The Windows RC compiler doesn't, but it seems like it'd be helpful.
+
                     const first_icon_id = self.state.icon_id;
                     const entry_type = if (predefined_type == .GROUP_ICON) @enumToInt(res.RT.ICON) else @enumToInt(res.RT.CURSOR);
                     for (icon_dir.entries) |entry| {
