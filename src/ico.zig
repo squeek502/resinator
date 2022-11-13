@@ -66,6 +66,18 @@ pub const IconDir = struct {
     pub fn deinit(self: IconDir) void {
         self.allocator.free(self.entries);
     }
+
+    pub fn writeResData(self: IconDir, writer: anytype, first_image_id: u16) !void {
+        try writer.writeIntLittle(u16, 0);
+        try writer.writeIntLittle(u16, @enumToInt(self.image_type));
+        try writer.writeIntLittle(u16, @intCast(u16, self.entries.len));
+
+        var image_id = first_image_id;
+        for (self.entries) |entry| {
+            try entry.writeResData(writer, image_id);
+            image_id += 1;
+        }
+    }
 };
 
 pub const Entry = struct {
@@ -84,11 +96,29 @@ pub const Entry = struct {
     },
     data_size_in_bytes: u32,
     data_offset_from_start_of_file: u32,
+
+    pub fn writeResData(self: Entry, writer: anytype, id: u16) !void {
+        try writer.writeIntLittle(u8, self.width);
+        try writer.writeIntLittle(u8, self.height);
+        try writer.writeIntLittle(u8, self.num_colors);
+        try writer.writeIntLittle(u8, 0); // reserved
+        switch (self.type_specific_data) {
+            .icon => |icon_data| {
+                try writer.writeIntLittle(u16, icon_data.color_planes);
+                try writer.writeIntLittle(u16, icon_data.bits_per_pixel);
+            },
+            .cursor => |cursor_data| {
+                try writer.writeIntLittle(u16, cursor_data.hotspot_x);
+                try writer.writeIntLittle(u16, cursor_data.hotspot_y);
+            },
+        }
+        try writer.writeIntLittle(u32, self.data_size_in_bytes);
+        try writer.writeIntLittle(u16, id);
+    }
 };
 
 test "icon" {
-    const data = "\x00\x00\x01\x00\x03\x00\x10\x10\x00\x00\x01\x00\x20\x00\x68\x04\x00\x00\x36\x00\x00\x00\x20\x20\x00\x00\x01\x00\x20\x00\xA8\x10\x00\x00\x9E\x04\x00\x00\x30\x30\x00\x00\x01\x00\x20\x00\xA8\x25\x00\x00\x46\x15\x00\x00";
-    var fbs = std.io.fixedBufferStream(data[0..]);
+    var fbs = std.io.fixedBufferStream("\x00\x00\x01\x00\x03\x00\x10\x10\x00\x00\x01\x00\x20\x00\x68\x04\x00\x00\x36\x00\x00\x00\x20\x20\x00\x00\x01\x00\x20\x00\xA8\x10\x00\x00\x9E\x04\x00\x00\x30\x30\x00\x00\x01\x00\x20\x00\xA8\x25\x00\x00\x46\x15\x00\x00");
     const icon = try read(std.testing.allocator, fbs.reader());
     defer icon.deinit();
 

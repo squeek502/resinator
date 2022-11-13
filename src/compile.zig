@@ -11,6 +11,7 @@ const parseQuotedAsciiString = @import("literals.zig").parseQuotedAsciiString;
 const parseQuotedWideStringAlloc = @import("literals.zig").parseQuotedWideStringAlloc;
 const columnsUntilTabStop = @import("literals.zig").columnsUntilTabStop;
 const res = @import("res.zig");
+const ico = @import("ico.zig");
 const WORD = std.os.windows.WORD;
 const DWORD = std.os.windows.DWORD;
 
@@ -39,8 +40,11 @@ pub const Compiler = struct {
     arena: Allocator,
     allocator: Allocator,
     cwd: std.fs.Dir,
+    state: State = .{},
 
-    pub const State = struct {};
+    pub const State = struct {
+        icon_id: u16 = 1,
+    };
 
     pub fn writeRoot(self: *Compiler, root: *Node.Root, writer: anytype) !void {
         try writeEmptyResource(writer);
@@ -201,15 +205,54 @@ pub const Compiler = struct {
         defer filename.deinit(self.allocator);
 
         // TODO: emit error on file not found
-        const contents: []const u8 = self.cwd.readFileAlloc(self.allocator, filename.utf8, std.math.maxInt(u32)) catch "";
-        defer self.allocator.free(contents);
+        const file = self.cwd.openFile(filename.utf8, .{}) catch @panic("TODO openFile error handling");
+        defer file.close();
 
-        const header = try ResourceHeader.init(self.allocator, node.id.slice(self.source), node.type.slice(self.source), @intCast(u32, contents.len));
+        // Init header with data size zero for now, will need to fill it in later
+        var header = try ResourceHeader.init(self.allocator, node.id.slice(self.source), node.type.slice(self.source), 0);
         defer header.deinit(self.allocator);
-        try header.write(writer);
 
-        var data_fbs = std.io.fixedBufferStream(contents);
-        try self.writeResourceData(writer, data_fbs.reader(), @intCast(u32, contents.len));
+        if (header.predefinedResourceType()) |predefined_type| {
+            switch (predefined_type) {
+                .GROUP_ICON => {
+                    const icon_dir = try ico.read(self.allocator, file.reader());
+                    defer icon_dir.deinit();
+
+                    const first_icon_id = self.state.icon_id;
+                    for (icon_dir.entries) |entry| {
+                        const image_header = ResourceHeader{
+                            .type_value = .{ .ordinal = @enumToInt(res.RT.ICON) },
+                            .name_value = .{ .ordinal = self.state.icon_id },
+                            .memory_flags = 0x1010, // TODO
+                            .data_size = entry.data_size_in_bytes,
+                        };
+                        try image_header.write(writer);
+                        try file.seekTo(entry.data_offset_from_start_of_file);
+                        try self.writeResourceData(writer, file.reader(), image_header.data_size);
+                        self.state.icon_id += 1;
+                    }
+
+                    // TODO: Move this in a function somewhere that makes sense
+                    header.data_size = @intCast(u32, 6 + 14 * icon_dir.entries.len);
+                    header.memory_flags = 0x1030; // TODO
+
+                    try header.write(writer);
+                    try icon_dir.writeResData(writer, first_icon_id);
+                    return;
+                },
+                .RCDATA => {},
+                else => {
+                    std.debug.print("Type: {}\n", .{predefined_type});
+                    @panic("TODO writeResourceExternal");
+                },
+            }
+        }
+
+        // Fallback to just writing out the entire contents of the file
+        // TODO: How does the Windows RC compiler handle file sizes over u32 max?
+        header.data_size = @intCast(u32, try file.getEndPos());
+        try header.write(writer);
+        try self.writeResourceData(writer, file.reader(), header.data_size);
     }
 
     pub const DataType = enum {
@@ -398,6 +441,39 @@ pub const Compiler = struct {
             try writer.writeIntLittle(WORD, self.language); // LanguageId
             try writer.writeIntLittle(DWORD, 0); // Version
             try writer.writeIntLittle(DWORD, 0); // Characteristics
+        }
+
+        pub fn predefinedResourceType(self: ResourceHeader) ?res.RT {
+            switch (self.type_value) {
+                .ordinal => |ordinal| {
+                    switch (@intToEnum(res.RT, ordinal)) {
+                        .ACCELERATOR,
+                        .ANICURSOR,
+                        .ANIICON,
+                        .BITMAP,
+                        .CURSOR,
+                        .DIALOG,
+                        .DLGINCLUDE,
+                        .FONT,
+                        .FONTDIR,
+                        .GROUP_CURSOR,
+                        .GROUP_ICON,
+                        .HTML,
+                        .ICON,
+                        .MANIFEST,
+                        .MENU,
+                        .MESSAGETABLE,
+                        .PLUGPLAY,
+                        .RCDATA,
+                        .STRING,
+                        .VERSION,
+                        .VXD,
+                        => |rt| return rt,
+                        _ => return null,
+                    }
+                },
+                .name => return null,
+            }
         }
     };
 
@@ -603,5 +679,23 @@ test "zero as a NameOrOrdinal" {
         "0 0 { \"hello\" }",
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x05\x00\x00\x00 \x00\x00\x000\x00\x00\x000\x00\x00\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00hello\x00\x00\x00",
         std.fs.cwd(),
+    );
+}
+
+test "basic icon" {
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    // TODO: If the .ico is malformed, then things get weird, i.e. if an entry's bits_per_pixel
+    //       or num_colors or data_size is wrong (with respect to the bitmap data?) then the .res
+    //       can get weird values written to the ICONDIR data for things like bits_per_pixel.
+
+    // This is a well-formed .ico with a 1x1 bmp icon
+    try tmp_dir.dir.writeFile("test.ico", "\x00\x00\x01\x00\x01\x00\x01\x01\x00\x00\x01\x00 \x000\x00\x00\x00\x16\x00\x00\x00(\x00\x00\x00\x01\x00\x00\x00\x02\x00\x00\x00\x01\x00 \x00\x00\x00\x00\x00\x04\x00\x00\x00\x12\x0b\x00\x00\x12\x0b\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff\xff\xff\x00\x00\x00\x00");
+
+    try testCompileWithOutput(
+        "1 ICON test.ico",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x000\x00\x00\x00 \x00\x00\x00\xff\xff\x03\x00\xff\xff\x01\x00\x00\x00\x00\x00\x10\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00(\x00\x00\x00\x01\x00\x00\x00\x02\x00\x00\x00\x01\x00 \x00\x00\x00\x00\x00\x04\x00\x00\x00\x12\x0b\x00\x00\x12\x0b\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff\xff\xff\x00\x00\x00\x00\x14\x00\x00\x00 \x00\x00\x00\xff\xff\x0e\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x01\x00\x01\x01\x00\x00\x01\x00 \x000\x00\x00\x00\x01\x00",
+        tmp_dir.dir,
     );
 }

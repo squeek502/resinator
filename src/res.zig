@@ -30,12 +30,12 @@ pub const RT = enum(u8) {
         return switch (resource) {
             .accelerators => .ACCELERATOR,
             .bitmap => .BITMAP,
-            .cursor => .CURSOR,
+            .cursor => .GROUP_CURSOR,
             .dialog => .DIALOG,
             .dialogex => null, // TODO: ?
             .font => .FONT,
             .html => .HTML,
-            .icon => .ICON,
+            .icon => .GROUP_ICON,
             .menu => .MENU,
             .menuex => null, // TODO: ?
             .messagetable => .MESSAGETABLE,
