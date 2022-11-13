@@ -204,7 +204,12 @@ pub const Compiler = struct {
         const contents: []const u8 = self.cwd.readFileAlloc(self.allocator, filename.utf8, std.math.maxInt(u32)) catch "";
         defer self.allocator.free(contents);
 
-        try self.writeResource(writer, node.id, node.type, contents);
+        const header = try ResourceHeader.init(self.allocator, node.id.slice(self.source), node.type.slice(self.source), @intCast(u32, contents.len));
+        defer header.deinit(self.allocator);
+        try header.write(writer);
+
+        var data_fbs = std.io.fixedBufferStream(contents);
+        try self.writeResourceData(writer, data_fbs.reader(), @intCast(u32, contents.len));
     }
 
     pub const DataType = enum {
@@ -315,55 +320,86 @@ pub const Compiler = struct {
             try data.write(data_writer);
         }
 
-        try self.writeResource(writer, node.id, node.type, data_buffer.items);
+        try self.writeResourceHeader(writer, node.id, node.type, @intCast(u32, data_buffer.items.len));
+
+        var data_fbs = std.io.fixedBufferStream(data_buffer.items);
+        try self.writeResourceData(writer, data_fbs.reader(), @intCast(u32, data_buffer.items.len));
     }
 
-    pub fn writeResource(self: *Compiler, writer: anytype, id_token: Token, type_token: Token, data: []const u8) !void {
-        const default_language = 0x409;
-        const default_memory_flags = 0x30;
+    pub fn writeResourceHeader(self: *Compiler, writer: anytype, id_token: Token, type_token: Token, data_size: u32) !void {
+        const header = try ResourceHeader.init(self.allocator, id_token.slice(self.source), type_token.slice(self.source), data_size);
+        defer header.deinit(self.allocator);
 
-        const type_value = type: {
-            const resource_type = Resource.fromString(type_token.slice(self.source));
-            if (resource_type != .user_defined) {
-                if (res.RT.fromResource(resource_type)) |rt_constant| {
-                    break :type NameOrOrdinal{ .ordinal = @enumToInt(rt_constant) };
-                } else {
-                    @panic("TODO: unhandled resource -> RT constant conversion");
-                }
-            } else {
-                break :type try NameOrOrdinal.fromString(self.allocator, type_token.slice(self.source));
-            }
-        };
-        defer type_value.deinit(self.allocator);
+        try header.write(writer);
+    }
 
-        // TODO: The type can change how the resource is written to the file
-        //       (i.e. if it's an ICON then the contents should be parsed as a .ico, among
-        //       other things)
+    pub fn writeResourceData(self: *Compiler, writer: anytype, data_reader: anytype, data_size: u32) !void {
+        _ = self;
+        var limited_reader = std.io.limitedReader(data_reader, data_size);
 
-        const name_value = try NameOrOrdinal.fromString(self.allocator, id_token.slice(self.source));
-        defer name_value.deinit(self.allocator);
+        const FifoBuffer = std.fifo.LinearFifo(u8, .{ .Static = 4096 });
+        var fifo = FifoBuffer.init();
+        try fifo.pump(limited_reader.reader(), writer);
 
-        const byte_length_up_to_name: u32 = 8 + name_value.byteLen() + type_value.byteLen();
-        const padding_after_name = std.mem.alignForward(byte_length_up_to_name, 4) - byte_length_up_to_name;
-        const header_size: u32 = byte_length_up_to_name + @intCast(u32, padding_after_name) + 16;
-
-        try writer.writeIntLittle(DWORD, @intCast(u32, data.len)); // DataSize
-        try writer.writeIntLittle(DWORD, header_size); // HeaderSize
-        try type_value.write(writer); // TYPE
-        try name_value.write(writer); // NAME
-        try writer.writeByteNTimes(0, padding_after_name);
-
-        try writer.writeIntLittle(DWORD, 0); // DataVersion
-        try writer.writeIntLittle(WORD, default_memory_flags); // MemoryFlags
-        try writer.writeIntLittle(WORD, default_language); // LanguageId
-        try writer.writeIntLittle(DWORD, 0); // Version
-        try writer.writeIntLittle(DWORD, 0); // Characteristics
-
-        try writer.writeAll(data);
-
-        const padding_after_data = std.mem.alignForward(data.len, 4) - data.len;
+        const padding_after_data = std.mem.alignForward(data_size, 4) - data_size;
         try writer.writeByteNTimes(0, padding_after_data);
     }
+
+    pub const ResourceHeader = struct {
+        name_value: NameOrOrdinal,
+        type_value: NameOrOrdinal,
+        language: WORD = 0x409, // TODO
+        memory_flags: WORD = 0x30, // TODO
+        data_size: DWORD,
+
+        pub fn init(allocator: Allocator, id_slice: []const u8, type_slice: []const u8, data_size: DWORD) !ResourceHeader {
+            const type_value = type: {
+                const resource_type = Resource.fromString(type_slice);
+                if (resource_type != .user_defined) {
+                    if (res.RT.fromResource(resource_type)) |rt_constant| {
+                        break :type NameOrOrdinal{ .ordinal = @enumToInt(rt_constant) };
+                    } else {
+                        @panic("TODO: unhandled resource -> RT constant conversion");
+                    }
+                } else {
+                    break :type try NameOrOrdinal.fromString(allocator, type_slice);
+                }
+            };
+            errdefer type_value.deinit(allocator);
+
+            const name_value = try NameOrOrdinal.fromString(allocator, id_slice);
+            errdefer name_value.deinit(allocator);
+
+            return ResourceHeader{
+                .name_value = name_value,
+                .type_value = type_value,
+                .data_size = data_size,
+            };
+        }
+
+        pub fn deinit(self: ResourceHeader, allocator: Allocator) void {
+            self.name_value.deinit(allocator);
+            self.type_value.deinit(allocator);
+        }
+
+        pub fn write(self: ResourceHeader, writer: anytype) !void {
+            const byte_length_up_to_name: u32 = 8 + self.name_value.byteLen() + self.type_value.byteLen();
+            const padding_after_name = std.mem.alignForward(byte_length_up_to_name, 4) - byte_length_up_to_name;
+            const header_size: u32 = byte_length_up_to_name + @intCast(u32, padding_after_name) + 16;
+
+            try writer.writeIntLittle(DWORD, self.data_size); // DataSize
+            try writer.writeIntLittle(DWORD, header_size); // HeaderSize
+            try self.type_value.write(writer); // TYPE
+            try self.name_value.write(writer); // NAME
+            try writer.writeByteNTimes(0, padding_after_name);
+
+            try writer.writeIntLittle(DWORD, 0); // DataVersion
+            try writer.writeIntLittle(WORD, self.memory_flags); // MemoryFlags
+            try writer.writeIntLittle(WORD, self.language); // LanguageId
+            try writer.writeIntLittle(DWORD, 0); // Version
+            try writer.writeIntLittle(DWORD, 0); // Characteristics
+        }
+    };
 
     pub fn writeEmptyResource(writer: anytype) !void {
         try writer.writeIntLittle(DWORD, 0); // DataSize
