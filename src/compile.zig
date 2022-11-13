@@ -113,6 +113,8 @@ pub const Compiler = struct {
         pub fn maybeOrdinalFromString(str: []const u8) ?NameOrOrdinal {
             // TODO: Needs to match the `rc` ordinal parsing
             const ordinal = std.fmt.parseUnsigned(WORD, str, 0) catch return null;
+            // Zero is not interpretted as a number
+            if (ordinal == 0) return null;
             return NameOrOrdinal{ .ordinal = ordinal };
         }
     };
@@ -561,4 +563,12 @@ test "filenames as numeric expressions" {
         tmp_dir.dir,
     );
     try tmp_dir.dir.deleteFile("-1");
+}
+
+test "zero as a NameOrOrdinal" {
+    try testCompileWithOutput(
+        "0 0 { \"hello\" }",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x05\x00\x00\x00 \x00\x00\x000\x00\x00\x000\x00\x00\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00hello\x00\x00\x00",
+        std.fs.cwd(),
+    );
 }

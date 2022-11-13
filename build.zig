@@ -57,4 +57,11 @@ pub fn build(b: *std.build.Builder) void {
     fuzzy_ascii_strings.addPackage(resinator);
     const fuzzy_ascii_strings_step = b.step("test_fuzzy_ascii_strings", "Simple fuzz testing for ascii string literals");
     fuzzy_ascii_strings_step.dependOn(&fuzzy_ascii_strings.step);
+
+    var fuzzy_numeric_types = b.addTest("test/fuzzy_numeric_types.zig");
+    fuzzy_numeric_types.setBuildMode(mode);
+    fuzzy_numeric_types.setTarget(target);
+    fuzzy_numeric_types.addPackage(resinator);
+    const fuzzy_numeric_types_step = b.step("test_fuzzy_numeric_types", "Simple fuzz testing for resource types specified as numbers");
+    fuzzy_numeric_types_step.dependOn(&fuzzy_numeric_types.step);
 }
