@@ -184,7 +184,10 @@ pub fn handleLineCommand(allocator: Allocator, line_command: []const u8, current
     const linenum = std.fmt.parseUnsigned(usize, linenum_str, 10) catch return;
 
     // TODO handle edge-cases around string literals, garbage after the string literal, etc
-    const filename_literal = tokenizer.rest();
+    var filename_literal = tokenizer.rest();
+    while (std.ascii.isWhitespace(filename_literal[filename_literal.len - 1])) {
+        filename_literal.len -= 1;
+    }
     std.debug.assert(filename_literal[0] == '"' and filename_literal[filename_literal.len - 1] == '"');
     // TODO might need to use a more general C-style string parser
     const filename = try parseQuotedAsciiString(allocator, filename_literal, 0);
