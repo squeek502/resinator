@@ -5,6 +5,8 @@
 //! - All comments have been removed.
 
 const std = @import("std");
+const ErrorDetails = @import("errors.zig").ErrorDetails;
+const columnsUntilTabStop = @import("literals.zig").columnsUntilTabStop;
 
 const dumpTokensDuringTests = true;
 
@@ -32,6 +34,53 @@ pub const Token = struct {
     pub fn slice(self: Token, buffer: []const u8) []const u8 {
         return buffer[self.start..self.end];
     }
+
+    pub fn nameForErrorDisplay(self: Token, buffer: []const u8) []const u8 {
+        return switch (self.id) {
+            .eof => "<eof>",
+            else => self.slice(buffer),
+        };
+    }
+
+    pub fn calculateColumn(token: Token, source: []const u8, tab_columns: usize, maybe_line_start: ?usize) usize {
+        const line_start = maybe_line_start orelse token.getLineStart(source);
+
+        var i: usize = line_start;
+        var column: usize = 0;
+        while (i < token.start) : (i += 1) {
+            const c = source[i];
+            switch (c) {
+                '\t' => column += columnsUntilTabStop(column, tab_columns),
+                else => column += 1,
+            }
+        }
+        return column;
+    }
+
+    pub fn getLineStart(token: Token, source: []const u8) usize {
+        const line_start = line_start: {
+            if (token.start != 0) {
+                // start checking at the byte before the token
+                var index = token.start - 1;
+                while (true) {
+                    if (source[index] == '\n') break :line_start @min(source.len - 1, index + 1);
+                    if (index != 0) index -= 1 else break;
+                }
+            }
+            break :line_start 0;
+        };
+        return line_start;
+    }
+
+    pub fn getLine(token: Token, source: []const u8, maybe_line_start: ?usize) []const u8 {
+        const line_start = maybe_line_start orelse token.getLineStart(source);
+
+        var line_end = line_start + 1;
+        while (line_end < source.len and source[line_end] != '\n') : (line_end += 1) {}
+        while (line_end > 0 and source[line_end - 1] == '\r') : (line_end -= 1) {}
+
+        return source[line_start..line_end];
+    }
 };
 
 pub const LexError = error{
@@ -45,6 +94,7 @@ pub const Lexer = struct {
     index: usize,
     line_number: usize = 1,
     at_start_of_line: bool = true,
+    error_context_token: ?Token = null,
 
     pub const Error = LexError;
 
@@ -301,7 +351,15 @@ pub const Lexer = struct {
                 },
                 .quoted_ascii_string,
                 .quoted_wide_string,
-                => return LexError.UnfinishedStringLiteral,
+                => {
+                    self.error_context_token = .{
+                        .id = .eof,
+                        .start = self.index,
+                        .end = self.index,
+                        .line_number = self.line_number,
+                    };
+                    return LexError.UnfinishedStringLiteral;
+                },
             }
         }
 
@@ -351,6 +409,16 @@ pub const Lexer = struct {
         if (last_line_ending == cur_line_ending) return false;
 
         return true;
+    }
+
+    pub fn getErrorDetails(self: Self, lex_err: LexError) ErrorDetails {
+        const err = switch (lex_err) {
+            error.UnfinishedStringLiteral => ErrorDetails.Error.unfinished_string_literal,
+        };
+        return .{
+            .err = err,
+            .token = self.error_context_token.?,
+        };
     }
 };
 

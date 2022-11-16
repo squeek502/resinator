@@ -60,7 +60,7 @@ pub fn parseQuotedAsciiString(allocator: std.mem.Allocator, str: []const u8, sta
                 index -= 1;
             } else {
                 if (c == '\t') {
-                    column += columnsUntilTabStop(column);
+                    column += columnsUntilTabStop(column, 8);
                 } else {
                     column += 1;
                 }
@@ -74,7 +74,7 @@ pub fn parseQuotedAsciiString(allocator: std.mem.Allocator, str: []const u8, sta
                 '\n' => state = .newline,
                 '\t' => {
                     var space_i: usize = 0;
-                    const cols = columnsUntilTabStop(column);
+                    const cols = columnsUntilTabStop(column, 8);
                     while (space_i < cols) : (space_i += 1) {
                         try buf.append(' ');
                     }
@@ -200,10 +200,10 @@ pub fn parseQuotedAsciiString(allocator: std.mem.Allocator, str: []const u8, sta
     return buf.toOwnedSlice();
 }
 
-pub fn columnsUntilTabStop(column: usize) usize {
+pub fn columnsUntilTabStop(column: usize, tab_columns: usize) usize {
     // 0 => 8, 1 => 7, 2 => 6, 3 => 5, 4 => 4
     // 5 => 3, 6 => 2, 7 => 1, 8 => 8
-    return 8 - (column % 8);
+    return tab_columns - (column % tab_columns);
 }
 
 test "parse quoted ascii string" {

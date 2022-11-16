@@ -1,5 +1,7 @@
 const std = @import("std");
 
+// https://learn.microsoft.com/en-us/windows/win32/menurc/about-resource-files
+
 pub const Resource = enum {
     accelerators,
     bitmap,

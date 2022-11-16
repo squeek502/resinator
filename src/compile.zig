@@ -9,16 +9,16 @@ const Number = @import("literals.zig").Number;
 const parseNumberLiteral = @import("literals.zig").parseNumberLiteral;
 const parseQuotedAsciiString = @import("literals.zig").parseQuotedAsciiString;
 const parseQuotedWideStringAlloc = @import("literals.zig").parseQuotedWideStringAlloc;
-const columnsUntilTabStop = @import("literals.zig").columnsUntilTabStop;
+const Diagnostics = @import("errors.zig").Diagnostics;
 const res = @import("res.zig");
 const ico = @import("ico.zig");
 const WORD = std.os.windows.WORD;
 const DWORD = std.os.windows.DWORD;
 
-pub fn compile(allocator: Allocator, source: []const u8, writer: anytype, cwd: std.fs.Dir) !void {
+pub fn compile(allocator: Allocator, source: []const u8, writer: anytype, cwd: std.fs.Dir, diagnostics: *Diagnostics) !void {
     var lexer = Lexer.init(source);
     var parser = Parser.init(&lexer);
-    var tree = try parser.parse(allocator);
+    var tree = try parser.parse(allocator, diagnostics);
     defer tree.deinit();
 
     var arena_allocator = std.heap.ArenaAllocator.init(allocator);
@@ -30,6 +30,7 @@ pub fn compile(allocator: Allocator, source: []const u8, writer: anytype, cwd: s
         .arena = arena,
         .allocator = allocator,
         .cwd = cwd,
+        .diagnostics = diagnostics,
     };
 
     try compiler.writeRoot(tree.root(), writer);
@@ -41,6 +42,7 @@ pub const Compiler = struct {
     allocator: Allocator,
     cwd: std.fs.Dir,
     state: State = .{},
+    diagnostics: *Diagnostics,
 
     pub const State = struct {
         icon_id: u16 = 1,
@@ -134,31 +136,6 @@ pub const Compiler = struct {
         }
     };
 
-    pub fn calculateColumnOfToken(self: *Compiler, token: Token) usize {
-        const line_start = line_start: {
-            if (token.start != 0) {
-                // start checking at the byte before the token
-                var index = token.start - 1;
-                while (true) {
-                    if (self.source[index] == '\n') break :line_start index + 1;
-                    if (index != 0) index -= 1 else break;
-                }
-            }
-            break :line_start 0;
-        };
-
-        var i: usize = line_start;
-        var column: usize = 0;
-        while (i < token.start) : (i += 1) {
-            const c = self.source[i];
-            switch (c) {
-                '\t' => column += columnsUntilTabStop(column),
-                else => column += 1,
-            }
-        }
-        return column;
-    }
-
     pub fn evaluateFilenameExpression(self: *Compiler, expression_node: *Node) !Filename {
         switch (expression_node.id) {
             .literal => {
@@ -170,7 +147,7 @@ pub const Compiler = struct {
                     },
                     .quoted_ascii_string => {
                         const slice = literal_node.token.slice(self.source);
-                        const column = self.calculateColumnOfToken(literal_node.token);
+                        const column = literal_node.token.calculateColumn(self.source, 8, null);
                         const parsed = try parseQuotedAsciiString(self.allocator, slice, column);
                         return .{ .utf8 = parsed, .needs_free = true };
                     },
@@ -179,7 +156,7 @@ pub const Compiler = struct {
                         // if it's already UTF-8. Should have a function that parses wide
                         // strings directly to UTF-8.
                         const slice = literal_node.token.slice(self.source);
-                        const column = self.calculateColumnOfToken(literal_node.token);
+                        const column = literal_node.token.calculateColumn(self.source, 8, null);
                         const parsed_string = try parseQuotedWideStringAlloc(self.allocator, slice, column);
                         defer self.allocator.free(parsed_string);
                         const parsed_as_utf8 = try std.unicode.utf16leToUtf8Alloc(self.allocator, parsed_string);
@@ -325,14 +302,14 @@ pub const Compiler = struct {
                     },
                     .quoted_ascii_string => {
                         const slice = literal_node.token.slice(self.source);
-                        const column = self.calculateColumnOfToken(literal_node.token);
+                        const column = literal_node.token.calculateColumn(self.source, 8, null);
                         const parsed = try parseQuotedAsciiString(self.allocator, slice, column);
                         errdefer self.allocator.free(parsed);
                         return .{ .ascii_string = parsed };
                     },
                     .quoted_wide_string => {
                         const slice = literal_node.token.slice(self.source);
-                        const column = self.calculateColumnOfToken(literal_node.token);
+                        const column = literal_node.token.calculateColumn(self.source, 8, null);
                         const parsed_string = try parseQuotedWideStringAlloc(self.allocator, slice, column);
                         errdefer self.allocator.free(parsed_string);
                         return .{ .wide_string = parsed_string };
@@ -497,7 +474,10 @@ fn testCompile(source: []const u8, cwd: std.fs.Dir) !void {
     var buffer = std.ArrayList(u8).init(std.testing.allocator);
     defer buffer.deinit();
 
-    try compile(std.testing.allocator, source, buffer.writer(), cwd);
+    var diagnostics = Diagnostics.init(std.testing.allocator);
+    defer diagnostics.deinit();
+
+    try compile(std.testing.allocator, source, buffer.writer(), cwd, &diagnostics);
 
     const expected_res = try getExpectedFromWindowsRC(std.testing.allocator, source);
     defer std.testing.allocator.free(expected_res);
@@ -509,7 +489,10 @@ fn testCompileWithOutput(source: []const u8, expected_output: []const u8, cwd: s
     var buffer = std.ArrayList(u8).init(std.testing.allocator);
     defer buffer.deinit();
 
-    try compile(std.testing.allocator, source, buffer.writer(), cwd);
+    var diagnostics = Diagnostics.init(std.testing.allocator);
+    defer diagnostics.deinit();
+
+    try compile(std.testing.allocator, source, buffer.writer(), cwd, &diagnostics);
 
     std.testing.expectEqualSlices(u8, expected_output, buffer.items) catch |e| {
         std.debug.print("got:\n{}\n", .{std.zig.fmtEscapes(buffer.items)});

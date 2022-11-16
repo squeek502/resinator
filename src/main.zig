@@ -1,6 +1,8 @@
 const std = @import("std");
 const removeComments = @import("comments.zig").removeComments;
+const parseAndRemoveLineCommands = @import("source_mapping.zig").parseAndRemoveLineCommands;
 const compile = @import("compile.zig").compile;
+const Diagnostics = @import("errors.zig").Diagnostics;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -27,10 +29,14 @@ pub fn main() !void {
             "clang",
             "-E", // preprocessor only
             "--comments",
-            "--no-line-commands",
+            "-fuse-line-directives", // #line <num> instead of # <num>
             "-xc", // output c
+            // TODO: could use --trace-includes to give info about what's included from where
+            //"-Werror=invalid-pp-token", // will error on unfinished string literals
+            // TODO: could use -Werror instead
             input_filename,
         },
+        .max_output_bytes = std.math.maxInt(u32),
     });
     defer allocator.free(result.stdout);
     defer allocator.free(result.stderr);
@@ -38,9 +44,8 @@ pub fn main() !void {
     switch (result.term) {
         .Exited => |code| {
             if (code != 0) {
-                std.debug.print("exit code: {}\n", .{result.term});
-                std.debug.print("stdout: {s}\n", .{result.stdout});
-                std.debug.print("stderr: {s}\n", .{result.stderr});
+                // TODO: Better formatting
+                std.debug.print("Preprocessor errors:\n{s}\n", .{result.stderr});
                 return error.ExitCodeFailure;
             }
         },
@@ -49,11 +54,31 @@ pub fn main() !void {
         },
     }
 
-    var preprocessed_input = removeComments(result.stdout, result.stdout);
+    var mapping_results = try parseAndRemoveLineCommands(allocator, result.stdout, result.stdout);
+    defer mapping_results.mappings.deinit(allocator);
+
+    var preprocessed_input = removeComments(mapping_results.result, mapping_results.result);
 
     const output_filename = args[2];
     var output_file = try std.fs.cwd().createFile(output_filename, .{});
     defer output_file.close();
 
-    try compile(allocator, preprocessed_input, output_file.writer(), std.fs.cwd());
+    var diagnostics = Diagnostics.init(allocator);
+    defer diagnostics.deinit();
+
+    std.debug.print("after preprocessor:\n------------------\n{s}\n------------------\n\nmappings:\n", .{preprocessed_input});
+    for (mapping_results.mappings.mapping.items) |span, i| {
+        const line_num = i + 1;
+        const filename = mapping_results.mappings.files.get(span.filename_offset);
+        std.debug.print("{}: {s}:{}\n", .{ line_num, filename, span.start_line });
+    }
+    std.debug.print("\n", .{});
+
+    compile(allocator, preprocessed_input, output_file.writer(), std.fs.cwd(), &diagnostics) catch |err| switch (err) {
+        error.ParseError => {
+            diagnostics.renderToStdErr(std.fs.cwd(), preprocessed_input, mapping_results.mappings);
+            std.os.exit(1);
+        },
+        else => |e| return e,
+    };
 }

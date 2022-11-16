@@ -4,13 +4,10 @@ const Token = @import("lex.zig").Token;
 const Node = @import("ast.zig").Node;
 const Tree = @import("ast.zig").Tree;
 const Resource = @import("rc.zig").Resource;
-const isValidNumberDataLiteral = @import("literals.zig").isValidNumberDataLiteral;
 const Allocator = std.mem.Allocator;
-
-pub const ParseError = error{
-    SyntaxError,
-    ExpectedDifferentToken,
-};
+const ErrorDetails = @import("errors.zig").ErrorDetails;
+const Diagnostics = @import("errors.zig").Diagnostics;
+const renderErrorMessage = @import("errors.zig").renderErrorMessage;
 
 pub const Parser = struct {
     const Self = @This();
@@ -19,7 +16,7 @@ pub const Parser = struct {
     /// values that need to be initialized per-parse
     state: Parser.State = undefined,
 
-    pub const Error = ParseError || Lexer.Error || Allocator.Error;
+    pub const Error = error{ParseError} || Allocator.Error;
 
     pub fn init(lexer: *Lexer) Parser {
         return Parser{
@@ -31,18 +28,21 @@ pub const Parser = struct {
         token: Token,
         allocator: Allocator,
         arena: Allocator,
+        diagnostics: *Diagnostics,
     };
 
-    pub fn parse(self: *Self, allocator: Allocator) Error!*Tree {
+    pub fn parse(self: *Self, allocator: Allocator, diagnostics: *Diagnostics) Error!*Tree {
         var arena = std.heap.ArenaAllocator.init(allocator);
         errdefer arena.deinit();
 
         self.state = Parser.State{
-            .token = try self.lexer.nextWhitespaceDelimeterOnly(),
+            .token = undefined,
             .allocator = allocator,
             .arena = arena.allocator(),
+            .diagnostics = diagnostics,
         };
 
+        try self.nextTokenWhitespaceDelimiterOnly();
         const parsed_root = try self.parseRoot();
 
         const tree = try self.state.arena.create(Tree);
@@ -121,7 +121,12 @@ pub const Parser = struct {
                                     try self.nextTokenWhitespaceDelimiterOnly();
                                     break;
                                 },
-                                .eof => break, // TODO: emit an error probably
+                                .eof => {
+                                    return self.failDetails(ErrorDetails{
+                                        .err = .unfinished_raw_data_block,
+                                        .token = self.state.token,
+                                    });
+                                },
                                 else => {},
                             }
                             const expression_result = try self.parseExpression();
@@ -217,7 +222,7 @@ pub const Parser = struct {
             @panic("TODO parseExpression");
         };
 
-        self.state.token = try self.lexer.nextNormalWithContext(.expect_operator);
+        try self.nextTokenNormalExpectOperator();
         const possible_operator = self.state.token;
         switch (possible_operator.id) {
             .operator => {},
@@ -229,7 +234,7 @@ pub const Parser = struct {
             },
         }
 
-        self.state.token = try self.lexer.nextNormal();
+        try self.nextTokenNormal();
         const rhs_result = try self.parseExpression();
 
         const node = try self.state.arena.create(Node.BinaryExpression);
@@ -245,12 +250,31 @@ pub const Parser = struct {
         };
     }
 
-    fn nextTokenWhitespaceDelimiterOnly(self: *Self) Lexer.Error!void {
-        self.state.token = try self.lexer.nextWhitespaceDelimeterOnly();
+    fn warnDetails(self: *Self, details: ErrorDetails) Allocator.Error!void {
+        try self.state.diagnostics.append(details);
     }
 
-    fn nextTokenNormal(self: *Self) Lexer.Error!void {
-        self.state.token = try self.lexer.nextNormal();
+    fn failDetails(self: *Self, details: ErrorDetails) Error {
+        try self.warnDetails(details);
+        return error.ParseError;
+    }
+
+    fn nextTokenWhitespaceDelimiterOnly(self: *Self) Error!void {
+        self.state.token = self.lexer.nextWhitespaceDelimeterOnly() catch |err| {
+            return self.failDetails(self.lexer.getErrorDetails(err));
+        };
+    }
+
+    fn nextTokenNormal(self: *Self) Error!void {
+        self.state.token = self.lexer.nextNormal() catch |err| {
+            return self.failDetails(self.lexer.getErrorDetails(err));
+        };
+    }
+
+    fn nextTokenNormalExpectOperator(self: *Self) Error!void {
+        self.state.token = self.lexer.nextNormalWithContext(.expect_operator) catch |err| {
+            return self.failDetails(self.lexer.getErrorDetails(err));
+        };
     }
 
     fn tokenSlice(self: *Self) []const u8 {
@@ -263,7 +287,7 @@ pub const Parser = struct {
             .literal => {},
             else => {
                 std.debug.print("expected literal, got {}\n", .{self.state.token.id});
-                return ParseError.ExpectedDifferentToken;
+                @panic("TODO expected different token error reporting");
             },
         }
     }
@@ -285,7 +309,7 @@ pub const Parser = struct {
 
     fn check(self: *Self, expected_token_id: Token.Id) !void {
         if (self.state.token.id != expected_token_id) {
-            return ParseError.ExpectedDifferentToken;
+            @panic("TODO expected different token error reporting");
         }
     }
 
@@ -293,7 +317,7 @@ pub const Parser = struct {
         switch (self.state.token.id) {
             .literal => return Resource.fromString(self.state.token.slice(self.lexer.buffer)),
             else => {
-                return ParseError.ExpectedDifferentToken;
+                @panic("TODO expected different token error reporting");
             },
         }
     }
@@ -313,9 +337,17 @@ const common_resource_attributes_set = std.ComptimeStringMap(void, .{
 
 fn testParse(source: []const u8, expected_ast_dump: []const u8) !void {
     const allocator = std.testing.allocator;
+    var diagnostics = Diagnostics.init(allocator);
+    defer diagnostics.deinit();
     var lexer = Lexer.init(source);
     var parser = Parser.init(&lexer);
-    var tree = try parser.parse(allocator);
+    var tree = parser.parse(allocator, &diagnostics) catch |err| switch (err) {
+        error.ParseError => {
+            diagnostics.renderToStdErr(std.fs.cwd(), source, null);
+            return err;
+        },
+        else => |e| return e,
+    };
     defer tree.deinit();
 
     var buf = std.ArrayList(u8).init(allocator);
@@ -323,10 +355,6 @@ fn testParse(source: []const u8, expected_ast_dump: []const u8) !void {
 
     try tree.dump(buf.writer());
     try std.testing.expectEqualStrings(expected_ast_dump, buf.items);
-}
-
-fn expectParseError(expected: ParseError, source: []const u8) !void {
-    try std.testing.expectError(expected, testParse(source, ""));
 }
 
 test "basic icons" {
@@ -448,4 +476,32 @@ test "number expressions" {
         \\  )
         \\
     );
+}
+
+test "parse errors" {
+    try testParseError("unfinished raw data block at '<eof>', expected closing '}' or 'END'", "id RCDATA { 1");
+    try testParseError("unfinished string literal at '<eof>', expected closing '\"'", "id RCDATA \"unfinished string");
+}
+
+fn testParseError(expected_error_str: []const u8, source: []const u8) !void {
+    const allocator = std.testing.allocator;
+    var diagnostics = Diagnostics.init(allocator);
+    defer diagnostics.deinit();
+    var lexer = Lexer.init(source);
+    var parser = Parser.init(&lexer);
+    var tree = parser.parse(allocator, &diagnostics) catch |err| switch (err) {
+        error.OutOfMemory => |e| return e,
+        error.ParseError => {
+            if (diagnostics.errors.items.len < 1) return error.NoDiagnostics;
+            if (diagnostics.errors.items.len > 1) @panic("TODO handle parse test with multiple errors");
+            var buf: [256]u8 = undefined;
+            var fbs = std.io.fixedBufferStream(&buf);
+            try diagnostics.errors.items[0].render(fbs.writer(), source);
+            try std.testing.expectEqualStrings(expected_error_str, fbs.getWritten());
+            return;
+        },
+    };
+    std.debug.print("expected parse error, got tree:\n", .{});
+    try tree.dump(std.io.getStdErr().writer());
+    return error.UnexpectedSuccess;
 }
