@@ -25,9 +25,9 @@ The plan is to use fuzz testing with the `rc` tool as an oracle to ensure that `
 ## Status
 
 - Lexer
-  + Only supports a small subset of `.rc` files currently
+  + Mostly working for what's been implemented so far. Still possible that this will significantly change pending future discoveries about `.rc` files.
 - Parsing
-  + Converts the token list into an AST. Only supports a small subset of `.rc` files currently
+  + Converts the token list into an AST. Supports a few of the simpler resource types (RCDATA, ICON, CURSOR, user-defined), but doesn't handle malformed resources all that well.
 - Compiling
-  + Converts the AST into the binary `.res` file. Only supports a (very) small subset of `.rc` files currently
-  + Will eventually need a parser for at least the `.ico` format (and possibly others). This isn't started yet
+  + Converts the AST into the binary `.res` file. Supports most the resources that the parser supports (RCDATA, ICON, CURSOR, etc).
+    + ICON and CURSOR `.ico` parsing is supported, but may not be fully correct yet.
