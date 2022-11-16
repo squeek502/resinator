@@ -55,7 +55,9 @@ pub const ErrorDetails = struct {
             .unfinished_raw_data_block => {
                 return writer.print("unfinished raw data block at '{s}', expected closing '}}' or 'END'", .{self.token.nameForErrorDisplay(source)});
             },
-            else => @panic("TODO render errors"),
+            .expected_token => {
+                return writer.print("expected '{s}', got '{s}'", .{ self.extra.expected.nameForErrorDisplay(), self.token.nameForErrorDisplay(source) });
+            },
         }
     }
 };

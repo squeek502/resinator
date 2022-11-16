@@ -7,7 +7,6 @@ const Resource = @import("rc.zig").Resource;
 const Allocator = std.mem.Allocator;
 const ErrorDetails = @import("errors.zig").ErrorDetails;
 const Diagnostics = @import("errors.zig").Diagnostics;
-const renderErrorMessage = @import("errors.zig").renderErrorMessage;
 
 pub const Parser = struct {
     const Self = @This();
@@ -286,8 +285,11 @@ pub const Parser = struct {
         switch (self.state.token.id) {
             .literal => {},
             else => {
-                std.debug.print("expected literal, got {}\n", .{self.state.token.id});
-                @panic("TODO expected different token error reporting");
+                return self.failDetails(ErrorDetails{
+                    .err = .expected_token,
+                    .token = self.state.token,
+                    .extra = .{ .expected = .literal },
+                });
             },
         }
     }
@@ -309,7 +311,11 @@ pub const Parser = struct {
 
     fn check(self: *Self, expected_token_id: Token.Id) !void {
         if (self.state.token.id != expected_token_id) {
-            @panic("TODO expected different token error reporting");
+            return self.failDetails(ErrorDetails{
+                .err = .expected_token,
+                .token = self.state.token,
+                .extra = .{ .expected = expected_token_id },
+            });
         }
     }
 
@@ -317,7 +323,11 @@ pub const Parser = struct {
         switch (self.state.token.id) {
             .literal => return Resource.fromString(self.state.token.slice(self.lexer.buffer)),
             else => {
-                @panic("TODO expected different token error reporting");
+                return self.failDetails(ErrorDetails{
+                    .err = .expected_token,
+                    .token = self.state.token,
+                    .extra = .{ .expected = .literal },
+                });
             },
         }
     }
@@ -481,6 +491,8 @@ test "number expressions" {
 test "parse errors" {
     try testParseError("unfinished raw data block at '<eof>', expected closing '}' or 'END'", "id RCDATA { 1");
     try testParseError("unfinished string literal at '<eof>', expected closing '\"'", "id RCDATA \"unfinished string");
+    try testParseError("expected '<literal>', got '<eof>'", "id");
+    try testParseError("expected ')', got '}'", "id RCDATA { (1 }");
 }
 
 fn testParseError(expected_error_str: []const u8, source: []const u8) !void {

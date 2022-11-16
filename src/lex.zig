@@ -29,6 +29,23 @@ pub const Token = struct {
         close_paren,
         invalid,
         eof,
+
+        pub fn nameForErrorDisplay(self: Id) []const u8 {
+            return switch (self) {
+                .literal => "<literal>",
+                .number => "<number>",
+                .quoted_ascii_string => "<quoted ascii string>",
+                .quoted_wide_string => "<quoted wide string>",
+                .operator => "<operator>",
+                .open_brace => "<open brace or BEGIN>",
+                .close_brace => "<close brace or END>",
+                .comma => ",",
+                .open_paren => "(",
+                .close_paren => ")",
+                .invalid => unreachable,
+                .eof => "<eof>",
+            };
+        }
     };
 
     pub fn slice(self: Token, buffer: []const u8) []const u8 {
@@ -37,7 +54,7 @@ pub const Token = struct {
 
     pub fn nameForErrorDisplay(self: Token, buffer: []const u8) []const u8 {
         return switch (self.id) {
-            .eof => "<eof>",
+            .eof => self.id.nameForErrorDisplay(),
             else => self.slice(buffer),
         };
     }
