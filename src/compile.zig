@@ -10,6 +10,8 @@ const parseNumberLiteral = @import("literals.zig").parseNumberLiteral;
 const parseQuotedAsciiString = @import("literals.zig").parseQuotedAsciiString;
 const parseQuotedWideStringAlloc = @import("literals.zig").parseQuotedWideStringAlloc;
 const Diagnostics = @import("errors.zig").Diagnostics;
+const MemoryFlags = @import("res.zig").MemoryFlags;
+const rc = @import("rc.zig");
 const res = @import("res.zig");
 const ico = @import("ico.zig");
 const WORD = std.os.windows.WORD;
@@ -123,6 +125,39 @@ pub const Compiler = struct {
             if (ordinal == 0) return null;
             return NameOrOrdinal{ .ordinal = ordinal };
         }
+
+        pub fn predefinedResourceType(self: NameOrOrdinal) ?res.RT {
+            switch (self) {
+                .ordinal => |ordinal| {
+                    switch (@intToEnum(res.RT, ordinal)) {
+                        .ACCELERATOR,
+                        .ANICURSOR,
+                        .ANIICON,
+                        .BITMAP,
+                        .CURSOR,
+                        .DIALOG,
+                        .DLGINCLUDE,
+                        .FONT,
+                        .FONTDIR,
+                        .GROUP_CURSOR,
+                        .GROUP_ICON,
+                        .HTML,
+                        .ICON,
+                        .MANIFEST,
+                        .MENU,
+                        .MESSAGETABLE,
+                        .PLUGPLAY,
+                        .RCDATA,
+                        .STRING,
+                        .VERSION,
+                        .VXD,
+                        => |rt| return rt,
+                        _ => return null,
+                    }
+                },
+                .name => return null,
+            }
+        }
     };
 
     const Filename = struct {
@@ -198,14 +233,21 @@ pub const Compiler = struct {
                     // TODO: Could emit a warning if `icon_dir.image_type` doesn't match the predefined type.
                     //       The Windows RC compiler doesn't, but it seems like it'd be helpful.
 
+                    // Memory flags only affect the RT_ICON, not the RT_GROUP_ICON
+                    var icon_memory_flags = MemoryFlags.defaults(res.RT.ICON);
+                    std.debug.print("{}\n", .{icon_memory_flags});
+                    applyToMemoryFlags(&icon_memory_flags, node.common_resource_attributes, self.source);
+                    std.debug.print("-> {}\n", .{node.common_resource_attributes.len});
+                    std.debug.print("-> {}\n", .{icon_memory_flags});
+
                     const first_icon_id = self.state.icon_id;
                     const entry_type = if (predefined_type == .GROUP_ICON) @enumToInt(res.RT.ICON) else @enumToInt(res.RT.CURSOR);
                     for (icon_dir.entries) |entry| {
                         const image_header = ResourceHeader{
                             .type_value = .{ .ordinal = entry_type },
                             .name_value = .{ .ordinal = self.state.icon_id },
-                            .memory_flags = 0x1010, // TODO
                             .data_size = entry.data_size_in_bytes,
+                            .memory_flags = icon_memory_flags,
                         };
                         try image_header.write(writer);
                         try file.seekTo(entry.data_offset_from_start_of_file);
@@ -215,18 +257,21 @@ pub const Compiler = struct {
 
                     // TODO: Move this in a function somewhere that makes sense
                     header.data_size = @intCast(u32, 6 + 14 * icon_dir.entries.len);
-                    header.memory_flags = 0x1030; // TODO
 
                     try header.write(writer);
                     try icon_dir.writeResData(writer, first_icon_id);
                     return;
                 },
-                .RCDATA => {},
+                .RCDATA => {
+                    header.applyMemoryFlags(node.common_resource_attributes, self.source);
+                },
                 else => {
                     std.debug.print("Type: {}\n", .{predefined_type});
                     @panic("TODO writeResourceExternal");
                 },
             }
+        } else {
+            header.applyMemoryFlags(node.common_resource_attributes, self.source);
         }
 
         // Fallback to just writing out the entire contents of the file
@@ -344,15 +389,17 @@ pub const Compiler = struct {
             try data.write(data_writer);
         }
 
-        try self.writeResourceHeader(writer, node.id, node.type, @intCast(u32, data_buffer.items.len));
+        try self.writeResourceHeader(writer, node.id, node.type, @intCast(u32, data_buffer.items.len), node.common_resource_attributes);
 
         var data_fbs = std.io.fixedBufferStream(data_buffer.items);
         try self.writeResourceData(writer, data_fbs.reader(), @intCast(u32, data_buffer.items.len));
     }
 
-    pub fn writeResourceHeader(self: *Compiler, writer: anytype, id_token: Token, type_token: Token, data_size: u32) !void {
-        const header = try ResourceHeader.init(self.allocator, id_token.slice(self.source), type_token.slice(self.source), data_size);
+    pub fn writeResourceHeader(self: *Compiler, writer: anytype, id_token: Token, type_token: Token, data_size: u32, common_resource_attributes: []Token) !void {
+        var header = try ResourceHeader.init(self.allocator, id_token.slice(self.source), type_token.slice(self.source), data_size);
         defer header.deinit(self.allocator);
+
+        header.applyMemoryFlags(common_resource_attributes, self.source);
 
         try header.write(writer);
     }
@@ -373,7 +420,7 @@ pub const Compiler = struct {
         name_value: NameOrOrdinal,
         type_value: NameOrOrdinal,
         language: WORD = 0x409, // TODO
-        memory_flags: WORD = 0x30, // TODO
+        memory_flags: MemoryFlags,
         data_size: DWORD,
 
         pub fn init(allocator: Allocator, id_slice: []const u8, type_slice: []const u8, data_size: DWORD) !ResourceHeader {
@@ -394,10 +441,13 @@ pub const Compiler = struct {
             const name_value = try NameOrOrdinal.fromString(allocator, id_slice);
             errdefer name_value.deinit(allocator);
 
+            const predefined_resource_type = type_value.predefinedResourceType();
+
             return ResourceHeader{
                 .name_value = name_value,
                 .type_value = type_value,
                 .data_size = data_size,
+                .memory_flags = MemoryFlags.defaults(predefined_resource_type),
             };
         }
 
@@ -418,52 +468,34 @@ pub const Compiler = struct {
             try writer.writeByteNTimes(0, padding_after_name);
 
             try writer.writeIntLittle(DWORD, 0); // DataVersion
-            try writer.writeIntLittle(WORD, self.memory_flags); // MemoryFlags
+            try writer.writeIntLittle(WORD, self.memory_flags.value); // MemoryFlags
             try writer.writeIntLittle(WORD, self.language); // LanguageId
             try writer.writeIntLittle(DWORD, 0); // Version
             try writer.writeIntLittle(DWORD, 0); // Characteristics
         }
 
         pub fn predefinedResourceType(self: ResourceHeader) ?res.RT {
-            switch (self.type_value) {
-                .ordinal => |ordinal| {
-                    switch (@intToEnum(res.RT, ordinal)) {
-                        .ACCELERATOR,
-                        .ANICURSOR,
-                        .ANIICON,
-                        .BITMAP,
-                        .CURSOR,
-                        .DIALOG,
-                        .DLGINCLUDE,
-                        .FONT,
-                        .FONTDIR,
-                        .GROUP_CURSOR,
-                        .GROUP_ICON,
-                        .HTML,
-                        .ICON,
-                        .MANIFEST,
-                        .MENU,
-                        .MESSAGETABLE,
-                        .PLUGPLAY,
-                        .RCDATA,
-                        .STRING,
-                        .VERSION,
-                        .VXD,
-                        => |rt| return rt,
-                        _ => return null,
-                    }
-                },
-                .name => return null,
-            }
+            return self.type_value.predefinedResourceType();
+        }
+
+        pub fn applyMemoryFlags(self: *ResourceHeader, tokens: []Token, source: []const u8) void {
+            applyToMemoryFlags(&self.memory_flags, tokens, source);
         }
     };
+
+    fn applyToMemoryFlags(flags: *MemoryFlags, tokens: []Token, source: []const u8) void {
+        for (tokens) |token| {
+            const attribute = rc.CommonResourceAttributes.map.get(token.slice(source)).?;
+            flags.set(attribute);
+        }
+    }
 
     pub fn writeEmptyResource(writer: anytype) !void {
         const header = ResourceHeader{
             .name_value = .{ .ordinal = 0 },
             .type_value = .{ .ordinal = 0 },
             .language = 0,
-            .memory_flags = 0,
+            .memory_flags = .{ .value = 0 },
             .data_size = 0,
         };
         try header.write(writer);
@@ -501,11 +533,8 @@ fn testCompileWithOutput(source: []const u8, expected_output: []const u8, cwd: s
     };
 }
 
-pub fn getExpectedFromWindowsRC(allocator: Allocator, source: []const u8) ![]const u8 {
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    try tmp.dir.writeFile("test.rc", source);
+pub fn getExpectedFromWindowsRCWithDir(allocator: Allocator, source: []const u8, cwd: std.fs.Dir, cwd_path: []const u8) ![]const u8 {
+    try cwd.writeFile("test.rc", source);
 
     var result = try std.ChildProcess.exec(.{
         .allocator = allocator,
@@ -514,7 +543,7 @@ pub fn getExpectedFromWindowsRC(allocator: Allocator, source: []const u8) ![]con
             "C:\\Program Files (x86)\\Windows Kits\\10\\bin\\10.0.19041.0\\x86\\rc.exe",
             "test.rc",
         },
-        .cwd = ("zig-cache/tmp/" ++ tmp.sub_path),
+        .cwd = cwd_path,
     });
     defer allocator.free(result.stdout);
     defer allocator.free(result.stderr);
@@ -533,7 +562,14 @@ pub fn getExpectedFromWindowsRC(allocator: Allocator, source: []const u8) ![]con
         },
     }
 
-    return tmp.dir.readFileAlloc(allocator, "test.res", std.math.maxInt(usize));
+    return cwd.readFileAlloc(allocator, "test.res", std.math.maxInt(usize));
+}
+
+pub fn getExpectedFromWindowsRC(allocator: Allocator, source: []const u8) ![]const u8 {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    return getExpectedFromWindowsRCWithDir(allocator, source, tmp.dir, "zig-cache/tmp/" ++ tmp.sub_path);
 }
 
 test "empty rc" {
@@ -690,6 +726,13 @@ test "basic icons/cursors" {
     try testCompileWithOutput(
         "1 CURSOR test.ico",
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x000\x00\x00\x00 \x00\x00\x00\xff\xff\x01\x00\xff\xff\x01\x00\x00\x00\x00\x00\x10\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00(\x00\x00\x00\x01\x00\x00\x00\x02\x00\x00\x00\x01\x00 \x00\x00\x00\x00\x00\x04\x00\x00\x00\x12\x0b\x00\x00\x12\x0b\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff\xff\xff\x00\x00\x00\x00\x14\x00\x00\x00 \x00\x00\x00\xff\xff\x0c\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x01\x00\x01\x01\x00\x00\x01\x00 \x000\x00\x00\x00\x01\x00",
+        tmp_dir.dir,
+    );
+
+    // Common resource attributes should be applies to the ICON but not the GROUP_ICON
+    try testCompileWithOutput(
+        "1 ICON FIXED test.ico",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x000\x00\x00\x00 \x00\x00\x00\xff\xff\x03\x00\xff\xff\x01\x00\x00\x00\x00\x00\x00\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00(\x00\x00\x00\x01\x00\x00\x00\x02\x00\x00\x00\x01\x00 \x00\x00\x00\x00\x00\x04\x00\x00\x00\x12\x0b\x00\x00\x12\x0b\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff\xff\xff\x00\x00\x00\x00\x14\x00\x00\x00 \x00\x00\x00\xff\xff\x0e\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x01\x00\x01\x01\x00\x00\x01\x00 \x000\x00\x00\x00\x01\x00",
         tmp_dir.dir,
     );
 }

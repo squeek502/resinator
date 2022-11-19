@@ -46,3 +46,27 @@ pub const Resource = enum {
         return map.get(str) orelse .user_defined;
     }
 };
+
+pub const CommonResourceAttributes = enum {
+    preload,
+    loadoncall,
+    fixed,
+    moveable,
+    discardable,
+    pure,
+    impure,
+    shared,
+    nonshared,
+
+    pub const map = std.ComptimeStringMap(CommonResourceAttributes, .{
+        .{ "PRELOAD", .preload },
+        .{ "LOADONCALL", .loadoncall },
+        .{ "FIXED", .fixed },
+        .{ "MOVEABLE", .moveable },
+        .{ "DISCARDABLE", .discardable },
+        .{ "PURE", .pure },
+        .{ "IMPURE", .impure },
+        .{ "SHARED", .shared },
+        .{ "NONSHARED", .nonshared },
+    });
+};

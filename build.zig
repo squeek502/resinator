@@ -64,4 +64,11 @@ pub fn build(b: *std.build.Builder) void {
     fuzzy_numeric_types.addPackage(resinator);
     const fuzzy_numeric_types_step = b.step("test_fuzzy_numeric_types", "Simple fuzz testing for resource types specified as numbers");
     fuzzy_numeric_types_step.dependOn(&fuzzy_numeric_types.step);
+
+    var fuzzy_common_resource_attributes = b.addTest("test/fuzzy_common_resource_attributes.zig");
+    fuzzy_common_resource_attributes.setBuildMode(mode);
+    fuzzy_common_resource_attributes.setTarget(target);
+    fuzzy_common_resource_attributes.addPackage(resinator);
+    const fuzzy_common_resource_attributes_step = b.step("test_fuzzy_common_resource_attributes", "Simple fuzz testing for common resource attributes");
+    fuzzy_common_resource_attributes_step.dependOn(&fuzzy_common_resource_attributes.step);
 }

@@ -86,3 +86,178 @@ pub fn randomAsciiStringLiteral(allocator: Allocator, rand: std.rand.Random) ![]
 
     return buf.toOwnedSlice();
 }
+
+/// Iterates all K-permutations of the given size `n` where k varies from (0..n).
+/// e.g. for AllKPermutationsIterator(3) the returns from `next` will be (in this order):
+/// k=0 {  }
+/// k=1 { 0 } { 1 } { 2 }
+/// k=2 { 0, 1 } { 0, 2 } { 1, 0 } { 1, 2 } { 2, 0 } { 2, 1 }
+/// k=3 { 0, 1, 2 } { 0, 2, 1 } { 1, 0, 2 } { 1, 2, 0 } { 2, 0, 1 } { 2, 1, 0 }
+pub fn AllKPermutationsIterator(comptime n: usize) type {
+    return struct {
+        buf: [n]usize,
+        iterator: KPermutationsIterator,
+        k: usize,
+
+        const Self = @This();
+
+        pub fn init() Self {
+            var self = Self{
+                .buf = undefined,
+                .iterator = undefined,
+                .k = 0,
+            };
+            self.resetBuf();
+            return self;
+        }
+
+        fn resetBuf(self: *Self) void {
+            var i: usize = 0;
+            while (i < n) : (i += 1) {
+                self.buf[i] = i;
+            }
+        }
+
+        fn nextK(self: *Self) void {
+            self.resetBuf();
+            self.k += 1;
+            self.iterator = KPermutationsIterator.init(&self.buf, self.k);
+        }
+
+        pub fn next(self: *Self) ?[]usize {
+            if (self.k == 0) {
+                self.nextK();
+                return self.buf[0..0];
+            }
+
+            if (self.iterator.next()) |perm| {
+                return perm;
+            } else {
+                if (self.k == n) {
+                    return null;
+                }
+                self.nextK();
+                return self.iterator.next().?;
+            }
+        }
+    };
+}
+
+test "AllKPermutationsIterator" {
+    const n = 5;
+    var iterator = AllKPermutationsIterator(n).init();
+    var i: usize = 0;
+    while (iterator.next()) |_| {
+        i += 1;
+    }
+    try std.testing.expectEqual(numAllKPermutations(n), i);
+}
+
+pub const KPermutationsIterator = struct {
+    indexes: []usize,
+    k: usize,
+    initial: bool = true,
+
+    pub fn init(indexes_in_order: []usize, k: usize) KPermutationsIterator {
+        return .{
+            .indexes = indexes_in_order,
+            .k = k,
+        };
+    }
+
+    /// Adapted from https://stackoverflow.com/a/51292710
+    pub fn next(self: *KPermutationsIterator) ?[]usize {
+        if (self.initial) {
+            self.initial = false;
+            return self.indexes[0..self.k];
+        }
+        const n = self.indexes.len;
+        var tailmax = self.indexes[n - 1];
+        var tail: usize = self.k;
+        while (tail > 0 and self.indexes[tail - 1] >= tailmax) {
+            tail -= 1;
+            tailmax = self.indexes[tail];
+        }
+
+        if (tail > 0) {
+            var swap_in: usize = 0;
+            var pivot: usize = self.indexes[tail - 1];
+
+            if (pivot >= self.indexes[n - 1]) {
+                swap_in = tail;
+                while (swap_in + 1 < self.k and self.indexes[swap_in + 1] > pivot) : (swap_in += 1) {}
+            } else {
+                swap_in = n - 1;
+                while (swap_in > self.k and self.indexes[swap_in - 1] > pivot) : (swap_in -= 1) {}
+            }
+
+            // swap the pivots
+            self.indexes[tail - 1] = self.indexes[swap_in];
+            self.indexes[swap_in] = pivot;
+
+            // flip the tail
+            flip(self.indexes, self.k, n);
+            flip(self.indexes, tail, n);
+        }
+
+        if (tail > 0) {
+            return self.indexes[0..self.k];
+        } else {
+            return null;
+        }
+    }
+};
+
+test "KPermutationsIterator" {
+    var buf = [_]usize{ 0, 1, 2, 3, 4 };
+    var iterator = KPermutationsIterator.init(&buf, 2);
+    var i: usize = 0;
+    while (iterator.next()) |_| {
+        i += 1;
+    }
+    try std.testing.expectEqual(numKPermutationsWithoutRepetition(buf.len, 2), i);
+}
+
+fn flip(elements: []usize, lo: usize, hi: usize) void {
+    var _lo = lo;
+    var _hi = hi;
+    while (_lo + 1 < _hi) : ({
+        _lo += 1;
+        _hi -= 1;
+    }) {
+        swap(elements, _lo, _hi - 1);
+    }
+}
+
+fn swap(elements: []usize, a: usize, b: usize) void {
+    const tmp = elements[a];
+    elements[a] = elements[b];
+    elements[b] = tmp;
+}
+
+pub fn numAllKPermutations(n: usize) usize {
+    // P(n, 0) = n!/(n-0)! = 1
+    // P(n, 1) = n!/(n-1)! = choices
+    // P(n, 2) = n!/(n-2)!
+    // ...
+    // P(n, n) = n!
+    var k: usize = 0;
+    var num: usize = 0;
+    while (k <= n) : (k += 1) {
+        num += numKPermutationsWithoutRepetition(n, k);
+    }
+    return num;
+}
+
+fn numKPermutationsWithoutRepetition(n: usize, k: usize) usize {
+    return factorial(n) / factorial(n - k);
+}
+
+fn factorial(n: usize) usize {
+    var result: usize = 1;
+    var i: u32 = 1;
+    while (i <= n) : (i += 1) {
+        result *= i;
+    }
+    return result;
+}
