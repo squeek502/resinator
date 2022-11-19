@@ -70,6 +70,11 @@ pub const Parser = struct {
 
     fn parseStatements(self: *Self, statements: *std.ArrayList(*Node)) Error!void {
         while (self.state.token.id != .eof) {
+            // TODO: Catch something like an 'invalid resource' error and
+            //       append an Invalid node instead or something like that.
+            //       This kind of seems to be how the Windows RC compiler works,
+            //       as if it hits an invalid token it just kinda resets and
+            //       starts parsing from scratch again with the next token.
             var statement = try self.parseStatement();
             try statements.append(statement);
         }

@@ -29,5 +29,5 @@ The plan is to use fuzz testing with the `rc` tool as an oracle to ensure that `
 - Parsing
   + Converts the token list into an AST. Supports a few of the simpler resource types (RCDATA, ICON, CURSOR, user-defined), but doesn't handle malformed resources all that well.
 - Compiling
-  + Converts the AST into the binary `.res` file. Supports most the resources that the parser supports (RCDATA, ICON, CURSOR, etc).
+  + Converts the AST into the binary `.res` file. Supports most of the resources that the parser supports (RCDATA, ICON, CURSOR, etc).
     + ICON and CURSOR `.ico` parsing is supported, but may not be fully correct yet.
