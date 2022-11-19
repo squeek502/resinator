@@ -221,7 +221,13 @@ pub const Compiler = struct {
         defer file.close();
 
         // Init header with data size zero for now, will need to fill it in later
-        var header = try ResourceHeader.init(self.allocator, node.id.slice(self.source), node.type.slice(self.source), 0);
+        var header = ResourceHeader.init(self.allocator, node.id.slice(self.source), node.type.slice(self.source), 0) catch |err| switch (err) {
+            error.StringResourceAsNumericType => {
+                // TODO: Nice compile error
+                return error.CompileError;
+            },
+            else => |e| return e,
+        };
         defer header.deinit(self.allocator);
 
         if (header.predefinedResourceType()) |predefined_type| {
@@ -235,10 +241,7 @@ pub const Compiler = struct {
 
                     // Memory flags only affect the RT_ICON, not the RT_GROUP_ICON
                     var icon_memory_flags = MemoryFlags.defaults(res.RT.ICON);
-                    std.debug.print("{}\n", .{icon_memory_flags});
                     applyToMemoryFlags(&icon_memory_flags, node.common_resource_attributes, self.source);
-                    std.debug.print("-> {}\n", .{node.common_resource_attributes.len});
-                    std.debug.print("-> {}\n", .{icon_memory_flags});
 
                     const first_icon_id = self.state.icon_id;
                     const entry_type = if (predefined_type == .GROUP_ICON) @enumToInt(res.RT.ICON) else @enumToInt(res.RT.CURSOR);
@@ -396,7 +399,13 @@ pub const Compiler = struct {
     }
 
     pub fn writeResourceHeader(self: *Compiler, writer: anytype, id_token: Token, type_token: Token, data_size: u32, common_resource_attributes: []Token) !void {
-        var header = try ResourceHeader.init(self.allocator, id_token.slice(self.source), type_token.slice(self.source), data_size);
+        var header = ResourceHeader.init(self.allocator, id_token.slice(self.source), type_token.slice(self.source), data_size) catch |err| switch (err) {
+            error.StringResourceAsNumericType => {
+                // TODO: Nice compile error
+                return error.CompileError;
+            },
+            else => |e| return e,
+        };
         defer header.deinit(self.allocator);
 
         header.applyMemoryFlags(common_resource_attributes, self.source);
@@ -437,6 +446,10 @@ pub const Compiler = struct {
                 }
             };
             errdefer type_value.deinit(allocator);
+
+            if (type_value == .ordinal and type_value.ordinal == @enumToInt(res.RT.STRING)) {
+                return error.StringResourceAsNumericType;
+            }
 
             const name_value = try NameOrOrdinal.fromString(allocator, id_slice);
             errdefer name_value.deinit(allocator);

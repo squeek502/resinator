@@ -1,3 +1,4 @@
+const std = @import("std");
 const rc = @import("rc.zig");
 const Resource = rc.Resource;
 const CommonResourceAttributes = rc.CommonResourceAttributes;
@@ -71,9 +72,12 @@ pub const MemoryFlags = packed struct(u16) {
         } else {
             return switch (predefined_resource_type.?) {
                 .RCDATA, .BITMAP => MemoryFlags{ .value = MOVEABLE | PURE },
-                .GROUP_ICON, .GROUP_CURSOR => MemoryFlags{ .value = MOVEABLE | PURE | DISCARDABLE },
+                .GROUP_ICON, .GROUP_CURSOR, .STRING => MemoryFlags{ .value = MOVEABLE | PURE | DISCARDABLE },
                 .ICON, .CURSOR => MemoryFlags{ .value = MOVEABLE | DISCARDABLE },
-                else => @panic("TODO"),
+                else => {
+                    std.debug.print("TODO: {}\n", .{predefined_resource_type.?});
+                    @panic("TODO");
+                },
             };
         }
     }

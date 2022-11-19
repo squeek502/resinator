@@ -11,6 +11,9 @@ test "raw data" {
 
     var num: u8 = 0;
     while (num < 100) : (num += 1) {
+        // RT_STRING as a number is a special case since it will always lead to invalid .res files
+        if (num == 6) return;
+
         source_buffer.shrinkRetainingCapacity(0);
 
         const source_writer = source_buffer.writer();
@@ -25,8 +28,17 @@ test "raw data" {
         };
         defer allocator.free(expected_res);
 
+        var diagnostics = resinator.errors.Diagnostics.init(allocator);
+        defer diagnostics.deinit();
+
         buffer.shrinkRetainingCapacity(0);
-        try resinator.compile.compile(allocator, source, buffer.writer(), std.fs.cwd());
+        resinator.compile.compile(allocator, source, buffer.writer(), std.fs.cwd(), &diagnostics) catch |err| switch (err) {
+            error.ParseError => {
+                diagnostics.renderToStdErr(std.fs.cwd(), source, null);
+                return err;
+            },
+            else => return err,
+        };
 
         std.testing.expectEqualSlices(u8, expected_res, buffer.items) catch |err| {
             std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
