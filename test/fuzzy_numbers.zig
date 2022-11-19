@@ -28,9 +28,17 @@ test {
         };
         defer allocator.free(expected_res);
 
-        buffer.shrinkRetainingCapacity(0);
+        var diagnostics = resinator.errors.Diagnostics.init(allocator);
+        defer diagnostics.deinit();
 
-        try resinator.compile.compile(allocator, source, buffer.writer(), std.fs.cwd());
+        buffer.shrinkRetainingCapacity(0);
+        resinator.compile.compile(allocator, source, buffer.writer(), std.fs.cwd(), &diagnostics) catch |err| switch (err) {
+            error.ParseError => {
+                diagnostics.renderToStdErr(std.fs.cwd(), source, null);
+                return err;
+            },
+            else => return err,
+        };
 
         std.testing.expectEqualSlices(u8, expected_res, buffer.items) catch |e| {
             std.debug.print("\nSource:\n{s}\n", .{source});

@@ -22,8 +22,17 @@ test "single chars" {
         };
         defer allocator.free(expected_res);
 
+        var diagnostics = resinator.errors.Diagnostics.init(allocator);
+        defer diagnostics.deinit();
+
         buffer.shrinkRetainingCapacity(0);
-        try resinator.compile.compile(allocator, source, buffer.writer(), std.fs.cwd());
+        resinator.compile.compile(allocator, source, buffer.writer(), std.fs.cwd(), &diagnostics) catch |err| switch (err) {
+            error.ParseError => {
+                diagnostics.renderToStdErr(std.fs.cwd(), source, null);
+                return err;
+            },
+            else => return err,
+        };
 
         std.testing.expectEqualSlices(u8, expected_res, buffer.items) catch {
             std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
@@ -55,8 +64,17 @@ test "single char escapes" {
         };
         defer allocator.free(expected_res);
 
+        var diagnostics = resinator.errors.Diagnostics.init(allocator);
+        defer diagnostics.deinit();
+
         buffer.shrinkRetainingCapacity(0);
-        try resinator.compile.compile(allocator, source, buffer.writer(), std.fs.cwd());
+        resinator.compile.compile(allocator, source, buffer.writer(), std.fs.cwd(), &diagnostics) catch |err| switch (err) {
+            error.ParseError => {
+                diagnostics.renderToStdErr(std.fs.cwd(), source, null);
+                return err;
+            },
+            else => return err,
+        };
 
         std.testing.expectEqualSlices(u8, expected_res, buffer.items) catch {
             std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
