@@ -25,7 +25,7 @@ Currently a dumping ground for various pieces of information related to `.rc` an
 | Default | Types |
 |----|---------|
 | `MOVEABLE | DISCARDABLE` | `RT_ICON`, `RT_CURSOR` |
-| `MOVEABLE | PURE` | `RT_RCDATA`, `RT_BITMAP` |
+| `MOVEABLE | PURE` | `RT_RCDATA`, `RT_BITMAP`, `RT_HTML` |
 | `MOVEABLE | PURE | DISCARDABLE` | `RT_GROUP_ICON`, `RT_GROUP_CURSOR`, `RT_STRING` |
 
 ### Common Resource Attribute effects

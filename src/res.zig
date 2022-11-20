@@ -71,7 +71,7 @@ pub const MemoryFlags = packed struct(u16) {
             return MemoryFlags{ .value = MOVEABLE | PURE };
         } else {
             return switch (predefined_resource_type.?) {
-                .RCDATA, .BITMAP => MemoryFlags{ .value = MOVEABLE | PURE },
+                .RCDATA, .BITMAP, .HTML => MemoryFlags{ .value = MOVEABLE | PURE },
                 .GROUP_ICON, .GROUP_CURSOR, .STRING => MemoryFlags{ .value = MOVEABLE | PURE | DISCARDABLE },
                 .ICON, .CURSOR => MemoryFlags{ .value = MOVEABLE | DISCARDABLE },
                 else => {
