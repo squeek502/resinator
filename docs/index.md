@@ -20,7 +20,7 @@ Currently a dumping ground for various pieces of information related to `.rc` an
 ### [`RT_`](https://learn.microsoft.com/en-us/windows/win32/menurc/resource-types) Default Flags
 
 {: .note }
-Default values use the flags directly rather than 'applying' the relevant Common Resource Attribute(s), and therefore can have values that are not possible when specifying memory flags via Common Resource Attributes.
+> Default values use the flags directly rather than 'applying' the relevant Common Resource Attribute(s), and therefore can have values that are not possible when specifying memory flags via Common Resource Attributes.
 
 | Default | Types |
 |----|---------|
