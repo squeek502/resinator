@@ -33,7 +33,7 @@ test "raw data" {
 
         buffer.shrinkRetainingCapacity(0);
         resinator.compile.compile(allocator, source, buffer.writer(), std.fs.cwd(), &diagnostics) catch |err| switch (err) {
-            error.ParseError => {
+            error.ParseError, error.CompileError => {
                 diagnostics.renderToStdErr(std.fs.cwd(), source, null);
                 return err;
             },

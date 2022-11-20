@@ -41,10 +41,16 @@ pub const ErrorDetails = struct {
     } = .{ .none = {} },
 
     pub const Error = enum {
+        // Lexer
         unfinished_string_literal,
+
+        // Parser
         unfinished_raw_data_block,
         /// `expected` is populated.
         expected_token,
+
+        // Compiler
+        string_resource_as_numeric_type,
     };
 
     pub fn render(self: ErrorDetails, writer: anytype, source: []const u8) !void {
@@ -57,6 +63,10 @@ pub const ErrorDetails = struct {
             },
             .expected_token => {
                 return writer.print("expected '{s}', got '{s}'", .{ self.extra.expected.nameForErrorDisplay(), self.token.nameForErrorDisplay(source) });
+            },
+            .string_resource_as_numeric_type => {
+                // TODO: Add note about why this is the case (i.e. it always (?) leads to an invalid .res)
+                return writer.writeAll("the number 6 (RT_STRING) can not be used as a resource type");
             },
         }
     }

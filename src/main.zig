@@ -75,7 +75,7 @@ pub fn main() !void {
     std.debug.print("\n", .{});
 
     compile(allocator, preprocessed_input, output_file.writer(), std.fs.cwd(), &diagnostics) catch |err| switch (err) {
-        error.ParseError => {
+        error.ParseError, error.CompileError => {
             diagnostics.renderToStdErr(std.fs.cwd(), preprocessed_input, mapping_results.mappings);
             std.os.exit(1);
         },

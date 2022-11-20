@@ -10,6 +10,7 @@ const parseNumberLiteral = @import("literals.zig").parseNumberLiteral;
 const parseQuotedAsciiString = @import("literals.zig").parseQuotedAsciiString;
 const parseQuotedWideStringAlloc = @import("literals.zig").parseQuotedWideStringAlloc;
 const Diagnostics = @import("errors.zig").Diagnostics;
+const ErrorDetails = @import("errors.zig").ErrorDetails;
 const MemoryFlags = @import("res.zig").MemoryFlags;
 const rc = @import("rc.zig");
 const res = @import("res.zig");
@@ -223,8 +224,10 @@ pub const Compiler = struct {
         // Init header with data size zero for now, will need to fill it in later
         var header = ResourceHeader.init(self.allocator, node.id.slice(self.source), node.type.slice(self.source), 0) catch |err| switch (err) {
             error.StringResourceAsNumericType => {
-                // TODO: Nice compile error
-                return error.CompileError;
+                return self.failDetails(.{
+                    .err = .string_resource_as_numeric_type,
+                    .token = node.type,
+                });
             },
             else => |e| return e,
         };
@@ -401,8 +404,10 @@ pub const Compiler = struct {
     pub fn writeResourceHeader(self: *Compiler, writer: anytype, id_token: Token, type_token: Token, data_size: u32, common_resource_attributes: []Token) !void {
         var header = ResourceHeader.init(self.allocator, id_token.slice(self.source), type_token.slice(self.source), data_size) catch |err| switch (err) {
             error.StringResourceAsNumericType => {
-                // TODO: Nice compile error
-                return error.CompileError;
+                return self.failDetails(.{
+                    .err = .string_resource_as_numeric_type,
+                    .token = type_token,
+                });
             },
             else => |e| return e,
         };
@@ -512,6 +517,15 @@ pub const Compiler = struct {
             .data_size = 0,
         };
         try header.write(writer);
+    }
+
+    fn warnDetails(self: *Compiler, details: ErrorDetails) Allocator.Error!void {
+        try self.diagnostics.append(details);
+    }
+
+    fn failDetails(self: *Compiler, details: ErrorDetails) error{ CompileError, OutOfMemory } {
+        try self.warnDetails(details);
+        return error.CompileError;
     }
 };
 
