@@ -11,15 +11,16 @@ Currently a dumping ground for various pieces of information related to `.rc` an
 
 | Attribute | Value |
 |-----------|-------|
-| MOVEABLE | `0x10` |
-| SHARED | `0x20` |
-| PURE | `0x20` |
-| PRELOAD | `0x40` |
-| DISCARDABLE | `0x1000` |
+| `MOVEABLE` | `0x10` |
+| `SHARED` | `0x20` |
+| `PURE` | `0x20` |
+| `PRELOAD` | `0x40` |
+| `DISCARDABLE` | `0x1000` |
 
 ### [`RT_`](https://learn.microsoft.com/en-us/windows/win32/menurc/resource-types) Default Flags
 
-Note: Default values use the flags directly rather than 'applying' the relevant Common Resource Attribute, and therefore can have values that are not possible when specifying memory flags via Common Resource Attributes.
+{: .note }
+Default values use the flags directly rather than 'applying' the relevant Common Resource Attribute(s), and therefore can have values that are not possible when specifying memory flags via Common Resource Attributes.
 
 | Default | Types |
 |----|---------|
