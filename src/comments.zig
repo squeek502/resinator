@@ -67,21 +67,24 @@ pub fn removeComments(source: []const u8, buf: []u8) []u8 {
                 },
             },
             .line_comment => switch (c) {
-                '\r', '\n' => {
-                    if (c == '\r' and index + 1 < source.len and source[index + 1] == '\n') {
-                        index += 1;
+                '\n' => {
+                    // preserve newlines
+                    // (note: index is always > 0 here since we're in a line comment)
+                    if (source[index - 1] == '\r') {
+                        result.write('\r');
                     }
+                    result.write('\n');
                     state = .start;
                 },
                 else => {},
             },
             .multiline_comment => switch (c) {
-                '\r', '\n' => multiline_comment_contains_newline = true,
+                '\n' => multiline_comment_contains_newline = true,
                 '*' => state = .multiline_comment_end,
                 else => {},
             },
             .multiline_comment_end => switch (c) {
-                '\r', '\n' => multiline_comment_contains_newline = true,
+                '\n' => multiline_comment_contains_newline = true,
                 '/' => {
                     if (multiline_comment_contains_newline) {
                         result.write(' ');
@@ -92,7 +95,7 @@ pub fn removeComments(source: []const u8, buf: []u8) []u8 {
                 else => {},
             },
             .single_quoted => switch (c) {
-                '\r', '\n' => {
+                '\n' => {
                     state = .start;
                     result.write(c);
                 },
@@ -109,7 +112,7 @@ pub fn removeComments(source: []const u8, buf: []u8) []u8 {
                 },
             },
             .single_quoted_escape => switch (c) {
-                '\r', '\n' => {
+                '\n' => {
                     state = .start;
                     result.write(c);
                 },
@@ -119,7 +122,7 @@ pub fn removeComments(source: []const u8, buf: []u8) []u8 {
                 },
             },
             .double_quoted => switch (c) {
-                '\r', '\n' => {
+                '\n' => {
                     state = .start;
                     result.write(c);
                 },
@@ -136,7 +139,7 @@ pub fn removeComments(source: []const u8, buf: []u8) []u8 {
                 },
             },
             .double_quoted_escape => switch (c) {
-                '\r', '\n' => {
+                '\n' => {
                     state = .start;
                     result.write(c);
                 },
@@ -173,6 +176,29 @@ test "mixed" {
     try testRemoveComments("hello", "hel/* comment */lo");
 }
 
+test "within a string" {
+    // escaped " is \"
+    try testRemoveComments(
+        \\blah"//som\"/*ething*/"BLAH
+    ,
+        \\blah"//som\"/*ething*/"BLAH
+    );
+}
+
+test "line comments retain newlines" {
+    try testRemoveComments(
+        \\
+        \\
+        \\
+    ,
+        \\// comment
+        \\// comment
+        \\// comment
+    );
+
+    try testRemoveComments("\r\n", "//comment\r\n");
+}
+
 test "crazy" {
     try testRemoveComments(
         \\blah"/*som*/\""BLAH
@@ -181,17 +207,24 @@ test "crazy" {
     );
 
     try testRemoveComments(
-        \\blah"/*som*/"BLAH "RCDATA BEGIN END
+        \\blah"/*som*/"BLAH RCDATA "BEGIN END
+        \\
+        \\
+        \\hello
         \\"
     ,
-        \\blah"/*som*/"/*ething*/BLAH "RCDATA BEGIN END
-        \\// only valid in windres
+        \\blah"/*som*/"/*ething*/BLAH RCDATA "BEGIN END
+        \\// comment
         \\//"blah blah" RCDATA {}
+        \\hello
         \\"
     );
 }
 
 test "multiline comment with newlines" {
+    // bare \r is not treated as a newline
+    try testRemoveComments("blahblah", "blah/*some\rthing*/blah");
+
     try testRemoveComments(
         \\blah blah
     ,
