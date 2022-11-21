@@ -234,16 +234,13 @@ test "multiline comment with newlines" {
 }
 
 test "comments appended to a line" {
-    // TODO
-    return error.SkipZigTest;
-
-    // try testRemoveComments(
-    //     \\blah
-    //     \\blah
-    // ,
-    //     \\blah // line comment
-    //     \\blah
-    // );
+    try testRemoveComments(
+        \\blah 
+        \\blah
+    ,
+        \\blah // line comment
+        \\blah
+    );
 }
 
 test "in place" {
