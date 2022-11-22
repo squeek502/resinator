@@ -250,7 +250,40 @@ pub const SourceMappings = struct {
         try self.mapping.resize(allocator, line_num);
         return &self.mapping.items[line_num - 1];
     }
+
+    pub fn collapse(self: *SourceMappings, line_num: usize, num_following_lines_to_collapse: usize) void {
+        std.debug.assert(num_following_lines_to_collapse > 0);
+
+        var span_to_collapse_into = self.getPtr(line_num);
+        const last_collapsed_span = self.get(line_num + num_following_lines_to_collapse);
+        span_to_collapse_into.end_line = last_collapsed_span.end_line;
+
+        const after_collapsed_start = line_num + num_following_lines_to_collapse;
+        const new_num_lines = self.mapping.items.len - num_following_lines_to_collapse;
+        std.mem.copy(SourceSpan, self.mapping.items[line_num..new_num_lines], self.mapping.items[after_collapsed_start..]);
+
+        self.mapping.items.len = new_num_lines;
+    }
 };
+
+test "SourceMappings collapse" {
+    const allocator = std.testing.allocator;
+
+    var mappings = SourceMappings{};
+    defer mappings.deinit(allocator);
+    const filename_offset = try mappings.files.put(allocator, "test.rc");
+
+    try mappings.set(allocator, 1, .{ .start_line = 1, .end_line = 1, .filename_offset = filename_offset });
+    try mappings.set(allocator, 2, .{ .start_line = 2, .end_line = 3, .filename_offset = filename_offset });
+    try mappings.set(allocator, 3, .{ .start_line = 4, .end_line = 4, .filename_offset = filename_offset });
+    try mappings.set(allocator, 4, .{ .start_line = 5, .end_line = 5, .filename_offset = filename_offset });
+
+    mappings.collapse(1, 2);
+
+    try std.testing.expectEqual(@as(usize, 2), mappings.mapping.items.len);
+    try std.testing.expectEqual(@as(usize, 4), mappings.mapping.items[0].end_line);
+    try std.testing.expectEqual(@as(usize, 5), mappings.mapping.items[1].end_line);
+}
 
 /// Same thing as StringTable in Zig's src/Wasm.zig
 pub const StringTable = struct {

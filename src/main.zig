@@ -57,7 +57,7 @@ pub fn main() !void {
     var mapping_results = try parseAndRemoveLineCommands(allocator, result.stdout, result.stdout);
     defer mapping_results.mappings.deinit(allocator);
 
-    var preprocessed_input = removeComments(mapping_results.result, mapping_results.result);
+    var preprocessed_input = removeComments(mapping_results.result, mapping_results.result, &mapping_results.mappings);
 
     const output_filename = args[2];
     var output_file = try std.fs.cwd().createFile(output_filename, .{});
@@ -70,7 +70,7 @@ pub fn main() !void {
     for (mapping_results.mappings.mapping.items) |span, i| {
         const line_num = i + 1;
         const filename = mapping_results.mappings.files.get(span.filename_offset);
-        std.debug.print("{}: {s}:{}\n", .{ line_num, filename, span.start_line });
+        std.debug.print("{}: {s}:{}-{}\n", .{ line_num, filename, span.start_line, span.end_line });
     }
     std.debug.print("\n", .{});
 
