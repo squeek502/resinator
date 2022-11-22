@@ -84,7 +84,10 @@ pub fn removeComments(source: []const u8, buf: []u8) []u8 {
                 else => {},
             },
             .multiline_comment_end => switch (c) {
-                '\n' => multiline_comment_contains_newline = true,
+                '\n' => {
+                    multiline_comment_contains_newline = true;
+                    state = .multiline_comment;
+                },
                 '/' => {
                     if (multiline_comment_contains_newline) {
                         result.write(' ');
@@ -92,7 +95,9 @@ pub fn removeComments(source: []const u8, buf: []u8) []u8 {
                     multiline_comment_contains_newline = false;
                     state = .start;
                 },
-                else => {},
+                else => {
+                    state = .multiline_comment;
+                },
             },
             .single_quoted => switch (c) {
                 '\n' => {
@@ -230,6 +235,15 @@ test "multiline comment with newlines" {
     ,
         \\blah/*some
         \\thing*/blah
+    );
+
+    // handle *<not /> correctly
+    try testRemoveComments(
+        \\blah 
+    ,
+        \\blah/*some
+        \\thing*
+        \\/bl*ah*/
     );
 }
 
