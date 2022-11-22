@@ -10,7 +10,7 @@ const common_resource_attributes: []const []const u8 = &.{
 
 // TODO: For each resource type as well
 test "common resource attribute permutations" {
-    // Use a single tmp dir t avoid creating and cleaning up a dir for each RC invocation
+    // Use a single tmp dir to avoid creating and cleaning up a dir for each RC invocation
     // Unfortunately there doesn't seem to be a way to avoid hitting the filesystem,
     // the Windows RC compiler doesn't seem to like named pipes for either input or output
     var tmp = std.testing.tmpDir(.{});
