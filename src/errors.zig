@@ -46,6 +46,7 @@ pub const ErrorDetails = struct {
 
         // Parser
         unfinished_raw_data_block,
+        unfinished_string_table_block,
         /// `expected` is populated.
         expected_token,
 
@@ -60,6 +61,9 @@ pub const ErrorDetails = struct {
             },
             .unfinished_raw_data_block => {
                 return writer.print("unfinished raw data block at '{s}', expected closing '}}' or 'END'", .{self.token.nameForErrorDisplay(source)});
+            },
+            .unfinished_string_table_block => {
+                return writer.print("unfinished STRINGTABLE block at '{s}', expected closing '}}' or 'END'", .{self.token.nameForErrorDisplay(source)});
             },
             .expected_token => {
                 return writer.print("expected '{s}', got '{s}'", .{ self.extra.expected.nameForErrorDisplay(), self.token.nameForErrorDisplay(source) });

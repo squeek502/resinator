@@ -49,6 +49,7 @@ pub const Compiler = struct {
 
     pub const State = struct {
         icon_id: u16 = 1,
+        string_table: StringTable = .{},
     };
 
     pub fn writeRoot(self: *Compiler, root: *Node.Root, writer: anytype) !void {
@@ -67,6 +68,8 @@ pub const Compiler = struct {
             .binary_expression => @panic("TODO"),
             .grouped_expression => @panic("TODO"),
             .invalid => @panic("TODO"),
+            .string_table => @panic("TODO"),
+            .string_table_string => @panic("TODO"),
         }
     }
 

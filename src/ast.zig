@@ -34,6 +34,8 @@ pub const Node = struct {
         literal,
         binary_expression,
         grouped_expression,
+        string_table,
+        string_table_string,
         invalid,
 
         pub fn Type(comptime id: Id) type {
@@ -44,6 +46,8 @@ pub const Node = struct {
                 .literal => Literal,
                 .binary_expression => BinaryExpression,
                 .grouped_expression => GroupedExpression,
+                .string_table => StringTable,
+                .string_table_string => StringTableString,
                 .invalid => Invalid,
             };
         }
@@ -94,6 +98,23 @@ pub const Node = struct {
         open_token: Token,
         expression: *Node,
         close_token: Token,
+    };
+
+    pub const StringTable = struct {
+        base: Node = .{ .id = .string_table },
+        type: Token,
+        common_resource_attributes: []Token,
+        // TODO: optional-statements
+        begin_token: Token,
+        strings: []*Node,
+        end_token: Token,
+    };
+
+    pub const StringTableString = struct {
+        base: Node = .{ .id = .string_table_string },
+        id: *Node,
+        maybe_comma: ?Token,
+        string: Token,
     };
 
     pub const Invalid = struct {
@@ -153,6 +174,26 @@ pub const Node = struct {
                 try writer.writeByteNTimes(' ', indent);
                 try writer.writeAll(grouped.close_token.slice(tree.source));
                 try writer.writeAll("\n");
+            },
+            .string_table => {
+                const string_table = @fieldParentPtr(Node.StringTable, "base", node);
+                try writer.print(" {s} [{d} common_resource_attributes]\n", .{ string_table.type.slice(tree.source), string_table.common_resource_attributes.len });
+                try writer.writeByteNTimes(' ', indent);
+                try writer.writeAll(string_table.begin_token.slice(tree.source));
+                try writer.writeAll("\n");
+                for (string_table.strings) |string| {
+                    try string.dump(tree, writer, indent + 1);
+                }
+                try writer.writeByteNTimes(' ', indent);
+                try writer.writeAll(string_table.end_token.slice(tree.source));
+                try writer.writeAll("\n");
+            },
+            .string_table_string => {
+                try writer.writeAll("\n");
+                const string = @fieldParentPtr(Node.StringTableString, "base", node);
+                try string.id.dump(tree, writer, indent + 1);
+                try writer.writeByteNTimes(' ', indent + 1);
+                try writer.print("{s}\n", .{string.string.slice(tree.source)});
             },
             .invalid => {
                 const invalid = @fieldParentPtr(Node.Invalid, "base", node);
