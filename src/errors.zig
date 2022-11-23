@@ -101,15 +101,37 @@ pub fn renderErrorMessage(writer: anytype, ttyconf: std.debug.TTY.Config, cwd: s
     try writer.writeAll("\n");
     ttyconf.setColor(writer, .Reset);
 
+    const token_offset = err_details.token.start - source_line_start;
     const source_line = err_details.token.getLine(source, source_line_start);
-    for (source_line) |c| switch (c) {
-        '\t' => try writer.writeByte(' '),
-        else => try writer.writeByte(c),
-    };
+    if (err_details.err == .string_literal_too_long) {
+        var i: usize = 0;
+        while (i < token_offset + 16) : (i += 1) {
+            const c = source_line[i];
+            switch (c) {
+                '\t' => try writer.writeByte(' '),
+                else => try writer.writeByte(c),
+            }
+        }
+        ttyconf.setColor(writer, .Dim);
+        try writer.writeAll("<...truncated...>");
+        ttyconf.setColor(writer, .Reset);
+        i = source_line.len - 16;
+        while (i < source_line.len) : (i += 1) {
+            const c = source_line[i];
+            switch (c) {
+                '\t' => try writer.writeByte(' '),
+                else => try writer.writeByte(c),
+            }
+        }
+    } else {
+        for (source_line) |c| switch (c) {
+            '\t' => try writer.writeByte(' '),
+            else => try writer.writeByte(c),
+        };
+    }
     try writer.writeByte('\n');
 
     ttyconf.setColor(writer, .Green);
-    const token_offset = err_details.token.start - source_line_start;
     try writer.writeByteNTimes(' ', token_offset);
     try writer.writeByte('^');
     try writer.writeByte('\n');
@@ -133,6 +155,9 @@ pub fn renderErrorMessage(writer: anytype, ttyconf: std.debug.TTY.Config, cwd: s
         }
         try writer.print(" of file '{s}'\n", .{corresponding_file});
         ttyconf.setColor(writer, .Reset);
+
+        // Don't print the originating line for this error, we know it's really long
+        if (err_details.err == .string_literal_too_long) return;
 
         if (cwd.openFile(corresponding_file, .{})) |file| {
             var buffered_reader = std.io.bufferedReader(file.reader());
