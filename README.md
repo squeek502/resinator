@@ -27,6 +27,11 @@ The plan is to use fuzz testing with the `rc` tool as an oracle to ensure that `
 - In `resinator`, using the number `6` as a resource type is an error and will fail to compile.
   + The Windows RC compiler allows the number `6` (i.e. `RT_STRING`) to be specified as a resource type. When this happens, the Windows RC compiler will output a `.res` file with a resource that has the format of a user-defined resource, but with the type `RT_STRING`. The resulting `.res` file is basically always invalid/bogus/unreadable, as `STRINGTABLE`/`RT_STRING` has [a very particular format](https://devblogs.microsoft.com/oldnewthing/20040130-00/?p=40813).
 
+### Unavoidable divergences from the MSVC++ `rc` tool
+
+- In `resinator`, splices (`\` at the end of a line) are removed by the preprocessor before checking if any string literals are too long.
+  + The Windows RC compiler includes the splice characters in the string literal length check (even though they don't show up in the string literal).
+
 ## Status
 
 - Lexer
