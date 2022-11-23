@@ -376,10 +376,29 @@ pub const Lexer = struct {
                         // the rest are collapsed into the <space><\n>
                     },
                     '\t', ' ', '\x0b', '\x0c' => {
-                        // TODO: \t should be counted as the number of space characters
-                        //       to reach the next 8-column tab stop (ugh).
                         if (!string_literal_collapsing_whitespace) {
-                            string_literal_length += 1;
+                            if (c == '\t') {
+                                // Literal tab characters are counted as the number of space characters
+                                // needed to reach the next 8-column tab stop.
+                                //
+                                // This implemention is ineffecient but hopefully it's enough of an
+                                // edge case that it doesn't matter too much. Literal tab characters in
+                                // string literals being replaced by a variable number of spaces depending
+                                // on which column the tab character is located in the source .rc file seems
+                                // like it has extremely limited use-cases, so it seems unlikely that it's used
+                                // in real .rc files.
+                                var dummy_token = Token{
+                                    .start = self.index,
+                                    .end = self.index,
+                                    .line_number = self.line_number,
+                                    .id = .invalid,
+                                };
+                                dummy_token.start = self.index;
+                                const current_column = dummy_token.calculateColumn(self.buffer, 8, null);
+                                string_literal_length += columnsUntilTabStop(current_column, 8);
+                            } else {
+                                string_literal_length += 1;
+                            }
                         }
                     },
                     else => {
