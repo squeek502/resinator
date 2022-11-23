@@ -43,6 +43,7 @@ pub const ErrorDetails = struct {
     pub const Error = enum {
         // Lexer
         unfinished_string_literal,
+        string_literal_too_long,
 
         // Parser
         unfinished_raw_data_block,
@@ -58,6 +59,9 @@ pub const ErrorDetails = struct {
         switch (self.err) {
             .unfinished_string_literal => {
                 return writer.print("unfinished string literal at '{s}', expected closing '\"'", .{self.token.nameForErrorDisplay(source)});
+            },
+            .string_literal_too_long => {
+                return writer.writeAll("string literal too long (max is 4097 characters)");
             },
             .unfinished_raw_data_block => {
                 return writer.print("unfinished raw data block at '{s}', expected closing '}}' or 'END'", .{self.token.nameForErrorDisplay(source)});

@@ -102,6 +102,7 @@ pub const Token = struct {
 
 pub const LexError = error{
     UnfinishedStringLiteral,
+    StringLiteralTooLong,
 };
 
 pub const Lexer = struct {
@@ -112,6 +113,8 @@ pub const Lexer = struct {
     line_number: usize = 1,
     at_start_of_line: bool = true,
     error_context_token: ?Token = null,
+
+    pub const string_literal_length_limit = 4097;
 
     pub const Error = LexError;
 
@@ -242,6 +245,12 @@ pub const Lexer = struct {
         var state = StateNormal.start;
 
         var last_line_ending_index: ?usize = null;
+        // Note: The Windows RC compiler uses a non-standard method of computing
+        //       length for its 'string literal too long' errors; it isn't easily
+        //       explained or intuitive (it's sort-of pre-parsed byte length but with
+        //       a few of exceptions/edge cases).
+        var string_literal_length: usize = 0;
+        var string_literal_collapsing_whitespace: bool = false;
         while (self.index < self.buffer.len) : (self.index += 1) {
             const c = self.buffer[self.index];
             switch (state) {
@@ -261,6 +270,8 @@ pub const Lexer = struct {
                     '"' => {
                         state = .quoted_ascii_string;
                         self.at_start_of_line = false;
+                        string_literal_collapsing_whitespace = false;
+                        string_literal_length = 0;
                     },
                     '+', '&', '|' => {
                         self.index += 1;
@@ -336,6 +347,8 @@ pub const Lexer = struct {
                     },
                     '"' => {
                         state = .quoted_wide_string;
+                        string_literal_collapsing_whitespace = false;
+                        string_literal_length = 0;
                     },
                     else => {
                         state = .literal;
@@ -353,11 +366,32 @@ pub const Lexer = struct {
                     '"' => {
                         state = if (state == .quoted_ascii_string) .quoted_ascii_string_maybe_end else .quoted_wide_string_maybe_end;
                     },
-                    else => {},
+                    '\r' => {}, // \r doesn't count towards string literal length
+                    '\n' => {
+                        // first \n expands to <space><\n>
+                        if (!string_literal_collapsing_whitespace) {
+                            string_literal_length += 2; //
+                            string_literal_collapsing_whitespace = true;
+                        }
+                        // the rest are collapsed into the <space><\n>
+                    },
+                    '\t', ' ', '\x0b', '\x0c' => {
+                        // TODO: \t should be counted as the number of space characters
+                        //       to reach the next 8-column tab stop (ugh).
+                        if (!string_literal_collapsing_whitespace) {
+                            string_literal_length += 1;
+                        }
+                    },
+                    else => {
+                        string_literal_collapsing_whitespace = false;
+                        string_literal_length += 1;
+                    },
                 },
                 .quoted_ascii_string_maybe_end, .quoted_wide_string_maybe_end => switch (c) {
                     '"' => {
                         state = if (state == .quoted_ascii_string_maybe_end) .quoted_ascii_string else .quoted_wide_string;
+                        // Escaped quotes only count as 1 char for string literal length checks,
+                        // so we don't increment string_literal_length here.
                     },
                     else => {
                         result.id = if (state == .quoted_ascii_string_maybe_end) .quoted_ascii_string else .quoted_wide_string;
@@ -391,6 +425,13 @@ pub const Lexer = struct {
                     };
                     return LexError.UnfinishedStringLiteral;
                 },
+            }
+        }
+
+        if (result.id == .quoted_ascii_string or result.id == .quoted_wide_string) {
+            if (string_literal_length > string_literal_length_limit) {
+                self.error_context_token = result;
+                return LexError.StringLiteralTooLong;
             }
         }
 
@@ -445,6 +486,7 @@ pub const Lexer = struct {
     pub fn getErrorDetails(self: Self, lex_err: LexError) ErrorDetails {
         const err = switch (lex_err) {
             error.UnfinishedStringLiteral => ErrorDetails.Error.unfinished_string_literal,
+            error.StringLiteralTooLong => ErrorDetails.Error.string_literal_too_long,
         };
         return .{
             .err = err,
