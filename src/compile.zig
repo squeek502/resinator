@@ -540,6 +540,197 @@ pub const Compiler = struct {
     }
 };
 
+pub const StringTable = struct {
+    blocks: std.AutoHashMapUnmanaged(u16, Block) = .{},
+
+    pub const Block = struct {
+        string_tokens: std.ArrayListUnmanaged(Token) = .{},
+        set_indexes: std.bit_set.IntegerBitSet(16) = .{ .mask = 0 },
+
+        /// Returns the index to insert the string into the `string_tokens` list.
+        /// Returns null if the string should be appended.
+        fn getInsertionIndex(self: *Block, index: u8) ?u8 {
+            std.debug.assert(!self.set_indexes.isSet(index));
+
+            const first_set = self.set_indexes.findFirstSet() orelse return null;
+            if (first_set > index) return 0;
+
+            const last_set = 15 - @clz(self.set_indexes.mask);
+            if (index > last_set) return null;
+
+            var bit = first_set + 1;
+            var insertion_index: u8 = 1;
+            while (bit != index) : (bit += 1) {
+                if (self.set_indexes.isSet(bit)) insertion_index += 1;
+            }
+            return insertion_index;
+        }
+
+        fn getTokenIndex(self: *Block, string_index: u8) ?u8 {
+            const count = self.string_tokens.items.len;
+            if (count == 0) return null;
+            if (count == 1) return 0;
+
+            const first_set = self.set_indexes.findFirstSet() orelse unreachable;
+            if (first_set == string_index) return 0;
+            const last_set = 15 - @clz(self.set_indexes.mask);
+            if (last_set == string_index) return @intCast(u8, count - 1);
+
+            if (first_set == last_set) return null;
+
+            var bit = first_set + 1;
+            var token_index: u8 = 1;
+            while (bit < last_set) : (bit += 1) {
+                if (!self.set_indexes.isSet(bit)) continue;
+                if (bit == string_index) return token_index;
+                token_index += 1;
+            }
+            return null;
+        }
+
+        fn dump(self: *Block) void {
+            var bit_it = self.set_indexes.iterator(.{});
+            var string_index: usize = 0;
+            while (bit_it.next()) |bit_index| {
+                const token = self.string_tokens.items[string_index];
+                std.debug.print("{}: [{}] {any}\n", .{ bit_index, string_index, token });
+                string_index += 1;
+            }
+        }
+    };
+
+    pub fn deinit(self: *StringTable, allocator: Allocator) void {
+        var it = self.blocks.valueIterator();
+        while (it.next()) |v| {
+            v.string_tokens.deinit(allocator);
+        }
+        self.blocks.deinit(allocator);
+    }
+
+    const SetError = error{StringAlreadyDefined} || Allocator.Error;
+
+    pub fn set(self: *StringTable, allocator: Allocator, id: u16, string_token: Token) SetError!void {
+        const block_id = (id / 16) + 1;
+        const string_index: u8 = @intCast(u8, id & 0xF);
+
+        var get_or_put_result = try self.blocks.getOrPut(allocator, block_id);
+        if (!get_or_put_result.found_existing) {
+            get_or_put_result.value_ptr.* = Block{};
+        } else {
+            if (get_or_put_result.value_ptr.set_indexes.isSet(string_index)) {
+                return error.StringAlreadyDefined;
+            }
+        }
+
+        var block = get_or_put_result.value_ptr;
+        if (block.getInsertionIndex(string_index)) |insertion_index| {
+            try block.string_tokens.insert(allocator, insertion_index, string_token);
+        } else {
+            try block.string_tokens.append(allocator, string_token);
+        }
+        block.set_indexes.set(string_index);
+    }
+
+    pub fn get(self: *StringTable, id: u16) ?Token {
+        const block_id = (id / 16) + 1;
+        const string_index = @intCast(u8, id & 0xF);
+
+        const block = self.blocks.getPtr(block_id) orelse return null;
+        const token_index = block.getTokenIndex(string_index) orelse return null;
+        return block.string_tokens.items[token_index];
+    }
+
+    pub fn dump(self: *StringTable, allocator: Allocator) !void {
+        var it = try self.inOrderIterator(allocator);
+        defer it.deinit(allocator);
+        while (it.next()) |entry| {
+            std.debug.print("block: {}\n", .{entry.key_ptr.*});
+            entry.value_ptr.dump();
+        }
+    }
+
+    pub const InOrderIterator = struct {
+        string_table: *const StringTable,
+        sorted_keys: []u16,
+        index: usize = 0,
+
+        pub fn init(allocator: Allocator, string_table: *const StringTable) !InOrderIterator {
+            var iterator = InOrderIterator{
+                .string_table = string_table,
+                .sorted_keys = try allocator.alloc(u16, string_table.blocks.count()),
+            };
+            var key_it = string_table.blocks.keyIterator();
+            var key_i: usize = 0;
+            while (key_it.next()) |key_ptr| {
+                iterator.sorted_keys[key_i] = key_ptr.*;
+                key_i += 1;
+            }
+            std.sort.sort(u16, iterator.sorted_keys, {}, std.sort.asc(u16));
+            return iterator;
+        }
+
+        pub fn deinit(self: InOrderIterator, allocator: Allocator) void {
+            allocator.free(self.sorted_keys);
+        }
+
+        pub fn next(self: *InOrderIterator) ?std.AutoHashMapUnmanaged(u16, Block).Entry {
+            if (self.index >= self.sorted_keys.len) return null;
+            var entry = self.string_table.blocks.getEntry(self.sorted_keys[self.index]);
+            self.index += 1;
+            return entry;
+        }
+    };
+
+    pub fn inOrderIterator(self: *StringTable, allocator: Allocator) !InOrderIterator {
+        return InOrderIterator.init(allocator, self);
+    }
+};
+
+test "StringTable" {
+    const S = struct {
+        fn makeDummyToken(id: usize) Token {
+            return Token{
+                .id = .invalid,
+                .start = id,
+                .end = id,
+                .line_number = id,
+            };
+        }
+    };
+    const allocator = std.testing.allocator;
+    var string_table = StringTable{};
+    defer string_table.deinit(allocator);
+
+    // randomize an array of ids 0-99
+    var ids = ids: {
+        var buf: [100]u16 = undefined;
+        var i: u16 = 0;
+        while (i < buf.len) : (i += 1) {
+            buf[i] = i;
+        }
+        break :ids buf;
+    };
+    var prng = std.rand.DefaultPrng.init(0);
+    var random = prng.random();
+    random.shuffle(u16, &ids);
+
+    // set each one in the randomized order
+    for (ids) |id| {
+        try string_table.set(allocator, id, S.makeDummyToken(id));
+    }
+
+    // make sure each one exists and is the right value when gotten
+    var id: u16 = 0;
+    while (id < 100) : (id += 1) {
+        const dummy = S.makeDummyToken(id);
+        try std.testing.expectError(error.StringAlreadyDefined, string_table.set(allocator, id, dummy));
+        try std.testing.expectEqual(dummy, string_table.get(id).?);
+    }
+
+    // make sure non-existent string ids are not found
+    try std.testing.expectEqual(@as(?Token, null), string_table.get(100));
+}
+
 fn testCompile(source: []const u8, cwd: std.fs.Dir) !void {
     var buffer = std.ArrayList(u8).init(std.testing.allocator);
     defer buffer.deinit();
