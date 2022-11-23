@@ -126,6 +126,20 @@ pub const Lexer = struct {
         std.debug.print("{s}:{d}: {s}\n", .{ @tagName(token.id), token.line_number, std.fmt.fmtSliceEscapeLower(token.slice(self.buffer)) });
     }
 
+    pub const LexMethod = enum {
+        whitespace_delimiter_only,
+        normal,
+        normal_expect_operator,
+    };
+
+    pub fn next(self: *Self, comptime method: LexMethod) LexError!Token {
+        switch (method) {
+            .whitespace_delimiter_only => return self.nextWhitespaceDelimeterOnly(),
+            .normal => return self.nextNormal(),
+            .normal_expect_operator => return self.nextNormalWithContext(.expect_operator),
+        }
+    }
+
     const StateWhitespaceDelimiterOnly = enum {
         start,
         literal,

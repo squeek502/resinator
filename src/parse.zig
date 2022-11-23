@@ -41,7 +41,7 @@ pub const Parser = struct {
             .diagnostics = diagnostics,
         };
 
-        try self.nextTokenWhitespaceDelimiterOnly();
+        try self.nextToken(.whitespace_delimiter_only);
         const parsed_root = try self.parseRoot();
 
         const tree = try self.state.arena.create(Tree);
@@ -87,10 +87,10 @@ pub const Parser = struct {
         } else {
             try self.checkId();
             const id_token = first_token;
-            try self.nextTokenWhitespaceDelimiterOnly();
+            try self.nextToken(.whitespace_delimiter_only);
             const resource = try self.checkResource();
             const type_token = self.state.token;
-            try self.nextTokenNormal();
+            try self.nextToken(.normal);
 
             switch (resource) {
                 .icon, .font, .cursor, .bitmap, .messagetable, .user_defined, .rcdata, .html => {
@@ -100,11 +100,11 @@ pub const Parser = struct {
                     // TODO: Can user-defined resources have common resource attributes?
                     while (self.state.token.id == .literal and common_resource_attributes_set.has(self.state.token.slice(self.lexer.buffer))) {
                         try common_resource_attributes.append(self.state.token);
-                        try self.nextTokenNormal();
+                        try self.nextToken(.normal);
                     }
 
                     if (try self.testBegin()) {
-                        try self.nextTokenNormal();
+                        try self.nextToken(.normal);
 
                         var raw_data = std.ArrayList(*Node).init(self.state.allocator);
                         defer raw_data.deinit();
@@ -118,11 +118,11 @@ pub const Parser = struct {
                                 },
                                 .comma => {
                                     // skip over commas
-                                    try self.nextTokenNormal();
+                                    try self.nextToken(.normal);
                                     continue;
                                 },
                                 .close_brace => {
-                                    try self.nextTokenWhitespaceDelimiterOnly();
+                                    try self.nextToken(.whitespace_delimiter_only);
                                     break;
                                 },
                                 .eof => {
@@ -137,7 +137,7 @@ pub const Parser = struct {
                             try raw_data.append(expression_result.node);
 
                             if (!expression_result.has_unconsumed_token) {
-                                try self.nextTokenNormal();
+                                try self.nextToken(.normal);
                             }
                         }
 
@@ -153,7 +153,7 @@ pub const Parser = struct {
 
                     var filename_expression_result = try self.parseExpression();
                     if (!filename_expression_result.has_unconsumed_token) {
-                        try self.nextTokenWhitespaceDelimiterOnly();
+                        try self.nextToken(.whitespace_delimiter_only);
                     }
 
                     const node = try self.state.arena.create(Node.ResourceExternal);
@@ -202,11 +202,11 @@ pub const Parser = struct {
                 .open_paren => {
                     const open_paren_token = self.state.token;
 
-                    try self.nextTokenNormal();
+                    try self.nextToken(.normal);
                     const expression_result = try self.parseExpression();
 
                     if (!expression_result.has_unconsumed_token) {
-                        try self.nextTokenNormal();
+                        try self.nextToken(.normal);
                     }
 
                     const node = try self.state.arena.create(Node.GroupedExpression);
@@ -226,7 +226,7 @@ pub const Parser = struct {
             @panic("TODO parseExpression");
         };
 
-        try self.nextTokenNormalExpectOperator();
+        try self.nextToken(.normal_expect_operator);
         const possible_operator = self.state.token;
         switch (possible_operator.id) {
             .operator => {},
@@ -238,7 +238,7 @@ pub const Parser = struct {
             },
         }
 
-        try self.nextTokenNormal();
+        try self.nextToken(.normal);
         const rhs_result = try self.parseExpression();
 
         const node = try self.state.arena.create(Node.BinaryExpression);
@@ -263,20 +263,8 @@ pub const Parser = struct {
         return error.ParseError;
     }
 
-    fn nextTokenWhitespaceDelimiterOnly(self: *Self) Error!void {
-        self.state.token = self.lexer.nextWhitespaceDelimeterOnly() catch |err| {
-            return self.failDetails(self.lexer.getErrorDetails(err));
-        };
-    }
-
-    fn nextTokenNormal(self: *Self) Error!void {
-        self.state.token = self.lexer.nextNormal() catch |err| {
-            return self.failDetails(self.lexer.getErrorDetails(err));
-        };
-    }
-
-    fn nextTokenNormalExpectOperator(self: *Self) Error!void {
-        self.state.token = self.lexer.nextNormalWithContext(.expect_operator) catch |err| {
+    fn nextToken(self: *Self, comptime method: Lexer.LexMethod) Error!void {
+        self.state.token = self.lexer.next(method) catch |err| {
             return self.failDetails(self.lexer.getErrorDetails(err));
         };
     }
