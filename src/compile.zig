@@ -57,6 +57,12 @@ pub const Compiler = struct {
         for (root.body) |node| {
             try self.writeNode(node, writer);
         }
+
+        // once we've written every else out, we can write out the finalized STRINGTABLE resources
+        var string_table_it = self.state.string_table.blocks.iterator();
+        while (string_table_it.next()) |entry| {
+            try entry.value_ptr.writeResData(self, entry.key_ptr.*, writer);
+        }
     }
 
     pub fn writeNode(self: *Compiler, node: *Node, writer: anytype) !void {
@@ -68,8 +74,8 @@ pub const Compiler = struct {
             .binary_expression => @panic("TODO"),
             .grouped_expression => @panic("TODO"),
             .invalid => @panic("TODO"),
-            .string_table => @panic("TODO"),
-            .string_table_string => @panic("TODO"),
+            .string_table => try self.writeStringTable(@fieldParentPtr(Node.StringTable, "base", node)),
+            .string_table_string => unreachable, // handled by writeStringTable
         }
     }
 
@@ -260,7 +266,7 @@ pub const Compiler = struct {
                         };
                         try image_header.write(writer);
                         try file.seekTo(entry.data_offset_from_start_of_file);
-                        try self.writeResourceData(writer, file.reader(), image_header.data_size);
+                        try writeResourceData(writer, file.reader(), image_header.data_size);
                         self.state.icon_id += 1;
                     }
 
@@ -282,7 +288,7 @@ pub const Compiler = struct {
                     header.data_size = @intCast(u32, file_size) - bmp_header_size;
                     try header.write(writer);
                     try file.seekTo(bmp_header_size);
-                    try self.writeResourceData(writer, file.reader(), header.data_size);
+                    try writeResourceData(writer, file.reader(), header.data_size);
                     return;
                 },
                 else => {
@@ -298,7 +304,7 @@ pub const Compiler = struct {
         // TODO: How does the Windows RC compiler handle file sizes over u32 max?
         header.data_size = @intCast(u32, try file.getEndPos());
         try header.write(writer);
-        try self.writeResourceData(writer, file.reader(), header.data_size);
+        try writeResourceData(writer, file.reader(), header.data_size);
     }
 
     pub const DataType = enum {
@@ -412,7 +418,7 @@ pub const Compiler = struct {
         try self.writeResourceHeader(writer, node.id, node.type, @intCast(u32, data_buffer.items.len), node.common_resource_attributes);
 
         var data_fbs = std.io.fixedBufferStream(data_buffer.items);
-        try self.writeResourceData(writer, data_fbs.reader(), @intCast(u32, data_buffer.items.len));
+        try writeResourceData(writer, data_fbs.reader(), @intCast(u32, data_buffer.items.len));
     }
 
     pub fn writeResourceHeader(self: *Compiler, writer: anytype, id_token: Token, type_token: Token, data_size: u32, common_resource_attributes: []Token) !void {
@@ -432,8 +438,7 @@ pub const Compiler = struct {
         try header.write(writer);
     }
 
-    pub fn writeResourceData(self: *Compiler, writer: anytype, data_reader: anytype, data_size: u32) !void {
-        _ = self;
+    pub fn writeResourceData(writer: anytype, data_reader: anytype, data_size: u32) !void {
         var limited_reader = std.io.limitedReader(data_reader, data_size);
 
         const FifoBuffer = std.fifo.LinearFifo(u8, .{ .Static = 4096 });
@@ -442,6 +447,24 @@ pub const Compiler = struct {
 
         const padding_after_data = std.mem.alignForward(data_size, 4) - data_size;
         try writer.writeByteNTimes(0, padding_after_data);
+    }
+
+    pub fn writeStringTable(self: *Compiler, node: *Node.StringTable) !void {
+        // TODO: The first to STRINGTABLE that contains a string in a block dictates the memory flags
+        // of the entire block
+
+        for (node.strings) |string_node| {
+            const string = @fieldParentPtr(Node.StringTableString, "base", string_node);
+            const string_id_data = try self.evaluateDataExpression(string.id);
+            const string_id = string_id_data.number.asWord();
+
+            self.state.string_table.set(self.arena, string_id, string.string) catch |err| switch (err) {
+                error.StringAlreadyDefined => {
+                    @panic("TODO proper error message for string already defined");
+                },
+                error.OutOfMemory => |e| return e,
+            };
+        }
     }
 
     pub const ResourceHeader = struct {
@@ -544,7 +567,11 @@ pub const Compiler = struct {
 };
 
 pub const StringTable = struct {
-    blocks: std.AutoHashMapUnmanaged(u16, Block) = .{},
+    /// Blocks are written to the .res file in order depending on when the first string
+    /// was added to the block (i.e. `STRINGTABLE { 16 "b" 0 "a" }` would then get written
+    /// with block ID 2 (the one with "b") first and block ID 1 (the one with "a") second).
+    /// Using an ArrayHashMap here gives us this property for free.
+    blocks: std.AutoArrayHashMapUnmanaged(u16, Block) = .{},
 
     pub const Block = struct {
         string_tokens: std.ArrayListUnmanaged(Token) = .{},
@@ -600,12 +627,62 @@ pub const StringTable = struct {
                 string_index += 1;
             }
         }
+
+        pub fn writeResData(self: *Block, compiler: *Compiler, block_id: u16, writer: anytype) !void {
+            var data_buffer = std.ArrayList(u8).init(compiler.allocator);
+            defer data_buffer.deinit();
+            const data_writer = data_buffer.writer();
+
+            var i: u8 = 0;
+            var string_i: u8 = 0;
+            while (true) : (i += 1) {
+                if (!self.set_indexes.isSet(i)) {
+                    try data_writer.writeIntLittle(u16, 0);
+                    if (i == 15) break else continue;
+                }
+
+                const string_token = self.string_tokens.items[string_i];
+                const slice = string_token.slice(compiler.source);
+                const column = string_token.calculateColumn(compiler.source, 8, null);
+                const utf16_string = utf16: {
+                    switch (string_token.id) {
+                        .quoted_ascii_string => {
+                            const parsed = try parseQuotedAsciiString(compiler.allocator, slice, column);
+                            defer compiler.allocator.free(parsed);
+                            break :utf16 try std.unicode.utf8ToUtf16LeWithNull(compiler.allocator, parsed);
+                        },
+                        .quoted_wide_string => break :utf16 try parseQuotedWideStringAlloc(compiler.allocator, slice, column),
+                        else => unreachable,
+                    }
+                };
+                defer compiler.allocator.free(utf16_string);
+
+                try data_writer.writeIntLittle(u16, @intCast(u16, utf16_string.len));
+                for (utf16_string) |wc| {
+                    try data_writer.writeIntLittle(u16, wc);
+                }
+
+                if (i == 15) break;
+                string_i += 1;
+            }
+
+            const header = Compiler.ResourceHeader{
+                .name_value = .{ .ordinal = block_id },
+                .type_value = .{ .ordinal = @enumToInt(res.RT.STRING) },
+                .memory_flags = MemoryFlags.defaults(res.RT.STRING), // TODO
+                .data_size = @intCast(u32, data_buffer.items.len),
+            };
+            try header.write(writer);
+
+            var data_fbs = std.io.fixedBufferStream(data_buffer.items);
+            try Compiler.writeResourceData(writer, data_fbs.reader(), @intCast(u32, data_buffer.items.len));
+        }
     };
 
     pub fn deinit(self: *StringTable, allocator: Allocator) void {
-        var it = self.blocks.valueIterator();
-        while (it.next()) |v| {
-            v.string_tokens.deinit(allocator);
+        var it = self.blocks.iterator();
+        while (it.next()) |entry| {
+            entry.value_ptr.string_tokens.deinit(allocator);
         }
         self.blocks.deinit(allocator);
     }
@@ -643,49 +720,12 @@ pub const StringTable = struct {
         return block.string_tokens.items[token_index];
     }
 
-    pub fn dump(self: *StringTable, allocator: Allocator) !void {
-        var it = try self.inOrderIterator(allocator);
-        defer it.deinit(allocator);
+    pub fn dump(self: *StringTable) !void {
+        var it = self.iterator();
         while (it.next()) |entry| {
             std.debug.print("block: {}\n", .{entry.key_ptr.*});
             entry.value_ptr.dump();
         }
-    }
-
-    pub const InOrderIterator = struct {
-        string_table: *const StringTable,
-        sorted_keys: []u16,
-        index: usize = 0,
-
-        pub fn init(allocator: Allocator, string_table: *const StringTable) !InOrderIterator {
-            var iterator = InOrderIterator{
-                .string_table = string_table,
-                .sorted_keys = try allocator.alloc(u16, string_table.blocks.count()),
-            };
-            var key_it = string_table.blocks.keyIterator();
-            var key_i: usize = 0;
-            while (key_it.next()) |key_ptr| {
-                iterator.sorted_keys[key_i] = key_ptr.*;
-                key_i += 1;
-            }
-            std.sort.sort(u16, iterator.sorted_keys, {}, std.sort.asc(u16));
-            return iterator;
-        }
-
-        pub fn deinit(self: InOrderIterator, allocator: Allocator) void {
-            allocator.free(self.sorted_keys);
-        }
-
-        pub fn next(self: *InOrderIterator) ?std.AutoHashMapUnmanaged(u16, Block).Entry {
-            if (self.index >= self.sorted_keys.len) return null;
-            var entry = self.string_table.blocks.getEntry(self.sorted_keys[self.index]);
-            self.index += 1;
-            return entry;
-        }
-    };
-
-    pub fn inOrderIterator(self: *StringTable, allocator: Allocator) !InOrderIterator {
-        return InOrderIterator.init(allocator, self);
     }
 };
 
@@ -1000,5 +1040,34 @@ test "basic html" {
         "1 HTML test.html",
         expected,
         tmp_dir.dir,
+    );
+}
+
+test "basic stringtable" {
+    try testCompileWithOutput(
+        "STRINGTABLE { 1, \"hello\" }",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00*\x00\x00\x00 \x00\x00\x00\xff\xff\x06\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x05\x00h\x00e\x00l\x00l\x00o\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+        std.fs.cwd(),
+    );
+
+    // overflow in string id, tab in string literal
+    try testCompileWithOutput(
+        "STRINGTABLE {    -1, \"\ta\" }",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00&\x00\x00\x00 \x00\x00\x00\xff\xff\x06\x00\xff\xff\x00\x10\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03\x00 \x00 \x00a\x00\x00\x00",
+        std.fs.cwd(),
+    );
+
+    // order of RT_STRING resources in output, multiple RT_STRING blocks
+    try testCompileWithOutput(
+        \\STRINGTABLE { 512, "a" }
+        \\1 RCDATA {}
+        \\STRINGTABLE {
+        \\  0, "b"
+        \\  513, "c"
+        \\}
+        \\
+    ,
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00$\x00\x00\x00 \x00\x00\x00\xff\xff\x06\x00\xff\xff!\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00a\x00\x01\x00c\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\"\x00\x00\x00 \x00\x00\x00\xff\xff\x06\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00b\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+        std.fs.cwd(),
     );
 }

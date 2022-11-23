@@ -322,7 +322,6 @@ pub const Number = struct {
     is_long: bool,
 
     pub fn asWord(self: Number) u16 {
-        std.debug.assert(!self.is_long); // asWord should not be called on long numbers
         return @truncate(u16, self.value);
     }
 };
