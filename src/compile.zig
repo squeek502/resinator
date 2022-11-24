@@ -457,7 +457,18 @@ pub const Compiler = struct {
 
             self.state.string_table.set(self.arena, string_id, string.string, node.common_resource_attributes, self.source) catch |err| switch (err) {
                 error.StringAlreadyDefined => {
-                    @panic("TODO proper error message for string already defined");
+                    try self.warnDetails(ErrorDetails{
+                        .err = .string_already_defined,
+                        .token = string.string, // TODO: point to id instead?
+                        .extra = .{ .number = string_id },
+                    });
+                    const existing_definition = self.state.string_table.get(string_id).?;
+                    return self.failDetails(ErrorDetails{
+                        .err = .string_already_defined,
+                        .type = .note,
+                        .token = existing_definition, // TODO: point to id instead?
+                        .extra = .{ .number = string_id },
+                    });
                 },
                 error.OutOfMemory => |e| return e,
             };

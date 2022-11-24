@@ -35,9 +35,12 @@ pub const Diagnostics = struct {
 pub const ErrorDetails = struct {
     err: Error,
     token: Token,
+    // TODO: I don't really like this; notes at least should probably be handled differently
+    type: enum { err, warning, note } = .err,
     extra: union {
         none: void,
         expected: Token.Id,
+        number: u32,
     } = .{ .none = {} },
 
     pub const Error = enum {
@@ -53,6 +56,8 @@ pub const ErrorDetails = struct {
 
         // Compiler
         string_resource_as_numeric_type,
+        /// `number` is populated
+        string_already_defined,
     };
 
     pub fn render(self: ErrorDetails, writer: anytype, source: []const u8) !void {
@@ -76,6 +81,10 @@ pub const ErrorDetails = struct {
                 // TODO: Add note about why this is the case (i.e. it always (?) leads to an invalid .res)
                 return writer.writeAll("the number 6 (RT_STRING) can not be used as a resource type");
             },
+            .string_already_defined => switch (self.type) {
+                .err, .warning => return writer.print("string with id {d} (0x{X}) already defined", .{ self.extra.number, self.extra.number }),
+                .note => return writer.print("previous definition of string with id {d} (0x{X}) here", .{ self.extra.number, self.extra.number }),
+            },
         }
     }
 };
@@ -93,8 +102,20 @@ pub fn renderErrorMessage(writer: anytype, ttyconf: std.debug.TTY.Config, cwd: s
     ttyconf.setColor(writer, .Reset);
     ttyconf.setColor(writer, .Bold);
     try writer.print(":{d}:{d}: ", .{ err_details.token.line_number, column });
-    ttyconf.setColor(writer, .Red);
-    try writer.writeAll("error: ");
+    switch (err_details.type) {
+        .err => {
+            ttyconf.setColor(writer, .Red);
+            try writer.writeAll("error: ");
+        },
+        .warning => {
+            ttyconf.setColor(writer, .Red); // TODO: Yellow
+            try writer.writeAll("warning: ");
+        },
+        .note => {
+            ttyconf.setColor(writer, .Cyan);
+            try writer.writeAll("note: ");
+        },
+    }
     ttyconf.setColor(writer, .Reset);
     ttyconf.setColor(writer, .Bold);
     try err_details.render(writer, source);
