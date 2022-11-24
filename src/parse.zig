@@ -162,6 +162,14 @@ pub const Parser = struct {
                 try self.nextToken(.normal);
             }
 
+            if (strings.items.len == 0) {
+                return self.failDetails(ErrorDetails{
+                    .err = .expected_token, // TODO: probably a more specific error message
+                    .token = self.state.token,
+                    .extra = .{ .expected = .number },
+                });
+            }
+
             const end_token = self.state.token;
             try self.checkEnd();
             try self.nextToken(.whitespace_delimiter_only);
