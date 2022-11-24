@@ -450,15 +450,12 @@ pub const Compiler = struct {
     }
 
     pub fn writeStringTable(self: *Compiler, node: *Node.StringTable) !void {
-        // TODO: The first to STRINGTABLE that contains a string in a block dictates the memory flags
-        // of the entire block
-
         for (node.strings) |string_node| {
             const string = @fieldParentPtr(Node.StringTableString, "base", string_node);
             const string_id_data = try self.evaluateDataExpression(string.id);
             const string_id = string_id_data.number.asWord();
 
-            self.state.string_table.set(self.arena, string_id, string.string) catch |err| switch (err) {
+            self.state.string_table.set(self.arena, string_id, string.string, node.common_resource_attributes, self.source) catch |err| switch (err) {
                 error.StringAlreadyDefined => {
                     @panic("TODO proper error message for string already defined");
                 },
@@ -576,6 +573,7 @@ pub const StringTable = struct {
     pub const Block = struct {
         string_tokens: std.ArrayListUnmanaged(Token) = .{},
         set_indexes: std.bit_set.IntegerBitSet(16) = .{ .mask = 0 },
+        memory_flags: MemoryFlags = MemoryFlags.defaults(res.RT.STRING),
 
         /// Returns the index to insert the string into the `string_tokens` list.
         /// Returns null if the string should be appended.
@@ -669,7 +667,7 @@ pub const StringTable = struct {
             const header = Compiler.ResourceHeader{
                 .name_value = .{ .ordinal = block_id },
                 .type_value = .{ .ordinal = @enumToInt(res.RT.STRING) },
-                .memory_flags = MemoryFlags.defaults(res.RT.STRING), // TODO
+                .memory_flags = self.memory_flags,
                 .data_size = @intCast(u32, data_buffer.items.len),
             };
             try header.write(writer);
@@ -689,13 +687,14 @@ pub const StringTable = struct {
 
     const SetError = error{StringAlreadyDefined} || Allocator.Error;
 
-    pub fn set(self: *StringTable, allocator: Allocator, id: u16, string_token: Token) SetError!void {
+    pub fn set(self: *StringTable, allocator: Allocator, id: u16, string_token: Token, common_resource_attributes: []Token, source: []const u8) SetError!void {
         const block_id = (id / 16) + 1;
         const string_index: u8 = @intCast(u8, id & 0xF);
 
         var get_or_put_result = try self.blocks.getOrPut(allocator, block_id);
         if (!get_or_put_result.found_existing) {
             get_or_put_result.value_ptr.* = Block{};
+            Compiler.applyToMemoryFlags(&get_or_put_result.value_ptr.memory_flags, common_resource_attributes, source);
         } else {
             if (get_or_put_result.value_ptr.set_indexes.isSet(string_index)) {
                 return error.StringAlreadyDefined;
@@ -759,14 +758,14 @@ test "StringTable" {
 
     // set each one in the randomized order
     for (ids) |id| {
-        try string_table.set(allocator, id, S.makeDummyToken(id));
+        try string_table.set(allocator, id, S.makeDummyToken(id), &.{}, "");
     }
 
     // make sure each one exists and is the right value when gotten
     var id: u16 = 0;
     while (id < 100) : (id += 1) {
         const dummy = S.makeDummyToken(id);
-        try std.testing.expectError(error.StringAlreadyDefined, string_table.set(allocator, id, dummy));
+        try std.testing.expectError(error.StringAlreadyDefined, string_table.set(allocator, id, dummy, &.{}, ""));
         try std.testing.expectEqual(dummy, string_table.get(id).?);
     }
 
@@ -1068,6 +1067,20 @@ test "basic stringtable" {
         \\
     ,
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00$\x00\x00\x00 \x00\x00\x00\xff\xff\x06\x00\xff\xff!\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00a\x00\x01\x00c\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\"\x00\x00\x00 \x00\x00\x00\xff\xff\x06\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00b\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+        std.fs.cwd(),
+    );
+
+    // The first STRINGTABLE that contains a string in a block dictates the memory flags
+    // of the entire block
+    try testCompileWithOutput(
+        \\STRINGTABLE { 512, "a" }
+        \\STRINGTABLE FIXED {
+        \\  0, "b"
+        \\  513, "c"
+        \\}
+        \\
+    ,
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00$\x00\x00\x00 \x00\x00\x00\xff\xff\x06\x00\xff\xff!\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00a\x00\x01\x00c\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\"\x00\x00\x00 \x00\x00\x00\xff\xff\x06\x00\xff\xff\x01\x00\x00\x00\x00\x00 \x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00b\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
         std.fs.cwd(),
     );
 }
