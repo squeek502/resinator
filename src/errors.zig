@@ -142,11 +142,11 @@ pub fn renderErrorMessage(writer: anytype, colors: utils.Colors, cwd: std.fs.Dir
     const token_offset = err_details.token.start - source_line_start;
     const source_line = err_details.token.getLine(source, source_line_start);
     if (err_details.err == .string_literal_too_long) {
-        try writeSourceSlice(writer, source_line[0 .. token_offset + 16]);
+        const before_slice = source_line[0..@min(source_line.len, token_offset + 16)];
+        try writeSourceSlice(writer, before_slice);
         colors.set(writer, .dim);
         try writer.writeAll("<...truncated...>");
         colors.set(writer, .reset);
-        try writeSourceSlice(writer, source_line[source_line.len - 16 ..]);
     } else {
         try writeSourceSlice(writer, source_line);
     }
