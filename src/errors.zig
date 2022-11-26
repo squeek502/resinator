@@ -204,6 +204,14 @@ fn writeSourceSlice(writer: anytype, slice: []const u8) !void {
 inline fn writeSourceByte(writer: anytype, byte: u8) !void {
     switch (byte) {
         '\x00' => try writer.writeAll("�"),
+        // \r is seemingly ignored by the RC compiler so skipping it when printing source lines
+        // could help avoid confusing output (e.g. RC\rDATA if printed verbatim would show up
+        // in the console as DATA but the compiler reads it as RCDATA)
+        //
+        // NOTE: This is irrelevant when using the clang preprocessor, because unpaired \r
+        //       characters get converted to \n, but may become relevant if another
+        //       preprocessor is used instead.
+        '\r' => {},
         '\t' => try writer.writeByte(' '),
         else => try writer.writeByte(byte),
     }
