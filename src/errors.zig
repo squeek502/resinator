@@ -1,6 +1,7 @@
 const std = @import("std");
 const Token = @import("lex.zig").Token;
 const SourceMappings = @import("source_mapping.zig").SourceMappings;
+const utils = @import("utils.zig");
 
 pub const Diagnostics = struct {
     errors: std.ArrayListUnmanaged(ErrorDetails) = .{},
@@ -21,13 +22,19 @@ pub const Diagnostics = struct {
     }
 
     pub fn renderToStdErr(self: *Diagnostics, cwd: std.fs.Dir, source: []const u8, source_mappings: ?SourceMappings) void {
+        // Set the codepage to UTF-8 unconditionally to ensure that everything renders okay
+        // TODO: Reset codepage afterwards?
+        if (@import("builtin").os.tag == .windows) {
+            _ = std.os.windows.kernel32.SetConsoleOutputCP(65001);
+        }
+
         // TODO: take this as a param probably
-        const ttyconf = std.debug.detectTTYConfig();
+        const colors = utils.Colors.detect();
         std.debug.getStderrMutex().lock();
         defer std.debug.getStderrMutex().unlock();
         const stderr = std.io.getStdErr().writer();
         for (self.errors.items) |err_details| {
-            renderErrorMessage(stderr, ttyconf, cwd, err_details, source, source_mappings) catch return;
+            renderErrorMessage(stderr, colors, cwd, err_details, source, source_mappings) catch return;
         }
     }
 };
@@ -47,6 +54,7 @@ pub const ErrorDetails = struct {
         // Lexer
         unfinished_string_literal,
         string_literal_too_long,
+        illegal_null_byte,
 
         // Parser
         unfinished_raw_data_block,
@@ -67,6 +75,9 @@ pub const ErrorDetails = struct {
             },
             .string_literal_too_long => {
                 return writer.writeAll("string literal too long (max is 4097 characters)");
+            },
+            .illegal_null_byte => {
+                return writer.writeAll("embedded null character ('\\x00') is not allowed");
             },
             .unfinished_raw_data_block => {
                 return writer.print("unfinished raw data block at '{s}', expected closing '}}' or 'END'", .{self.token.nameForErrorDisplay(source)});
@@ -89,85 +100,68 @@ pub const ErrorDetails = struct {
     }
 };
 
-pub fn renderErrorMessage(writer: anytype, ttyconf: std.debug.TTY.Config, cwd: std.fs.Dir, err_details: ErrorDetails, source: []const u8, source_mappings: ?SourceMappings) !void {
+pub fn renderErrorMessage(writer: anytype, colors: utils.Colors, cwd: std.fs.Dir, err_details: ErrorDetails, source: []const u8, source_mappings: ?SourceMappings) !void {
     const source_line_start = err_details.token.getLineStart(source);
     const column = err_details.token.calculateColumn(source, 1, source_line_start);
 
     // var counting_writer_container = std.io.countingWriter(writer);
     // const counting_writer = counting_writer_container.writer();
 
-    ttyconf.setColor(writer, .Bold);
-    ttyconf.setColor(writer, .Dim);
+    colors.set(writer, .bold);
+    colors.set(writer, .dim);
     try writer.writeAll("<after preprocessor>");
-    ttyconf.setColor(writer, .Reset);
-    ttyconf.setColor(writer, .Bold);
+    colors.set(writer, .reset);
+    colors.set(writer, .bold);
     try writer.print(":{d}:{d}: ", .{ err_details.token.line_number, column });
     switch (err_details.type) {
         .err => {
-            ttyconf.setColor(writer, .Red);
+            colors.set(writer, .red);
             try writer.writeAll("error: ");
         },
         .warning => {
-            ttyconf.setColor(writer, .Red); // TODO: Yellow
+            colors.set(writer, .yellow);
             try writer.writeAll("warning: ");
         },
         .note => {
-            ttyconf.setColor(writer, .Cyan);
+            colors.set(writer, .cyan);
             try writer.writeAll("note: ");
         },
     }
-    ttyconf.setColor(writer, .Reset);
-    ttyconf.setColor(writer, .Bold);
+    colors.set(writer, .reset);
+    colors.set(writer, .bold);
     try err_details.render(writer, source);
     try writer.writeAll("\n");
-    ttyconf.setColor(writer, .Reset);
+    colors.set(writer, .reset);
 
     const token_offset = err_details.token.start - source_line_start;
     const source_line = err_details.token.getLine(source, source_line_start);
     if (err_details.err == .string_literal_too_long) {
-        var i: usize = 0;
-        while (i < token_offset + 16) : (i += 1) {
-            const c = source_line[i];
-            switch (c) {
-                '\t' => try writer.writeByte(' '),
-                else => try writer.writeByte(c),
-            }
-        }
-        ttyconf.setColor(writer, .Dim);
+        try writeSourceSlice(writer, source_line[0 .. token_offset + 16]);
+        colors.set(writer, .dim);
         try writer.writeAll("<...truncated...>");
-        ttyconf.setColor(writer, .Reset);
-        i = source_line.len - 16;
-        while (i < source_line.len) : (i += 1) {
-            const c = source_line[i];
-            switch (c) {
-                '\t' => try writer.writeByte(' '),
-                else => try writer.writeByte(c),
-            }
-        }
+        colors.set(writer, .reset);
+        try writeSourceSlice(writer, source_line[source_line.len - 16 ..]);
     } else {
-        for (source_line) |c| switch (c) {
-            '\t' => try writer.writeByte(' '),
-            else => try writer.writeByte(c),
-        };
+        try writeSourceSlice(writer, source_line);
     }
     try writer.writeByte('\n');
 
-    ttyconf.setColor(writer, .Green);
+    colors.set(writer, .green);
     try writer.writeByteNTimes(' ', token_offset);
     try writer.writeByte('^');
     try writer.writeByte('\n');
-    ttyconf.setColor(writer, .Reset);
+    colors.set(writer, .reset);
 
     if (source_mappings) |mappings| {
         const corresponding_span = mappings.get(err_details.token.line_number);
         const corresponding_file = mappings.files.get(corresponding_span.filename_offset);
 
-        ttyconf.setColor(writer, .Bold);
+        colors.set(writer, .bold);
         try writer.print("{s}:{d}:{d}: ", .{ corresponding_file, corresponding_span.start_line, 1 });
-        ttyconf.setColor(writer, .Cyan);
+        colors.set(writer, .cyan);
         try writer.writeAll("note: ");
-        ttyconf.setColor(writer, .Reset);
-        ttyconf.setColor(writer, .Bold);
+        colors.set(writer, .reset);
+        colors.set(writer, .bold);
         try writer.writeAll("this line originated from line");
         if (corresponding_span.start_line != corresponding_span.end_line) {
             try writer.print("s {}-{}", .{ corresponding_span.start_line, corresponding_span.end_line });
@@ -175,7 +169,7 @@ pub fn renderErrorMessage(writer: anytype, ttyconf: std.debug.TTY.Config, cwd: s
             try writer.print(" {}", .{corresponding_span.start_line});
         }
         try writer.print(" of file '{s}'\n", .{corresponding_file});
-        ttyconf.setColor(writer, .Reset);
+        colors.set(writer, .reset);
 
         // Don't print the originating line for this error, we know it's really long
         if (err_details.err == .string_literal_too_long) return;
@@ -184,22 +178,34 @@ pub fn renderErrorMessage(writer: anytype, ttyconf: std.debug.TTY.Config, cwd: s
             var buffered_reader = std.io.bufferedReader(file.reader());
             writeLinesFromStream(writer, buffered_reader.reader(), corresponding_span.start_line, corresponding_span.end_line) catch |err| switch (err) {
                 error.LinesNotFound => {
-                    ttyconf.setColor(writer, .Red);
+                    colors.set(writer, .red);
                     try writer.writeAll(" | ");
-                    ttyconf.setColor(writer, .Dim);
+                    colors.set(writer, .dim);
                     try writer.print("unable to print line(s) from file: {s}\n", .{@errorName(err)});
-                    ttyconf.setColor(writer, .Reset);
+                    colors.set(writer, .reset);
                 },
                 else => |e| return e,
             };
             try writer.writeByte('\n');
         } else |err| {
-            ttyconf.setColor(writer, .Red);
+            colors.set(writer, .red);
             try writer.writeAll(" | ");
-            ttyconf.setColor(writer, .Dim);
+            colors.set(writer, .dim);
             try writer.print("unable to print line(s) from file: {s}\n", .{@errorName(err)});
-            ttyconf.setColor(writer, .Reset);
+            colors.set(writer, .reset);
         }
+    }
+}
+
+fn writeSourceSlice(writer: anytype, slice: []const u8) !void {
+    for (slice) |c| try writeSourceByte(writer, c);
+}
+
+inline fn writeSourceByte(writer: anytype, byte: u8) !void {
+    switch (byte) {
+        '\x00' => try writer.writeAll("�"),
+        '\t' => try writer.writeByte(' '),
+        else => try writer.writeByte(byte),
     }
 }
 
@@ -208,12 +214,12 @@ pub fn writeLinesFromStream(writer: anytype, input: anytype, start_line: usize, 
     while (try readByteOrEof(input)) |byte| {
         switch (byte) {
             '\n' => {
-                if (line_num >= start_line) try writer.writeByte(byte);
+                if (line_num >= start_line) try writeSourceByte(writer, byte);
                 if (line_num == end_line) return;
                 line_num += 1;
             },
             else => {
-                if (line_num >= start_line) try writer.writeByte(byte);
+                if (line_num >= start_line) try writeSourceByte(writer, byte);
             },
         }
     }

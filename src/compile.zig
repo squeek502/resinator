@@ -385,7 +385,10 @@ pub const Compiler = struct {
                         errdefer self.allocator.free(parsed_string);
                         return .{ .wide_string = parsed_string };
                     },
-                    else => unreachable, // no other token types should be in a data literal node
+                    else => {
+                        std.debug.print("unexpected token in literal node: {}\n", .{literal_node.token});
+                        unreachable; // no other token types should be in a data literal node
+                    },
                 }
             },
             .binary_expression => {

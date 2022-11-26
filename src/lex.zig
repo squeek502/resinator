@@ -103,6 +103,7 @@ pub const Token = struct {
 pub const LexError = error{
     UnfinishedStringLiteral,
     StringLiteralTooLong,
+    IllegalNullByte,
 };
 
 pub const Lexer = struct {
@@ -162,6 +163,7 @@ pub const Lexer = struct {
         var last_line_ending_index: ?usize = null;
         while (self.index < self.buffer.len) : (self.index += 1) {
             const c = self.buffer[self.index];
+            try self.checkForIllegalByte(c);
             switch (state) {
                 .start => switch (c) {
                     '\r', '\n' => {
@@ -253,6 +255,7 @@ pub const Lexer = struct {
         var string_literal_collapsing_whitespace: bool = false;
         while (self.index < self.buffer.len) : (self.index += 1) {
             const c = self.buffer[self.index];
+            try self.checkForIllegalByte(c);
             switch (state) {
                 .start => switch (c) {
                     '\r', '\n' => {
@@ -502,10 +505,23 @@ pub const Lexer = struct {
         return true;
     }
 
+    fn checkForIllegalByte(self: *Self, byte: u8) LexError!void {
+        if (byte == 0) {
+            self.error_context_token = .{
+                .id = .invalid,
+                .start = self.index,
+                .end = self.index + 1,
+                .line_number = self.line_number,
+            };
+            return error.IllegalNullByte;
+        }
+    }
+
     pub fn getErrorDetails(self: Self, lex_err: LexError) ErrorDetails {
         const err = switch (lex_err) {
             error.UnfinishedStringLiteral => ErrorDetails.Error.unfinished_string_literal,
             error.StringLiteralTooLong => ErrorDetails.Error.string_literal_too_long,
+            error.IllegalNullByte => ErrorDetails.Error.illegal_null_byte,
         };
         return .{
             .err = err,

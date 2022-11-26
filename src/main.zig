@@ -30,8 +30,11 @@ pub fn main() !void {
             "-E", // preprocessor only
             "--comments",
             "-fuse-line-directives", // #line <num> instead of # <num>
-            "-xc", // output c
             // TODO: could use --trace-includes to give info about what's included from where
+            "-xc", // output c
+            "-Werror=null-character", // error on null characters instead of converting them to spaces
+            // TODO: could remove -Werror=null-character and instead parse warnings looking for 'warning: null character ignored'
+            //       since the only real problem is when clang doesn't preserve null characters
             //"-Werror=invalid-pp-token", // will error on unfinished string literals
             // TODO: could use -Werror instead
             input_filename,
