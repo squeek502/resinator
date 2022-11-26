@@ -103,7 +103,8 @@ pub const Token = struct {
 pub const LexError = error{
     UnfinishedStringLiteral,
     StringLiteralTooLong,
-    IllegalNullByte,
+    IllegalByte,
+    IllegalByteOutsideStringLiterals,
 };
 
 pub const Lexer = struct {
@@ -163,15 +164,14 @@ pub const Lexer = struct {
         var last_line_ending_index: ?usize = null;
         while (self.index < self.buffer.len) : (self.index += 1) {
             const c = self.buffer[self.index];
-            try self.checkForIllegalByte(c);
+            try self.checkForIllegalByte(c, false);
             switch (state) {
                 .start => switch (c) {
                     '\r', '\n' => {
                         result.start = self.index + 1;
                         result.line_number = self.incrementLineNumber(&last_line_ending_index);
                     },
-                    // space, tab, vertical tab, form feed
-                    ' ', '\t', '\x0b', '\x0c' => {
+                    ' ', '\t', '\x05'...'\x08', '\x0B'...'\x0C', '\x0E'...'\x1F' => {
                         result.start = self.index + 1;
                     },
                     '#' => {
@@ -188,7 +188,7 @@ pub const Lexer = struct {
                     },
                 },
                 .literal => switch (c) {
-                    '\r', '\n', ' ', '\t', '\x0b', '\x0c' => {
+                    '\r', '\n', ' ', '\t', '\x05'...'\x08', '\x0B'...'\x0C', '\x0E'...'\x1F' => {
                         result.id = .literal;
                         break;
                     },
@@ -255,15 +255,22 @@ pub const Lexer = struct {
         var string_literal_collapsing_whitespace: bool = false;
         while (self.index < self.buffer.len) : (self.index += 1) {
             const c = self.buffer[self.index];
-            try self.checkForIllegalByte(c);
+            const in_string_literal = switch (state) {
+                .quoted_ascii_string,
+                .quoted_wide_string,
+                .quoted_ascii_string_maybe_end,
+                .quoted_wide_string_maybe_end,
+                => true,
+                else => false,
+            };
+            try self.checkForIllegalByte(c, in_string_literal);
             switch (state) {
                 .start => switch (c) {
                     '\r', '\n' => {
                         result.start = self.index + 1;
                         result.line_number = self.incrementLineNumber(&last_line_ending_index);
                     },
-                    // space, tab, vertical tab, form feed
-                    ' ', '\t', '\x0b', '\x0c' => {
+                    ' ', '\t', '\x05'...'\x08', '\x0B'...'\x0C', '\x0E'...'\x1F' => {
                         result.start = self.index + 1;
                     },
                     'L', 'l' => {
@@ -337,14 +344,22 @@ pub const Lexer = struct {
                     else => {},
                 },
                 .number_literal => switch (c) {
-                    ' ', '\t', '\x0b', '\x0c', '\r', '\n', '"', ',', '{', '}', '+', '-', '|', '&', '~', '(', ')' => {
+                    // zig fmt: off
+                    ' ', '\t', '\x05'...'\x08', '\x0B'...'\x0C', '\x0E'...'\x1F',
+                    '\r', '\n', '"', ',', '{', '}', '+', '-', '|', '&', '~', '(', ')',
+                    => {
+                    // zig fmt: on
                         result.id = .number;
                         break;
                     },
                     else => {},
                 },
                 .literal_or_quoted_wide_string => switch (c) {
-                    ' ', '\t', '\x0b', '\x0c', '\r', '\n', ',', '{', '}' => {
+                    // zig fmt: off
+                    ' ', '\t', '\x05'...'\x08', '\x0B'...'\x0C', '\x0E'...'\x1F',
+                    '\r', '\n', ',', '{', '}',
+                    // zig fmt: on
+                    => {
                         result.id = .literal;
                         break;
                     },
@@ -358,8 +373,11 @@ pub const Lexer = struct {
                     },
                 },
                 .literal => switch (c) {
-                    // space, tab, vertical tab, form feed, carriage return, new line, double quotes
-                    ' ', '\t', '\x0b', '\x0c', '\r', '\n', '"', ',', '{', '}' => {
+                    // zig fmt: off
+                    ' ', '\t', '\x05'...'\x08', '\x0B'...'\x0C', '\x0E'...'\x1F',
+                    '\r', '\n', '"', ',', '{', '}',
+                    => {
+                    // zig fmt: on
                         result.id = .literal;
                         break;
                     },
@@ -378,6 +396,7 @@ pub const Lexer = struct {
                         }
                         // the rest are collapsed into the <space><\n>
                     },
+                    // only \t, space, Vertical Tab, and Form Feed count as whitespace when collapsing
                     '\t', ' ', '\x0b', '\x0c' => {
                         if (!string_literal_collapsing_whitespace) {
                             if (c == '\t') {
@@ -505,23 +524,35 @@ pub const Lexer = struct {
         return true;
     }
 
-    fn checkForIllegalByte(self: *Self, byte: u8) LexError!void {
-        if (byte == 0) {
-            self.error_context_token = .{
-                .id = .invalid,
-                .start = self.index,
-                .end = self.index + 1,
-                .line_number = self.line_number,
-            };
-            return error.IllegalNullByte;
-        }
+    fn checkForIllegalByte(self: *Self, byte: u8, in_string_literal: bool) LexError!void {
+        const err = switch (byte) {
+            // 0x00 = NUL
+            // 0x1A = Substitute (treated as EOF)
+            // NOTE: 0x1A gets treated as EOF by the clang preprocessor so after a .rc file
+            //       is run through the clang preprocessor it will no longer have 0x1A characters in it.
+            // 0x7F = DEL (treated as a context-specific terminator by the Windows RC compiler)
+            0x00, 0x1A, 0x7F => error.IllegalByte,
+            // 0x01...0x03 result in strange 'macro definition too big' errors when used outside of string literals
+            // 0x04 is valid but behaves strangely (sort of acts as a 'skip the next character' instruction)
+            // TODO: re-evaluate 0x04
+            0x01...0x04 => if (!in_string_literal) error.IllegalByteOutsideStringLiterals else return,
+            else => return,
+        };
+        self.error_context_token = .{
+            .id = .invalid,
+            .start = self.index,
+            .end = self.index + 1,
+            .line_number = self.line_number,
+        };
+        return err;
     }
 
     pub fn getErrorDetails(self: Self, lex_err: LexError) ErrorDetails {
         const err = switch (lex_err) {
             error.UnfinishedStringLiteral => ErrorDetails.Error.unfinished_string_literal,
             error.StringLiteralTooLong => ErrorDetails.Error.string_literal_too_long,
-            error.IllegalNullByte => ErrorDetails.Error.illegal_null_byte,
+            error.IllegalByte => ErrorDetails.Error.illegal_byte,
+            error.IllegalByteOutsideStringLiterals => ErrorDetails.Error.illegal_byte_outside_string_literals,
         };
         return .{
             .err = err,

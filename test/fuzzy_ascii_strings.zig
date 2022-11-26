@@ -9,18 +9,12 @@ test "single chars" {
     var source_buf = "1 RCDATA { \"?\" }".*;
     var source: []u8 = &source_buf;
     const byte_index = std.mem.indexOfScalar(u8, source, '?').?;
-    var byte: u8 = 0;
+    var byte: u8 = 1;
     while (true) : (byte += 1) {
-        // quotes are a special case that shouldn't be tested here
-        if (byte == '"') continue;
-
         source[byte_index] = byte;
 
-        const expected_res = resinator.compile.getExpectedFromWindowsRC(allocator, source) catch {
-            std.debug.print("\n^^^^^^^^^^^^\nFound input that is rejected by the Windows RC compiler:\n\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
-            if (byte != 255) continue else break;
-        };
-        defer allocator.free(expected_res);
+        const expected_res: ?[]const u8 = resinator.compile.getExpectedFromWindowsRC(allocator, source) catch null;
+        defer if (expected_res != null) allocator.free(expected_res.?);
 
         var diagnostics = resinator.errors.Diagnostics.init(allocator);
         defer diagnostics.deinit();
@@ -29,12 +23,22 @@ test "single chars" {
         resinator.compile.compile(allocator, source, buffer.writer(), std.fs.cwd(), &diagnostics) catch |err| switch (err) {
             error.ParseError, error.CompileError => {
                 diagnostics.renderToStdErr(std.fs.cwd(), source, null);
-                return err;
+                if (expected_res == null) {
+                    if (byte == 255) break else continue;
+                } else {
+                    std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
+                    return err;
+                }
             },
             else => return err,
         };
 
-        std.testing.expectEqualSlices(u8, expected_res, buffer.items) catch {
+        if (expected_res == null) {
+            std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
+            return error.ExpectedError;
+        }
+
+        std.testing.expectEqualSlices(u8, expected_res.?, buffer.items) catch {
             std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
             continue;
         };
@@ -53,16 +57,13 @@ test "single char escapes" {
     const escaped_byte_index = std.mem.indexOfScalar(u8, source, '?').?;
     var escaped_byte: u8 = 0;
     while (true) : (escaped_byte += 1) {
-        // quotes are a special case that shouldn't be tested here
-        if (escaped_byte == '"') continue;
+        // 'Substitute' leads to a false positive here, so skip it
+        if (escaped_byte == '\x1A') continue;
 
         source[escaped_byte_index] = escaped_byte;
 
-        const expected_res = resinator.compile.getExpectedFromWindowsRC(allocator, source) catch {
-            std.debug.print("\n^^^^^^^^^^^^\nFound input that is rejected by the Windows RC compiler:\n\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
-            if (escaped_byte != 255) continue else break;
-        };
-        defer allocator.free(expected_res);
+        const expected_res: ?[]const u8 = resinator.compile.getExpectedFromWindowsRC(allocator, source) catch null;
+        defer if (expected_res != null) allocator.free(expected_res.?);
 
         var diagnostics = resinator.errors.Diagnostics.init(allocator);
         defer diagnostics.deinit();
@@ -71,12 +72,22 @@ test "single char escapes" {
         resinator.compile.compile(allocator, source, buffer.writer(), std.fs.cwd(), &diagnostics) catch |err| switch (err) {
             error.ParseError, error.CompileError => {
                 diagnostics.renderToStdErr(std.fs.cwd(), source, null);
-                return err;
+                if (expected_res == null) {
+                    if (escaped_byte == 255) break else continue;
+                } else {
+                    std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
+                    return err;
+                }
             },
             else => return err,
         };
 
-        std.testing.expectEqualSlices(u8, expected_res, buffer.items) catch {
+        if (expected_res == null) {
+            std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
+            return error.ExpectedError;
+        }
+
+        std.testing.expectEqualSlices(u8, expected_res.?, buffer.items) catch {
             std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
             continue;
         };

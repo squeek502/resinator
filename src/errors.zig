@@ -54,7 +54,8 @@ pub const ErrorDetails = struct {
         // Lexer
         unfinished_string_literal,
         string_literal_too_long,
-        illegal_null_byte,
+        illegal_byte,
+        illegal_byte_outside_string_literals,
 
         // Parser
         unfinished_raw_data_block,
@@ -76,8 +77,13 @@ pub const ErrorDetails = struct {
             .string_literal_too_long => {
                 return writer.writeAll("string literal too long (max is 4097 characters)");
             },
-            .illegal_null_byte => {
-                return writer.writeAll("embedded null character ('\\x00') is not allowed");
+            .illegal_byte => {
+                const byte = self.token.slice(source)[0];
+                return writer.print("embedded character '\\x{X:0>2}' is not allowed", .{byte});
+            },
+            .illegal_byte_outside_string_literals => {
+                const byte = self.token.slice(source)[0];
+                return writer.print("embedded character '\\x{X:0>2}' is not allowed outside of string literals", .{byte});
             },
             .unfinished_raw_data_block => {
                 return writer.print("unfinished raw data block at '{s}', expected closing '}}' or 'END'", .{self.token.nameForErrorDisplay(source)});

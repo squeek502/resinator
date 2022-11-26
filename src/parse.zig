@@ -675,11 +675,30 @@ test "STRINGTABLE" {
     // try testParse("STRINGTABLE VERSION 1 { 0 \"hello\" }");
 }
 
+test "control characters as whitespace" {
+    // any non-illegal control character is treated as whitespace
+    try testParse("id RCDATA { 1\x052 }",
+        \\root
+        \\ resource_raw_data id RCDATA [0 common_resource_attributes] raw data: 2
+        \\  literal 1
+        \\  literal 2
+        \\
+    );
+    // some illegal control characters are legal inside of string literals
+    try testParse("id RCDATA { \"\x01\" }",
+        \\root
+        \\ resource_raw_data id RCDATA [0 common_resource_attributes] raw data: 1
+        \\
+    ++ "  literal \"\x01\"\n"); // needed to get the actual byte \x01 in the expected output
+}
+
 test "parse errors" {
     try testParseError("unfinished raw data block at '<eof>', expected closing '}' or 'END'", "id RCDATA { 1");
     try testParseError("unfinished string literal at '<eof>', expected closing '\"'", "id RCDATA \"unfinished string");
     try testParseError("expected '<literal>', got '<eof>'", "id");
     try testParseError("expected ')', got '}'", "id RCDATA { (1 }");
+    try testParseError("embedded character '\\x1A' is not allowed", "id RCDATA { \"\x1A\" }");
+    try testParseError("embedded character '\\x01' is not allowed outside of string literals", "id RCDATA { \x01 }");
 }
 
 fn testParseError(expected_error_str: []const u8, source: []const u8) !void {
