@@ -56,6 +56,7 @@ pub const ErrorDetails = struct {
         string_literal_too_long,
         illegal_byte,
         illegal_byte_outside_string_literals,
+        found_c_style_escaped_quote,
 
         // Parser
         unfinished_raw_data_block,
@@ -84,6 +85,9 @@ pub const ErrorDetails = struct {
             .illegal_byte_outside_string_literals => {
                 const byte = self.token.slice(source)[0];
                 return writer.print("embedded character '\\x{X:0>2}' is not allowed outside of string literals", .{byte});
+            },
+            .found_c_style_escaped_quote => {
+                return writer.writeAll("escaping quotes with \\\" is not allowed (use \"\" instead)");
             },
             .unfinished_raw_data_block => {
                 return writer.print("unfinished raw data block at '{s}', expected closing '}}' or 'END'", .{self.token.nameForErrorDisplay(source)});

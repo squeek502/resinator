@@ -699,6 +699,7 @@ test "parse errors" {
     try testParseError("expected ')', got '}'", "id RCDATA { (1 }");
     try testParseError("embedded character '\\x1A' is not allowed", "id RCDATA { \"\x1A\" }");
     try testParseError("embedded character '\\x01' is not allowed outside of string literals", "id RCDATA { \x01 }");
+    try testParseError("escaping quotes with \\\" is not allowed (use \"\" instead)", "id RCDATA { \"\\\"\"\" }");
 }
 
 fn testParseError(expected_error_str: []const u8, source: []const u8) !void {

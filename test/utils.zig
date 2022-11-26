@@ -73,18 +73,52 @@ pub fn randomOperator(rand: std.rand.Random) u8 {
 }
 
 pub fn randomAsciiStringLiteral(allocator: Allocator, rand: std.rand.Random) ![]const u8 {
-    var buf = std.ArrayList(u8).init(allocator);
-    errdefer buf.deinit();
+    // max string literal length is 4097 so this will generate some invalid string literals
+    // need at least two for the ""
+    var slice_len = rand.uintAtMostBiased(u16, 256) + 2;
+    var buf = try allocator.alloc(u8, slice_len);
+    errdefer allocator.free(buf);
 
-    try buf.append('"');
+    buf[0] = '"';
+    var i: usize = 1;
+    while (i < slice_len - 1) : (i += 1) {
+        var byte = rand.int(u8);
+        switch (byte) {
+            // these are currently invalid within string literals, so swap them out
+            0x00, 0x1A, 0x7F => byte += 1,
+            // \r is a mess, so just change it to a space
+            // (clang's preprocessor converts \r to \n, rc skips them entirely)
+            '\r' => byte = ' ',
+            // \n within string literals are similarly fraught but they mostly expose
+            // bugs within the Windows RC compiler (where "\n\x01" causes a compile error,
+            // but "<anything besides newlines>\x01" doesn't).
+            // For sanity's sake, just don't put newlines in for now.
+            '\n' => byte = ' ',
+            '\\' => {
+                // backslash at the very end of the string leads to \" which is
+                // currently disallowed, so avoid that.
+                if (i + 1 == slice_len - 1) {
+                    byte += 1;
+                }
+            },
+            '"' => {
+                // Double quotes need to be escaped to keep this a single string literal
+                // so try to add one before this char if it'll create an escaped quote ("")
+                // but not a \"" sequence.
+                // Otherwise, just swap it out by incrementing it.
+                if (i >= 2 and buf[i - 1] != '"' and buf[i - 2] != '\\') {
+                    buf[i - 1] = '"';
+                } else {
+                    byte += 1;
+                }
+            },
+            else => {},
+        }
+        buf[i] = byte;
+    }
+    buf[slice_len - 1] = '"';
 
-    // for now, just a backslash and then a random alphanumeric
-    try buf.append('\\');
-    try buf.append(randomAlphanumeric(rand));
-
-    try buf.append('"');
-
-    return buf.toOwnedSlice();
+    return buf;
 }
 
 /// Iterates all K-permutations of the given size `n` where k varies from (0..n).

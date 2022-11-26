@@ -105,6 +105,7 @@ pub const LexError = error{
     StringLiteralTooLong,
     IllegalByte,
     IllegalByteOutsideStringLiterals,
+    FoundCStyleEscapedQuote,
 };
 
 pub const Lexer = struct {
@@ -224,6 +225,8 @@ pub const Lexer = struct {
         literal_or_quoted_wide_string,
         quoted_ascii_string,
         quoted_wide_string,
+        quoted_ascii_string_escape,
+        quoted_wide_string_escape,
         quoted_ascii_string_maybe_end,
         quoted_wide_string_maybe_end,
         literal,
@@ -258,6 +261,8 @@ pub const Lexer = struct {
             const in_string_literal = switch (state) {
                 .quoted_ascii_string,
                 .quoted_wide_string,
+                .quoted_ascii_string_escape,
+                .quoted_wide_string_escape,
                 .quoted_ascii_string_maybe_end,
                 .quoted_wide_string_maybe_end,
                 => true,
@@ -387,6 +392,9 @@ pub const Lexer = struct {
                     '"' => {
                         state = if (state == .quoted_ascii_string) .quoted_ascii_string_maybe_end else .quoted_wide_string_maybe_end;
                     },
+                    '\\' => {
+                        state = if (state == .quoted_ascii_string) .quoted_ascii_string_escape else .quoted_wide_string_escape;
+                    },
                     '\r' => {}, // \r doesn't count towards string literal length
                     '\n' => {
                         // first \n expands to <space><\n>
@@ -428,6 +436,20 @@ pub const Lexer = struct {
                         string_literal_length += 1;
                     },
                 },
+                .quoted_ascii_string_escape, .quoted_wide_string_escape => switch (c) {
+                    '"' => {
+                        self.error_context_token = .{
+                            .id = .invalid,
+                            .start = self.index - 1,
+                            .end = self.index + 1,
+                            .line_number = self.line_number,
+                        };
+                        return error.FoundCStyleEscapedQuote;
+                    },
+                    else => {
+                        state = if (state == .quoted_ascii_string_escape) .quoted_ascii_string else .quoted_wide_string;
+                    },
+                },
                 .quoted_ascii_string_maybe_end, .quoted_wide_string_maybe_end => switch (c) {
                     '"' => {
                         state = if (state == .quoted_ascii_string_maybe_end) .quoted_ascii_string else .quoted_wide_string;
@@ -457,6 +479,8 @@ pub const Lexer = struct {
                 },
                 .quoted_ascii_string,
                 .quoted_wide_string,
+                .quoted_ascii_string_escape,
+                .quoted_wide_string_escape,
                 => {
                     self.error_context_token = .{
                         .id = .eof,
@@ -553,6 +577,7 @@ pub const Lexer = struct {
             error.StringLiteralTooLong => ErrorDetails.Error.string_literal_too_long,
             error.IllegalByte => ErrorDetails.Error.illegal_byte,
             error.IllegalByteOutsideStringLiterals => ErrorDetails.Error.illegal_byte_outside_string_literals,
+            error.FoundCStyleEscapedQuote => ErrorDetails.Error.found_c_style_escaped_quote,
         };
         return .{
             .err = err,

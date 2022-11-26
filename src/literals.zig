@@ -28,6 +28,14 @@ pub fn isValidNumberDataLiteral(str: []const u8) bool {
 ///  <\t> => 1-8 spaces, dependent on columns in the source rc file itself
 ///  <\r> => <nothing>
 ///  <\n+><\w+?\n?> => <space><\n>
+///
+/// Special, especially weird case:
+///  \"" => "
+/// NOTE: This leads to footguns because the preprocessor can start parsing things
+///       out-of-sync with the RC compiler, expanding macros within string literals, etc.
+///       This parse function handles this case the same as the Windows RC compiler, but
+///       \" within a string literal is treated as an error by the lexer, so the relevant
+///       branches should never actually be hit during this function.
 pub fn parseQuotedAsciiString(allocator: std.mem.Allocator, str: []const u8, start_column: usize) ![]u8 {
     std.debug.assert(str.len >= 2); // must at least have 2 double quote chars
 
@@ -119,6 +127,10 @@ pub fn parseQuotedAsciiString(allocator: std.mem.Allocator, str: []const u8, sta
                         'r' => try buf.append('\r'),
                         't', 'T' => try buf.append('\t'),
                         '\\' => try buf.append('\\'),
+                        '"' => {
+                            // \" is a special case that doesn't get the \ included,
+                            backtrack = true;
+                        },
                         else => {
                             try buf.append('\\');
                             // backtrack so that we handle the current char properly
@@ -229,6 +241,10 @@ test "parse quoted ascii string" {
     // escaped quotes
     try std.testing.expectEqualSlices(u8, " \" ", try parseQuotedAsciiString(arena,
         \\" "" "
+    , 0));
+    // backslash right before escaped quotes
+    try std.testing.expectEqualSlices(u8, "\"", try parseQuotedAsciiString(arena,
+        \\"\"""
     , 0));
     // octal overflow
     try std.testing.expectEqualSlices(u8, "\x01", try parseQuotedAsciiString(arena,
