@@ -385,6 +385,11 @@ pub const Compiler = struct {
                         errdefer self.allocator.free(parsed_string);
                         return .{ .wide_string = parsed_string };
                     },
+                    .close_paren => {
+                        // A close paren as a data expression is a special case that is essentially
+                        // skipped (i.e. it contributes no actual data value).
+                        return .{ .ascii_string = "" };
+                    },
                     else => {
                         std.debug.print("unexpected token in literal node: {}\n", .{literal_node.token});
                         unreachable; // no other token types should be in a data literal node

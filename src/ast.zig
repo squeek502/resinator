@@ -122,6 +122,84 @@ pub const Node = struct {
         context: []*Node,
     };
 
+    pub fn isNumberExpression(node: *const Node) bool {
+        switch (node.id) {
+            .literal => {
+                const literal = @fieldParentPtr(Node.Literal, "base", node);
+                return switch (literal.token.id) {
+                    .number => true,
+                    else => false,
+                };
+            },
+            .binary_expression, .grouped_expression => return true,
+            else => return false,
+        }
+    }
+
+    pub fn isStringLiteral(node: *const Node) bool {
+        switch (node.id) {
+            .literal => {
+                const literal = @fieldParentPtr(Node.Literal, "base", node);
+                return switch (literal.token.id) {
+                    .quoted_ascii_string, .quoted_wide_string => true,
+                    else => false,
+                };
+            },
+            else => return false,
+        }
+    }
+
+    /// Some "expressions" are special cases that need to be considered "valid" expressions
+    /// but that don't contribute to anything and are evaluated as if they don't exist at all.
+    /// Currently this is only the case for a single ')' as an expression.
+    pub fn isExpressionAlwaysSkipped(node: *const Node) bool {
+        switch (node.id) {
+            .literal => {
+                const literal = @fieldParentPtr(Node.Literal, "base", node);
+                return switch (literal.token.id) {
+                    .close_paren => true,
+                    else => false,
+                };
+            },
+            else => return false,
+        }
+    }
+
+    pub fn getFirstToken(node: *const Node) Token {
+        switch (node.id) {
+            .root => unreachable,
+            .resource_external => {
+                const casted = @fieldParentPtr(Node.ResourceExternal, "base", node);
+                return casted.id;
+            },
+            .resource_raw_data => {
+                const casted = @fieldParentPtr(Node.ResourceRawData, "base", node);
+                return casted.id;
+            },
+            .literal => {
+                const casted = @fieldParentPtr(Node.Literal, "base", node);
+                return casted.token;
+            },
+            .binary_expression => {
+                const casted = @fieldParentPtr(Node.BinaryExpression, "base", node);
+                return casted.left.getFirstToken();
+            },
+            .grouped_expression => {
+                const casted = @fieldParentPtr(Node.GroupedExpression, "base", node);
+                return casted.open_token;
+            },
+            .string_table => {
+                const casted = @fieldParentPtr(Node.StringTable, "base", node);
+                return casted.type;
+            },
+            .string_table_string => {
+                const casted = @fieldParentPtr(Node.StringTableString, "base", node);
+                return casted.id.getFirstToken();
+            },
+            .invalid => @panic("TODO getFirstToken for invalid node"),
+        }
+    }
+
     pub fn dump(
         node: *const Node,
         tree: *const Tree,

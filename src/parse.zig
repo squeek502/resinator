@@ -120,7 +120,7 @@ pub const Parser = struct {
                     },
                     else => {},
                 }
-                const id_expression_result = try self.parseExpression();
+                const id_expression_result = try self.parseExpression(false);
                 if (id_expression_result.node.id == .literal and id_expression_result.node.cast(.literal).?.token.id != .number) {
                     return self.failDetails(ErrorDetails{
                         .err = .expected_token, // TODO: maybe a more specific error
@@ -215,7 +215,19 @@ pub const Parser = struct {
                                     }
                                 },
                                 .comma => {
-                                    // skip over commas
+                                    // comma as the first token in a raw data block is an error
+                                    if (raw_data.items.len == 0) {
+                                        return self.failDetails(ErrorDetails{
+                                            .err = .expected_something_else,
+                                            .token = self.state.token,
+                                            .extra = .{ .expected_types = .{
+                                                .number = true,
+                                                .number_expression = true,
+                                                .string_literal = true,
+                                            } },
+                                        });
+                                    }
+                                    // otherwise just skip over commas
                                     try self.nextToken(.normal);
                                     continue;
                                 },
@@ -231,8 +243,20 @@ pub const Parser = struct {
                                 },
                                 else => {},
                             }
-                            const expression_result = try self.parseExpression();
+                            const expression_result = try self.parseExpression(false);
                             try raw_data.append(expression_result.node);
+
+                            if (!expression_result.node.isExpressionAlwaysSkipped() and !expression_result.node.isNumberExpression() and !expression_result.node.isStringLiteral()) {
+                                return self.failDetails(ErrorDetails{
+                                    .err = .expected_something_else,
+                                    .token = expression_result.node.getFirstToken(),
+                                    .extra = .{ .expected_types = .{
+                                        .number = true,
+                                        .number_expression = true,
+                                        .string_literal = true,
+                                    } },
+                                });
+                            }
 
                             if (!expression_result.has_unconsumed_token) {
                                 try self.nextToken(.normal);
@@ -249,7 +273,7 @@ pub const Parser = struct {
                         return &node.base;
                     }
 
-                    var filename_expression_result = try self.parseExpression();
+                    var filename_expression_result = try self.parseExpression(false);
                     if (!filename_expression_result.has_unconsumed_token) {
                         try self.nextToken(.whitespace_delimiter_only);
                     }
@@ -274,7 +298,7 @@ pub const Parser = struct {
         has_unconsumed_token: bool = false,
     };
 
-    fn parseExpression(self: *Self) Error!ExpressionResult {
+    fn parseExpression(self: *Self, is_known_to_be_number_expression: bool) Error!ExpressionResult {
         const possible_lhs: *Node = lhs: {
             switch (self.state.token.id) {
                 .quoted_ascii_string, .quoted_wide_string => {
@@ -302,7 +326,18 @@ pub const Parser = struct {
                     const open_paren_token = self.state.token;
 
                     try self.nextToken(.normal);
-                    const expression_result = try self.parseExpression();
+                    const expression_result = try self.parseExpression(true);
+
+                    if (!expression_result.node.isNumberExpression()) {
+                        return self.failDetails(ErrorDetails{
+                            .err = .expected_something_else,
+                            .token = expression_result.node.getFirstToken(),
+                            .extra = .{ .expected_types = .{
+                                .number = true,
+                                .number_expression = true,
+                            } },
+                        });
+                    }
 
                     if (!expression_result.has_unconsumed_token) {
                         try self.nextToken(.normal);
@@ -315,14 +350,36 @@ pub const Parser = struct {
                         .close_token = self.state.token,
                     };
 
+                    // TODO: Add context to error about where the open paren is
                     try self.check(.close_paren);
 
                     break :lhs &node.base;
                 },
+                .close_paren => {
+                    // A single close paren counts as a valid "expression", but
+                    // only when its the first and only token in the expression.
+                    // Very strange.
+                    if (!is_known_to_be_number_expression) {
+                        const node = try self.state.arena.create(Node.Literal);
+                        node.* = .{
+                            .token = self.state.token,
+                        };
+                        return .{ .node = &node.base };
+                    }
+                },
                 else => {},
             }
-            std.debug.print("Unhandled token: {any}\n", .{self.state.token});
-            @panic("TODO parseExpression");
+
+            // TODO: This may not be the correct way to handle this in all cases?
+            return self.failDetails(ErrorDetails{
+                .err = .expected_something_else,
+                .token = self.state.token,
+                .extra = .{ .expected_types = .{
+                    .number = true,
+                    .number_expression = true,
+                    .string_literal = !is_known_to_be_number_expression,
+                } },
+            });
         };
 
         try self.nextToken(.normal_expect_operator);
@@ -338,7 +395,18 @@ pub const Parser = struct {
         }
 
         try self.nextToken(.normal);
-        const rhs_result = try self.parseExpression();
+        const rhs_result = try self.parseExpression(true);
+
+        if (!rhs_result.node.isNumberExpression()) {
+            return self.failDetails(ErrorDetails{
+                .err = .expected_something_else,
+                .token = rhs_result.node.getFirstToken(),
+                .extra = .{ .expected_types = .{
+                    .number = true,
+                    .number_expression = true,
+                } },
+            });
+        }
 
         const node = try self.state.arena.create(Node.BinaryExpression);
         node.* = .{

@@ -48,7 +48,48 @@ pub const ErrorDetails = struct {
         none: void,
         expected: Token.Id,
         number: u32,
+        expected_types: ExpectedTypes,
     } = .{ .none = {} },
+
+    pub const ExpectedTypes = packed struct(u32) {
+        number: bool = false,
+        number_expression: bool = false,
+        string_literal: bool = false,
+        _: u29 = undefined,
+
+        pub const strings = std.ComptimeStringMap([]const u8, .{
+            .{ "number", "number" },
+            .{ "number_expression", "number expression" },
+            .{ "string_literal", "quoted string literal" },
+        });
+
+        pub fn writeCommaSeparated(self: ExpectedTypes, writer: anytype) !void {
+            const struct_info = @typeInfo(ExpectedTypes).Struct;
+            const num_real_fields = struct_info.fields.len - 1;
+            const num_padding_bits = @sizeOf(ExpectedTypes) - num_real_fields;
+            const mask = std.math.maxInt(struct_info.backing_integer.?) >> num_padding_bits;
+            const relevant_bits_only = @bitCast(struct_info.backing_integer.?, self) & mask;
+            const num_set_bits = @popCount(relevant_bits_only);
+
+            var i: usize = 0;
+            inline for (struct_info.fields) |field_info| {
+                if (field_info.field_type != bool) continue;
+                if (i == num_set_bits) return;
+                if (@field(self, field_info.name)) {
+                    try writer.writeAll(strings.get(field_info.name).?);
+                    i += 1;
+                    if (num_set_bits > 2 and i != num_set_bits) {
+                        try writer.writeAll(", ");
+                    } else if (i != num_set_bits) {
+                        try writer.writeByte(' ');
+                    }
+                    if (num_set_bits > 1 and i == num_set_bits - 1) {
+                        try writer.writeAll("or ");
+                    }
+                }
+            }
+        }
+    };
 
     pub const Error = enum {
         // Lexer
@@ -63,6 +104,8 @@ pub const ErrorDetails = struct {
         unfinished_string_table_block,
         /// `expected` is populated.
         expected_token,
+        /// `expected_types` is populated
+        expected_something_else,
 
         // Compiler
         string_resource_as_numeric_type,
@@ -97,6 +140,11 @@ pub const ErrorDetails = struct {
             },
             .expected_token => {
                 return writer.print("expected '{s}', got '{s}'", .{ self.extra.expected.nameForErrorDisplay(), self.token.nameForErrorDisplay(source) });
+            },
+            .expected_something_else => {
+                try writer.writeAll("expected ");
+                try self.extra.expected_types.writeCommaSeparated(writer);
+                return writer.print("; got '{s}'", .{self.token.nameForErrorDisplay(source)});
             },
             .string_resource_as_numeric_type => {
                 // TODO: Add note about why this is the case (i.e. it always (?) leads to an invalid .res)

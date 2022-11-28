@@ -71,4 +71,11 @@ pub fn build(b: *std.build.Builder) void {
     fuzzy_common_resource_attributes.addPackage(resinator);
     const fuzzy_common_resource_attributes_step = b.step("test_fuzzy_common_resource_attributes", "Simple fuzz testing for common resource attributes");
     fuzzy_common_resource_attributes_step.dependOn(&fuzzy_common_resource_attributes.step);
+
+    var fuzzy_raw_data = b.addTest("test/fuzzy_raw_data.zig");
+    fuzzy_raw_data.setBuildMode(mode);
+    fuzzy_raw_data.setTarget(target);
+    fuzzy_raw_data.addPackage(resinator);
+    const fuzzy_raw_data_step = b.step("test_fuzzy_raw_data", "Simple fuzz testing for raw data blocks");
+    fuzzy_raw_data_step.dependOn(&fuzzy_raw_data.step);
 }

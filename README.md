@@ -49,7 +49,7 @@ The plan is to use fuzz testing with the `rc` tool as an oracle to ensure that `
 - In `resinator`, splices (`\` at the end of a line) are removed by the preprocessor before checking if any string literals are too long.
   + The Windows RC compiler includes the splice characters in the string literal length check (even though they don't show up in the string literal).
 - In `resinator`, embedded 'carriage return' characters (that are not part of a `CRLF` pair) can lead to files being parsed differently than the Windows RC compiler would parse them.
-  + The `clang` preprocessor treats carriage return characters (`'\r'`) as a line separator when unpaired, and always converts them to new lines (`'\n'`). The Windows RC tool instead seemingly ignores all `\r` characters.
+  + The `clang` preprocessor treats carriage return characters (`'\r'`) as a line separator when unpaired, and always converts them to new lines (`'\n'`). The Windows RC tool instead seemingly ignores/skips all `\r` characters.
   + For example, `RC<\r>DATA` will be compiled by the Windows RC tool as if it were `RCDATA`, but `clang`'s preprocessor will convert it to `RC<\n>DATA` which `resinator` will parse as separate `RC` and `DATA` tokens.
 
 ## Status
