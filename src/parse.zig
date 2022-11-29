@@ -258,6 +258,15 @@ pub const Parser = struct {
                                 });
                             }
 
+                            if (expression_result.node.isNumberExpression() and expression_result.has_unconsumed_token and self.state.token.id == .close_paren) {
+                                // <number expression>) is an error
+                                return self.failDetails(ErrorDetails{
+                                    .err = .expected_token,
+                                    .token = self.state.token,
+                                    .extra = .{ .expected = .operator },
+                                });
+                            }
+
                             if (!expression_result.has_unconsumed_token) {
                                 try self.nextToken(.normal);
                             }
@@ -386,14 +395,6 @@ pub const Parser = struct {
         const possible_operator = self.state.token;
         switch (possible_operator.id) {
             .operator => {},
-            .close_paren => {
-                // <number>) is an error
-                return self.failDetails(ErrorDetails{
-                    .err = .expected_token,
-                    .token = self.state.token,
-                    .extra = .{ .expected = .operator },
-                });
-            },
             else => {
                 return .{
                     .node = possible_lhs,
@@ -773,8 +774,8 @@ test "parse errors" {
     try testParseError("unfinished string literal at '<eof>', expected closing '\"'", "id RCDATA \"unfinished string");
     try testParseError("expected '<literal>', got '<eof>'", "id");
     try testParseError("expected ')', got '}'", "id RCDATA { (1 }");
-    try testParseError("embedded character '\\x1A' is not allowed", "id RCDATA { \"\x1A\" }");
-    try testParseError("embedded character '\\x01' is not allowed outside of string literals", "id RCDATA { \x01 }");
+    try testParseError("character '\\x1A' is not allowed", "id RCDATA { \"\x1A\" }");
+    try testParseError("character '\\x01' is not allowed outside of string literals", "id RCDATA { \x01 }");
     try testParseError("escaping quotes with \\\" is not allowed (use \"\" instead)", "id RCDATA { \"\\\"\"\" }");
 }
 
