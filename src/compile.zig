@@ -76,6 +76,7 @@ pub const Compiler = struct {
             .invalid => @panic("TODO"),
             .string_table => try self.writeStringTable(@fieldParentPtr(Node.StringTable, "base", node)),
             .string_table_string => unreachable, // handled by writeStringTable
+            .language_statement => @panic("TODO"),
         }
     }
 

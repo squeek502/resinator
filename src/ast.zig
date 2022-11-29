@@ -36,6 +36,7 @@ pub const Node = struct {
         grouped_expression,
         string_table,
         string_table_string,
+        language_statement,
         invalid,
 
         pub fn Type(comptime id: Id) type {
@@ -48,6 +49,7 @@ pub const Node = struct {
                 .grouped_expression => GroupedExpression,
                 .string_table => StringTable,
                 .string_table_string => StringTableString,
+                .language_statement => LanguageStatement,
                 .invalid => Invalid,
             };
         }
@@ -104,7 +106,7 @@ pub const Node = struct {
         base: Node = .{ .id = .string_table },
         type: Token,
         common_resource_attributes: []Token,
-        // TODO: optional-statements
+        language: ?*Node.LanguageStatement,
         begin_token: Token,
         strings: []*Node,
         end_token: Token,
@@ -115,6 +117,14 @@ pub const Node = struct {
         id: *Node,
         maybe_comma: ?Token,
         string: Token,
+    };
+
+    pub const LanguageStatement = struct {
+        base: Node = .{ .id = .language_statement },
+        /// The LANGUAGE token itself
+        language_token: Token,
+        primary_language_id: *Node,
+        sublanguage_id: *Node,
     };
 
     pub const Invalid = struct {
@@ -196,6 +206,10 @@ pub const Node = struct {
                 const casted = @fieldParentPtr(Node.StringTableString, "base", node);
                 return casted.id.getFirstToken();
             },
+            .language_statement => {
+                const casted = @fieldParentPtr(Node.LanguageStatement, "base", node);
+                return casted.language_token;
+            },
             .invalid => @panic("TODO getFirstToken for invalid node"),
         }
     }
@@ -272,6 +286,12 @@ pub const Node = struct {
                 try string.id.dump(tree, writer, indent + 1);
                 try writer.writeByteNTimes(' ', indent + 1);
                 try writer.print("{s}\n", .{string.string.slice(tree.source)});
+            },
+            .language_statement => {
+                const language = @fieldParentPtr(Node.LanguageStatement, "base", node);
+                try writer.print(" {s}\n", .{language.language_token.slice(tree.source)});
+                try language.primary_language_id.dump(tree, writer, indent + 1);
+                try language.sublanguage_id.dump(tree, writer, indent + 1);
             },
             .invalid => {
                 const invalid = @fieldParentPtr(Node.Invalid, "base", node);

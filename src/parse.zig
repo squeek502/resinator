@@ -83,7 +83,7 @@ pub const Parser = struct {
     fn parseStatement(self: *Self) Error!*Node {
         const first_token = self.state.token;
         if (first_token.id == .literal and std.mem.eql(u8, first_token.slice(self.lexer.buffer), "LANGUAGE")) {
-            @panic("TODO top-level LANGUAGE statement");
+            return self.parseLanguageStatement();
         } else if (first_token.id == .literal and std.mem.eql(u8, first_token.slice(self.lexer.buffer), "STRINGTABLE")) {
             try self.nextToken(.normal);
 
@@ -178,6 +178,7 @@ pub const Parser = struct {
             node.* = .{
                 .type = first_token,
                 .common_resource_attributes = try self.state.arena.dupe(Token, common_resource_attributes.items),
+                .language = null, // TODO
                 .begin_token = begin_token,
                 .strings = try self.state.arena.dupe(*Node, strings.items),
                 .end_token = end_token,
@@ -300,6 +301,53 @@ pub const Parser = struct {
                 else => @panic("TODO unhandled resource type"),
             }
         }
+    }
+
+    fn parseLanguageStatement(self: *Self) Error!*Node {
+        const language_token = self.state.token;
+        try self.nextToken(.normal);
+
+        const primary_language_result = try self.parseExpression(false);
+        if (!primary_language_result.node.isNumberExpression()) {
+            return self.failDetails(ErrorDetails{
+                .err = .expected_something_else,
+                .token = primary_language_result.node.getFirstToken(),
+                .extra = .{ .expected_types = .{
+                    .number = true,
+                    .number_expression = true,
+                } },
+            });
+        }
+        if (!primary_language_result.has_unconsumed_token) {
+            try self.nextToken(.normal);
+        }
+
+        try self.check(.comma);
+        try self.nextToken(.normal);
+
+        const sublanguage_result = try self.parseExpression(false);
+        if (!sublanguage_result.node.isNumberExpression()) {
+            return self.failDetails(ErrorDetails{
+                .err = .expected_something_else,
+                .token = sublanguage_result.node.getFirstToken(),
+                .extra = .{ .expected_types = .{
+                    .number = true,
+                    .number_expression = true,
+                } },
+            });
+        }
+        if (!sublanguage_result.has_unconsumed_token) {
+            // TODO: This is not always the right method to parse the next token
+            try self.nextToken(.normal);
+        }
+
+        const node = try self.state.arena.create(Node.LanguageStatement);
+        node.* = .{
+            .language_token = language_token,
+            .primary_language_id = primary_language_result.node,
+            .sublanguage_id = sublanguage_result.node,
+        };
+        return &node.base;
     }
 
     const ExpressionResult = struct {
@@ -767,6 +815,16 @@ test "control characters as whitespace" {
         \\ resource_raw_data id RCDATA [0 common_resource_attributes] raw data: 1
         \\
     ++ "  literal \"\x01\"\n"); // needed to get the actual byte \x01 in the expected output
+}
+
+test "top-level language statement" {
+    try testParse("LANGUAGE 0, 0",
+        \\root
+        \\ language_statement LANGUAGE
+        \\  literal 0
+        \\  literal 0
+        \\
+    );
 }
 
 test "parse errors" {
