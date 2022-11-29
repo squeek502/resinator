@@ -386,6 +386,14 @@ pub const Parser = struct {
         const possible_operator = self.state.token;
         switch (possible_operator.id) {
             .operator => {},
+            .close_paren => {
+                // <number>) is an error
+                return self.failDetails(ErrorDetails{
+                    .err = .expected_token,
+                    .token = self.state.token,
+                    .extra = .{ .expected = .operator },
+                });
+            },
             else => {
                 return .{
                     .node = possible_lhs,

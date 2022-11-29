@@ -352,6 +352,7 @@ pub const Lexer = struct {
                     // zig fmt: off
                     ' ', '\t', '\x05'...'\x08', '\x0B'...'\x0C', '\x0E'...'\x1F',
                     '\r', '\n', '"', ',', '{', '}', '+', '-', '|', '&', '~', '(', ')',
+                    '\'', ';', '=',
                     => {
                     // zig fmt: on
                         result.id = .number;
@@ -362,7 +363,8 @@ pub const Lexer = struct {
                 .literal_or_quoted_wide_string => switch (c) {
                     // zig fmt: off
                     ' ', '\t', '\x05'...'\x08', '\x0B'...'\x0C', '\x0E'...'\x1F',
-                    '\r', '\n', ',', '{', '}',
+                    '\r', '\n', ',', '{', '}', '+', '-', '|', '&', '~', '(', ')',
+                    '\'', ';', '=',
                     // zig fmt: on
                     => {
                         result.id = .literal;
@@ -380,7 +382,8 @@ pub const Lexer = struct {
                 .literal => switch (c) {
                     // zig fmt: off
                     ' ', '\t', '\x05'...'\x08', '\x0B'...'\x0C', '\x0E'...'\x1F',
-                    '\r', '\n', '"', ',', '{', '}',
+                    '\r', '\n', '"', ',', '{', '}', '+', '-', '|', '&', '~', '(', ')',
+                    '\'', ';', '=',
                     => {
                     // zig fmt: on
                         result.id = .literal;
@@ -560,6 +563,11 @@ pub const Lexer = struct {
             // 0x04 is valid but behaves strangely (sort of acts as a 'skip the next character' instruction)
             // TODO: re-evaluate 0x04
             0x01...0x04 => if (!in_string_literal) error.IllegalByteOutsideStringLiterals else return,
+            // @ and ` both result in error RC2018: unknown character '0x60' (and subsequently
+            // fatal error RC1116: RC terminating after preprocessor errors) if they are ever used
+            // outside of string literals. Not exactly sure why this would be the case, though.
+            // TODO: Make sure there aren't any exceptions
+            '@', '`' => if (!in_string_literal) error.IllegalByteOutsideStringLiterals else return,
             else => return,
         };
         self.error_context_token = .{

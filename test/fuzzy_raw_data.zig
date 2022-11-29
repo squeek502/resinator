@@ -2,12 +2,25 @@ const std = @import("std");
 const resinator = @import("resinator");
 
 test "single char in raw data block" {
+    var source_buf = "1 RCDATA { ? }".*;
+    try testAllBytes(&source_buf);
+}
+
+test "number literal in raw data block" {
+    var source_buf = "1 RCDATA { 1? }".*;
+    try testAllBytes(&source_buf);
+}
+
+test "literal in raw data block" {
+    var source_buf = "1 RCDATA { a? }".*;
+    try testAllBytes(&source_buf);
+}
+
+fn testAllBytes(source: []u8) !void {
     const allocator = std.testing.allocator;
     var buffer = std.ArrayList(u8).init(allocator);
     defer buffer.deinit();
 
-    var source_buf = "1 RCDATA { ? }".*;
-    var source: []u8 = &source_buf;
     const byte_index = std.mem.indexOfScalar(u8, source, '?').?;
     var byte: u8 = 1;
     while (true) : (byte += 1) {

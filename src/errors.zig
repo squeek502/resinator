@@ -123,11 +123,11 @@ pub const ErrorDetails = struct {
             },
             .illegal_byte => {
                 const byte = self.token.slice(source)[0];
-                return writer.print("embedded character '\\x{X:0>2}' is not allowed", .{byte});
+                return writer.print("character '\\x{X:0>2}' is not allowed", .{byte});
             },
             .illegal_byte_outside_string_literals => {
                 const byte = self.token.slice(source)[0];
-                return writer.print("embedded character '\\x{X:0>2}' is not allowed outside of string literals", .{byte});
+                return writer.print("character '\\x{X:0>2}' is not allowed outside of string literals", .{byte});
             },
             .found_c_style_escaped_quote => {
                 return writer.writeAll("escaping quotes with \\\" is not allowed (use \"\" instead)");
