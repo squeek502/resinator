@@ -305,7 +305,9 @@ pub const Lexer = struct {
                             self.at_start_of_line = false;
                         }
                     },
-                    '0'...'9', '~' => {
+                    // In Windows-1252, ² is \xb2, ³ is \xb3, ¹ is \xb9
+                    // TODO: Support other codepages
+                    '0'...'9', '~', '\xb2', '\xb3', '\xb9' => {
                         state = .number_literal;
                         self.at_start_of_line = false;
                     },

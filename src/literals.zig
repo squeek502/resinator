@@ -390,7 +390,14 @@ pub fn parseNumberLiteral(str: []const u8) Number {
             break;
         }
         // on invalid digit for the radix, just stop parsing but don't fail
-        const digit = std.fmt.charToDigit(c, radix) catch break;
+        const digit = std.fmt.charToDigit(c, radix) catch switch (c) {
+            // I have no idea why this is the case, but the Windows RC compiler
+            // treats ¹, ², and ³ characters as valid digits when the radix is 10
+            // TODO: This is the Windows-1252-encoded version of this, need to
+            //       handle UTF-8, etc.
+            '\xb2', '\xb3', '\xb9' => if (radix != 10) break else c - 0x30,
+            else => break,
+        };
 
         if (result.value != 0) {
             result.value *%= radix;
@@ -440,4 +447,22 @@ test "parse number literal" {
 
     // anything after L is ignored
     try std.testing.expectEqual(Number{ .value = 0x2A, .is_long = true }, parseNumberLiteral("0x2aL5"));
+}
+
+test "superscript characters in number literals" {
+    // In Windows-1252, ² is \xb2, ³ is \xb3, ¹ is \xb9
+    try std.testing.expectEqual(Number{ .value = 130, .is_long = false }, parseNumberLiteral("\xb2"));
+    try std.testing.expectEqual(Number{ .value = 131, .is_long = false }, parseNumberLiteral("\xb3"));
+    try std.testing.expectEqual(Number{ .value = 137, .is_long = false }, parseNumberLiteral("\xb9"));
+
+    try std.testing.expectEqual(Number{ .value = 147, .is_long = false }, parseNumberLiteral("1\xb9"));
+    try std.testing.expectEqual(Number{ .value = 157, .is_long = false }, parseNumberLiteral("2\xb9"));
+    try std.testing.expectEqual(Number{ .value = 167, .is_long = false }, parseNumberLiteral("3\xb9"));
+    try std.testing.expectEqual(Number{ .value = 227, .is_long = false }, parseNumberLiteral("9\xb9"));
+
+    try std.testing.expectEqual(Number{ .value = 237, .is_long = false }, parseNumberLiteral("10\xb9"));
+    try std.testing.expectEqual(Number{ .value = 337, .is_long = false }, parseNumberLiteral("20\xb9"));
+
+    try std.testing.expectEqual(Number{ .value = 1507, .is_long = false }, parseNumberLiteral("\xb9\xb9"));
+    try std.testing.expectEqual(Number{ .value = 15131, .is_long = false }, parseNumberLiteral("\xb9\xb2\xb3"));
 }

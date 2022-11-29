@@ -17,17 +17,15 @@ pub fn randomNumberLiteral(allocator: Allocator, rand: std.rand.Random) ![]const
     const has_radix = rand.boolean();
     if (has_radix) {
         try buf.append('0');
-        var radix_specifier = randomAlphanumeric(rand);
+        var radix_specifier = randomAlphanumericRC(rand);
         // The Windows RC preprocessor rejects number literals of the pattern \d+[eE]\d
-        // so just switch to x to avoid this cropping up a ton.
-        //
-        // Note: This \d+[eE]\d pattern is still possible to generate in the
-        // main number literal component stuff below)
+        // so just switch to x to avoid this cropping up a ton, and to test with a valid
+        // radix more.
         if (std.ascii.toLower(radix_specifier) == 'e') radix_specifier += 'x' - 'e';
         try buf.append(radix_specifier);
     } else {
         // needs to start with a digit
-        try buf.append(randomNumeric(rand));
+        try buf.append(randomNumericRC(rand));
     }
 
     // TODO: increase this limit?
@@ -39,31 +37,61 @@ pub fn randomNumberLiteral(allocator: Allocator, rand: std.rand.Random) ![]const
     var i: usize = 0;
     while (i < length) : (i += 1) {
         if (i < num_numeric_digits) {
-            try buf.append(randomNumeric(rand));
+            try buf.append(randomNumericRC(rand));
         } else {
-            try buf.append(randomAlphanumeric(rand));
+            const alphanum = randomAlphanumericRC(rand);
+            try buf.append(alphanum);
+            // [eE] in number literals are rejected by the RC preprocessor if they
+            // are followed by any digit, so append a non-digit here
+            if (alphanum == 'e' or alphanum == 'E') {
+                try buf.append(randomAlpha(rand));
+            }
         }
     }
 
     return buf.toOwnedSlice();
 }
 
-pub fn randomAlphanumeric(rand: std.rand.Random) u8 {
-    const dict = [_]u8{
-        '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
-        'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j',
-        'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't',
-        'u', 'v', 'w', 'x', 'y', 'z', 'A', 'B', 'C', 'D',
-        'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N',
-        'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X',
-        'Y', 'Z',
+const dicts = struct {
+    const digits = [_]u8{ '0', '1', '2', '3', '4', '5', '6', '7', '8', '9' };
+    const lowercase_alpha = [_]u8{
+        'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
+        'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
     };
-    var index = rand.uintLessThanBiased(u8, dict.len);
-    return dict[index];
+    const uppercase_alpha = [_]u8{
+        'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
+        'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
+    };
+    const alpha = lowercase_alpha ++ uppercase_alpha;
+    const alphanumeric = digits ++ lowercase_alpha ++ uppercase_alpha;
+};
+
+pub fn randomAlpha(rand: std.rand.Random) u8 {
+    var index = rand.uintLessThanBiased(u8, dicts.alpha.len);
+    return dicts.alpha[index];
+}
+
+pub fn randomAlphanumeric(rand: std.rand.Random) u8 {
+    var index = rand.uintLessThanBiased(u8, dicts.alphanumeric.len);
+    return dicts.alphanumeric[index];
 }
 
 pub fn randomNumeric(rand: std.rand.Random) u8 {
     return rand.uintLessThanBiased(u8, 10) + '0';
+}
+
+/// Includes Windows-1252 encoded ¹ ² ³
+pub fn randomNumericRC(rand: std.rand.Random) u8 {
+    const dict = dicts.digits ++ [_]u8{ '\xb2', '\xb3', '\xb9' };
+    var index = rand.uintLessThanBiased(u8, dict.len);
+    return dict[index];
+}
+
+/// Includes Windows-1252 encoded ¹ ² ³
+pub fn randomAlphanumericRC(rand: std.rand.Random) u8 {
+    const dict = dicts.alphanumeric ++ [_]u8{ '\xb2', '\xb3', '\xb9' };
+    var index = rand.uintLessThanBiased(u8, dict.len);
+    return dict[index];
 }
 
 pub fn randomOperator(rand: std.rand.Random) u8 {
