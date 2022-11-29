@@ -387,6 +387,7 @@ pub fn parseNumberLiteral(str: []const u8) Number {
     for (buf) |c| {
         if (c == 'L' or c == 'l') {
             result.is_long = true;
+            break;
         }
         // on invalid digit for the radix, just stop parsing but don't fail
         const digit = std.fmt.charToDigit(c, radix) catch break;
@@ -436,4 +437,7 @@ test "parse number literal" {
     try std.testing.expectEqual(Number{ .value = 0xFFFFFFFF, .is_long = true }, parseNumberLiteral("-4294967297L"));
     try std.testing.expectEqual(Number{ .value = 0xFFFFFFFE, .is_long = true }, parseNumberLiteral("~4294967297L"));
     try std.testing.expectEqual(Number{ .value = 0xFFFFFFFD, .is_long = false }, parseNumberLiteral("-0X3"));
+
+    // anything after L is ignored
+    try std.testing.expectEqual(Number{ .value = 0x2A, .is_long = true }, parseNumberLiteral("0x2aL5"));
 }
