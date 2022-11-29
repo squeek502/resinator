@@ -125,6 +125,12 @@ pub const Compiler = struct {
 
         pub fn nameFromString(allocator: Allocator, str: []const u8) !NameOrOrdinal {
             const as_utf16 = try std.unicode.utf8ToUtf16LeWithNull(allocator, str);
+            // ASCII chars in names are always converted to uppercase
+            for (as_utf16) |*char| {
+                if (char.* < 128) {
+                    char.* = std.ascii.toUpper(@intCast(u8, char.*));
+                }
+            }
             return NameOrOrdinal{ .name = as_utf16 };
         }
 
@@ -991,6 +997,15 @@ test "zero as a NameOrOrdinal" {
     try testCompileWithOutput(
         "0 0 { \"hello\" }",
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x05\x00\x00\x00 \x00\x00\x000\x00\x00\x000\x00\x00\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00hello\x00\x00\x00",
+        std.fs.cwd(),
+    );
+}
+
+test "case of string ids and user-defined types" {
+    // All ASCII chars should be converted to uppercase
+    try testCompileWithOutput(
+        "lower lower {}",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x000\x00\x00\x00L\x00O\x00W\x00E\x00R\x00\x00\x00L\x00O\x00W\x00E\x00R\x00\x00\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00",
         std.fs.cwd(),
     );
 }
