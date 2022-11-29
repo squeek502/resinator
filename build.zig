@@ -78,4 +78,11 @@ pub fn build(b: *std.build.Builder) void {
     fuzzy_raw_data.addPackage(resinator);
     const fuzzy_raw_data_step = b.step("test_fuzzy_raw_data", "Simple fuzz testing for raw data blocks");
     fuzzy_raw_data_step.dependOn(&fuzzy_raw_data.step);
+
+    var fuzzy_name_or_ordinal = b.addTest("test/fuzzy_name_or_ordinal.zig");
+    fuzzy_name_or_ordinal.setBuildMode(mode);
+    fuzzy_name_or_ordinal.setTarget(target);
+    fuzzy_name_or_ordinal.addPackage(resinator);
+    const fuzzy_name_or_ordinal_step = b.step("test_fuzzy_name_or_ordinal", "Simple fuzz testing for name or ordinals");
+    fuzzy_name_or_ordinal_step.dependOn(&fuzzy_name_or_ordinal.step);
 }

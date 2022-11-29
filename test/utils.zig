@@ -1,7 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-pub fn randomNumberLiteral(allocator: Allocator, rand: std.rand.Random) ![]const u8 {
+pub fn randomNumberLiteral(allocator: Allocator, rand: std.rand.Random, comptime include_superscripts: bool) ![]const u8 {
     var buf = std.ArrayList(u8).init(allocator);
     errdefer buf.deinit();
 
@@ -14,10 +14,13 @@ pub fn randomNumberLiteral(allocator: Allocator, rand: std.rand.Random) ![]const
         .complement => try buf.append('~'),
     }
 
+    const getRandomNumeric = if (include_superscripts) randomNumericRC else randomNumeric;
+    const getRandomAlphanumeric = if (include_superscripts) randomAlphanumericRC else randomAlphanumeric;
+
     const has_radix = rand.boolean();
     if (has_radix) {
         try buf.append('0');
-        var radix_specifier = randomAlphanumericRC(rand);
+        var radix_specifier = randomAlphanumeric(rand);
         // The Windows RC preprocessor rejects number literals of the pattern \d+[eE]\d
         // so just switch to x to avoid this cropping up a ton, and to test with a valid
         // radix more.
@@ -25,7 +28,7 @@ pub fn randomNumberLiteral(allocator: Allocator, rand: std.rand.Random) ![]const
         try buf.append(radix_specifier);
     } else {
         // needs to start with a digit
-        try buf.append(randomNumericRC(rand));
+        try buf.append(getRandomNumeric(rand));
     }
 
     // TODO: increase this limit?
@@ -37,9 +40,9 @@ pub fn randomNumberLiteral(allocator: Allocator, rand: std.rand.Random) ![]const
     var i: usize = 0;
     while (i < length) : (i += 1) {
         if (i < num_numeric_digits) {
-            try buf.append(randomNumericRC(rand));
+            try buf.append(getRandomNumeric(rand));
         } else {
-            const alphanum = randomAlphanumericRC(rand);
+            const alphanum = getRandomAlphanumeric(rand);
             try buf.append(alphanum);
             // [eE] in number literals are rejected by the RC preprocessor if they
             // are followed by any digit, so append a non-digit here

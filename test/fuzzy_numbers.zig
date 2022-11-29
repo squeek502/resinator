@@ -15,7 +15,7 @@ test {
 
     while (true) {
         source_buffer.shrinkRetainingCapacity(0);
-        const literal = try utils.randomNumberLiteral(allocator, rand);
+        const literal = try utils.randomNumberLiteral(allocator, rand, true);
         defer allocator.free(literal);
         var source_writer = source_buffer.writer();
         try source_writer.print("1 RCDATA {{ {s} }}", .{literal});

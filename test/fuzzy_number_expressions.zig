@@ -16,10 +16,10 @@ test {
     while (true) {
         source_buffer.shrinkRetainingCapacity(0);
 
-        const lhs = try utils.randomNumberLiteral(allocator, rand);
+        const lhs = try utils.randomNumberLiteral(allocator, rand, true);
         defer allocator.free(lhs);
         const operator = utils.randomOperator(rand);
-        const rhs = try utils.randomNumberLiteral(allocator, rand);
+        const rhs = try utils.randomNumberLiteral(allocator, rand, true);
         defer allocator.free(rhs);
 
         var source_writer = source_buffer.writer();
