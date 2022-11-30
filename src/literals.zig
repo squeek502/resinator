@@ -340,6 +340,20 @@ pub const Number = struct {
     pub fn asWord(self: Number) u16 {
         return @truncate(u16, self.value);
     }
+
+    pub fn evaluateOperator(lhs: Number, operator_char: u8, rhs: Number) Number {
+        const result = switch (operator_char) {
+            '-' => lhs.value -% rhs.value,
+            '+' => lhs.value +% rhs.value,
+            '|' => lhs.value | rhs.value,
+            '&' => lhs.value & rhs.value,
+            else => unreachable, // invalid operator, this would be a lexer/parser bug
+        };
+        return .{
+            .value = result,
+            .is_long = lhs.is_long or rhs.is_long,
+        };
+    }
 };
 
 /// Assumes that number literals normally rejected by RC's preprocessor

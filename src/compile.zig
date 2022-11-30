@@ -390,23 +390,30 @@ pub const Compiler = struct {
                 },
             }
         }
-
-        pub fn evaluateOperator(operator_char: u8, lhs: Data, rhs: Data) Data {
-            std.debug.assert(lhs == .number);
-            std.debug.assert(rhs == .number);
-            const result = switch (operator_char) {
-                '-' => lhs.number.value -% rhs.number.value,
-                '+' => lhs.number.value +% rhs.number.value,
-                '|' => lhs.number.value | rhs.number.value,
-                '&' => lhs.number.value & rhs.number.value,
-                else => unreachable, // invalid operator, this would be a lexer/parser bug
-            };
-            return .{ .number = .{
-                .value = result,
-                .is_long = lhs.number.is_long or rhs.number.is_long,
-            } };
-        }
     };
+
+    /// Assumes that the node is a number or number expression
+    fn evaluateNumberExpression(expression_node: *Node, source: []const u8) Number {
+        switch (expression_node.id) {
+            .literal => {
+                const literal_node = expression_node.cast(.literal).?;
+                std.debug.assert(literal_node.token.id == .number);
+                return parseNumberLiteral(literal_node.token.slice(source));
+            },
+            .binary_expression => {
+                const binary_expression_node = expression_node.cast(.binary_expression).?;
+                const lhs = evaluateNumberExpression(binary_expression_node.left, source);
+                const rhs = evaluateNumberExpression(binary_expression_node.right, source);
+                const operator_char = binary_expression_node.operator.slice(source)[0];
+                return lhs.evaluateOperator(operator_char, rhs);
+            },
+            .grouped_expression => {
+                const grouped_expression_node = expression_node.cast(.grouped_expression).?;
+                return evaluateNumberExpression(grouped_expression_node.expression, source);
+            },
+            else => unreachable,
+        }
+    }
 
     pub fn evaluateDataExpression(self: *Compiler, expression_node: *Node) !Data {
         switch (expression_node.id) {
@@ -414,7 +421,7 @@ pub const Compiler = struct {
                 const literal_node = expression_node.cast(.literal).?;
                 switch (literal_node.token.id) {
                     .number => {
-                        const number = parseNumberLiteral(literal_node.token.slice(self.source));
+                        const number = evaluateNumberExpression(expression_node, self.source);
                         return .{ .number = number };
                     },
                     .quoted_ascii_string => {
@@ -442,14 +449,9 @@ pub const Compiler = struct {
                     },
                 }
             },
-            .binary_expression => {
-                const binary_expression_node = expression_node.cast(.binary_expression).?;
-                const lhs = try self.evaluateDataExpression(binary_expression_node.left);
-                defer lhs.deinit(self.allocator);
-                const rhs = try self.evaluateDataExpression(binary_expression_node.right);
-                defer rhs.deinit(self.allocator);
-                const operator_char = binary_expression_node.operator.slice(self.source)[0];
-                return Data.evaluateOperator(operator_char, lhs, rhs);
+            .binary_expression, .grouped_expression => {
+                const result = evaluateNumberExpression(expression_node, self.source);
+                return .{ .number = result };
             },
             else => {
                 std.debug.print("{}\n", .{expression_node.id});
@@ -509,7 +511,7 @@ pub const Compiler = struct {
             const string_id_data = try self.evaluateDataExpression(string.id);
             const string_id = string_id_data.number.asWord();
 
-            self.state.string_table.set(self.arena, string_id, string.string, node.common_resource_attributes, self.source) catch |err| switch (err) {
+            self.state.string_table.set(self.arena, string_id, string.string, &node.base, self.source) catch |err| switch (err) {
                 error.StringAlreadyDefined => {
                     try self.warnDetails(ErrorDetails{
                         .err = .string_already_defined,
@@ -532,9 +534,11 @@ pub const Compiler = struct {
     pub const ResourceHeader = struct {
         name_value: NameOrOrdinal,
         type_value: NameOrOrdinal,
-        language: WORD = 0x409, // TODO
+        language: res.Language = .{},
         memory_flags: MemoryFlags,
         data_size: DWORD,
+        version: DWORD = 0,
+        characteristics: DWORD = 0,
 
         pub fn init(allocator: Allocator, id_slice: []const u8, type_slice: []const u8, data_size: DWORD) !ResourceHeader {
             const type_value = type: {
@@ -565,6 +569,7 @@ pub const Compiler = struct {
                 .type_value = type_value,
                 .data_size = data_size,
                 .memory_flags = MemoryFlags.defaults(predefined_resource_type),
+                .language = .{}, // TODO
             };
         }
 
@@ -586,9 +591,9 @@ pub const Compiler = struct {
 
             try writer.writeIntLittle(DWORD, 0); // DataVersion
             try writer.writeIntLittle(WORD, self.memory_flags.value); // MemoryFlags
-            try writer.writeIntLittle(WORD, self.language); // LanguageId
-            try writer.writeIntLittle(DWORD, 0); // Version
-            try writer.writeIntLittle(DWORD, 0); // Characteristics
+            try writer.writeIntLittle(WORD, @bitCast(WORD, self.language)); // LanguageId
+            try writer.writeIntLittle(DWORD, self.version); // Version
+            try writer.writeIntLittle(DWORD, self.characteristics); // Characteristics
         }
 
         pub fn predefinedResourceType(self: ResourceHeader) ?res.RT {
@@ -597,6 +602,10 @@ pub const Compiler = struct {
 
         pub fn applyMemoryFlags(self: *ResourceHeader, tokens: []Token, source: []const u8) void {
             applyToMemoryFlags(&self.memory_flags, tokens, source);
+        }
+
+        pub fn applyOptionalStatements(self: *ResourceHeader, statements: []*Node, source: []const u8) void {
+            applyToOptionalStatements(&self.language, &self.version, &self.characteristics, statements, source);
         }
     };
 
@@ -607,11 +616,38 @@ pub const Compiler = struct {
         }
     }
 
+    fn applyToOptionalStatements(language: *res.Language, version: *u32, characteristics: *u32, statements: []*Node, source: []const u8) void {
+        for (statements) |node| switch (node.id) {
+            .language_statement => {
+                const language_statement = @fieldParentPtr(Node.LanguageStatement, "base", node);
+                const primary = Compiler.evaluateNumberExpression(language_statement.primary_language_id, source);
+                const sublanguage = Compiler.evaluateNumberExpression(language_statement.sublanguage_id, source);
+                language.primary_language_id = @truncate(u10, primary.value);
+                language.sublanguage_id = @truncate(u6, sublanguage.value);
+            },
+            .simple_statement => {
+                const simple_statement = @fieldParentPtr(Node.SimpleStatement, "base", node);
+                const result = Compiler.evaluateNumberExpression(simple_statement.value, source);
+                if (std.mem.eql(u8, simple_statement.identifier.slice(source), "VERSION")) {
+                    version.* = result.value;
+                } else if (std.mem.eql(u8, simple_statement.identifier.slice(source), "CHARACTERISTICS")) {
+                    characteristics.* = result.value;
+                } else {
+                    unreachable; // only VERSION and CHARACTERISTICS should be in an optional statements list
+                }
+            },
+            else => unreachable, // no other node types should be in an optional statements list
+        };
+    }
+
     pub fn writeEmptyResource(writer: anytype) !void {
         const header = ResourceHeader{
             .name_value = .{ .ordinal = 0 },
             .type_value = .{ .ordinal = 0 },
-            .language = 0,
+            .language = .{
+                .primary_language_id = 0,
+                .sublanguage_id = 0,
+            },
             .memory_flags = .{ .value = 0 },
             .data_size = 0,
         };
@@ -639,6 +675,9 @@ pub const StringTable = struct {
         string_tokens: std.ArrayListUnmanaged(Token) = .{},
         set_indexes: std.bit_set.IntegerBitSet(16) = .{ .mask = 0 },
         memory_flags: MemoryFlags = MemoryFlags.defaults(res.RT.STRING),
+        characteristics: u32 = 0,
+        version: u32 = 0,
+        language: res.Language = .{},
 
         /// Returns the index to insert the string into the `string_tokens` list.
         /// Returns null if the string should be appended.
@@ -691,6 +730,17 @@ pub const StringTable = struct {
             }
         }
 
+        pub fn applyNodeAttributes(self: *Block, node: *Node, source: []const u8) void {
+            switch (node.id) {
+                .string_table => {
+                    const string_table = @fieldParentPtr(Node.StringTable, "base", node);
+                    Compiler.applyToMemoryFlags(&self.memory_flags, string_table.common_resource_attributes, source);
+                    Compiler.applyToOptionalStatements(&self.language, &self.version, &self.characteristics, string_table.optional_statements, source);
+                },
+                else => @panic("TODO applyNodeAttributes"),
+            }
+        }
+
         pub fn writeResData(self: *Block, compiler: *Compiler, block_id: u16, writer: anytype) !void {
             var data_buffer = std.ArrayList(u8).init(compiler.allocator);
             defer data_buffer.deinit();
@@ -733,6 +783,9 @@ pub const StringTable = struct {
                 .name_value = .{ .ordinal = block_id },
                 .type_value = .{ .ordinal = @enumToInt(res.RT.STRING) },
                 .memory_flags = self.memory_flags,
+                .language = self.language,
+                .version = self.version,
+                .characteristics = self.characteristics,
                 .data_size = @intCast(u32, data_buffer.items.len),
             };
             try header.write(writer);
@@ -752,14 +805,16 @@ pub const StringTable = struct {
 
     const SetError = error{StringAlreadyDefined} || Allocator.Error;
 
-    pub fn set(self: *StringTable, allocator: Allocator, id: u16, string_token: Token, common_resource_attributes: []Token, source: []const u8) SetError!void {
+    pub fn set(self: *StringTable, allocator: Allocator, id: u16, string_token: Token, node: ?*Node, source: []const u8) SetError!void {
         const block_id = (id / 16) + 1;
         const string_index: u8 = @intCast(u8, id & 0xF);
 
         var get_or_put_result = try self.blocks.getOrPut(allocator, block_id);
         if (!get_or_put_result.found_existing) {
             get_or_put_result.value_ptr.* = Block{};
-            Compiler.applyToMemoryFlags(&get_or_put_result.value_ptr.memory_flags, common_resource_attributes, source);
+            if (node) |n| {
+                get_or_put_result.value_ptr.applyNodeAttributes(n, source);
+            }
         } else {
             if (get_or_put_result.value_ptr.set_indexes.isSet(string_index)) {
                 return error.StringAlreadyDefined;
@@ -823,14 +878,14 @@ test "StringTable" {
 
     // set each one in the randomized order
     for (ids) |id| {
-        try string_table.set(allocator, id, S.makeDummyToken(id), &.{}, "");
+        try string_table.set(allocator, id, S.makeDummyToken(id), null, "");
     }
 
     // make sure each one exists and is the right value when gotten
     var id: u16 = 0;
     while (id < 100) : (id += 1) {
         const dummy = S.makeDummyToken(id);
-        try std.testing.expectError(error.StringAlreadyDefined, string_table.set(allocator, id, dummy, &.{}, ""));
+        try std.testing.expectError(error.StringAlreadyDefined, string_table.set(allocator, id, dummy, null, ""));
         try std.testing.expectEqual(dummy, string_table.get(id).?);
     }
 
@@ -983,6 +1038,12 @@ test "raw data with number expression" {
     // binary operators promote to the largest size of their operands
     try testCompileWithOutput(
         "1 RCDATA { 65535 + 1L }",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x04\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00",
+        std.fs.cwd(),
+    );
+    // grouped expression
+    try testCompileWithOutput(
+        "1 RCDATA { (65535 + 1L) }",
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x04\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00",
         std.fs.cwd(),
     );
@@ -1193,6 +1254,21 @@ test "basic stringtable" {
         \\
     ,
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00$\x00\x00\x00 \x00\x00\x00\xff\xff\x06\x00\xff\xff!\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00a\x00\x01\x00c\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\"\x00\x00\x00 \x00\x00\x00\xff\xff\x06\x00\xff\xff\x01\x00\x00\x00\x00\x00 \x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00b\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+        std.fs.cwd(),
+    );
+}
+
+test "stringtable optional-statements" {
+    try testCompileWithOutput(
+        "STRINGTABLE VERSION 1 CHARACTERISTICS 65536 VERSION 2 { 0 \"hello\" }",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00*\x00\x00\x00 \x00\x00\x00\xff\xff\x06\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x02\x00\x00\x00\x00\x00\x01\x00\x05\x00h\x00e\x00l\x00l\x00o\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+        std.fs.cwd(),
+    );
+
+    // 63 is the max sublanguage id (u6), so 65 will overflow
+    try testCompileWithOutput(
+        "STRINGTABLE LANGUAGE 1, 65 { 0 \"hello\" }",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00*\x00\x00\x00 \x00\x00\x00\xff\xff\x06\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\x01\x04\x00\x00\x00\x00\x00\x00\x00\x00\x05\x00h\x00e\x00l\x00l\x00o\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
         std.fs.cwd(),
     );
 }

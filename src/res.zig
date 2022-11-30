@@ -51,6 +51,8 @@ pub const RT = enum(u8) {
     }
 };
 
+/// https://learn.microsoft.com/en-us/windows/win32/menurc/common-resource-attributes
+/// https://learn.microsoft.com/en-us/windows/win32/menurc/resourceheader
 pub const MemoryFlags = packed struct(u16) {
     value: u16,
 
@@ -95,4 +97,10 @@ pub const MemoryFlags = packed struct(u16) {
             .discardable => self.value |= DISCARDABLE | MOVEABLE | PURE,
         }
     }
+};
+
+/// https://learn.microsoft.com/en-us/windows/win32/intl/language-identifiers
+pub const Language = packed struct(u16) {
+    primary_language_id: u10 = 0x09, // LANG_ENGLISH
+    sublanguage_id: u6 = 0x01, // SUBLANG_ENGLISH_US (since primary is ENGLISH)
 };
