@@ -87,16 +87,24 @@ pub const Parser = struct {
     fn parseStatement(self: *Self) Error!*Node {
         const first_token = self.state.token;
         if (first_token.id == .literal and std.mem.eql(u8, first_token.slice(self.lexer.buffer), "LANGUAGE")) {
-            return self.parseLanguageStatement();
+            const language_statement = try self.parseLanguageStatement();
+            return &language_statement.base;
         } else if (first_token.id == .literal and std.mem.eql(u8, first_token.slice(self.lexer.buffer), "STRINGTABLE")) {
-            try self.nextToken(.normal);
-
             var common_resource_attributes = std.ArrayList(Token).init(self.state.allocator);
             defer common_resource_attributes.deinit();
 
+            try self.nextToken(.normal);
+            // common resource attributes must all be contiguous and come before optional-statements
             while (self.state.token.id == .literal and common_resource_attributes_set.has(self.state.token.slice(self.lexer.buffer))) {
                 try common_resource_attributes.append(self.state.token);
                 try self.nextToken(.normal);
+            }
+            var language: ?*Node.LanguageStatement = null;
+            while (self.state.token.id == .literal) {
+                if (std.mem.eql(u8, self.state.token.slice(self.lexer.buffer), "LANGUAGE")) {
+                    language = try self.parseLanguageStatement();
+                    try self.nextToken(.normal);
+                }
             }
 
             const begin_token = self.state.token;
@@ -181,7 +189,7 @@ pub const Parser = struct {
             node.* = .{
                 .type = first_token,
                 .common_resource_attributes = try self.state.arena.dupe(Token, common_resource_attributes.items),
-                .language = null, // TODO
+                .language = language,
                 .begin_token = begin_token,
                 .strings = try self.state.arena.dupe(*Node, strings.items),
                 .end_token = end_token,
@@ -310,7 +318,7 @@ pub const Parser = struct {
     }
 
     /// Expects the current token to be a literal token that contains the string LANGUAGE
-    fn parseLanguageStatement(self: *Self) Error!*Node {
+    fn parseLanguageStatement(self: *Self) Error!*Node.LanguageStatement {
         const language_token = self.state.token;
 
         const primary_language = try self.parseExpression(false);
@@ -346,7 +354,7 @@ pub const Parser = struct {
             .primary_language_id = primary_language,
             .sublanguage_id = sublanguage,
         };
-        return &node.base;
+        return node;
     }
 
     /// Expects the current token to have already been dealt with, and that the
@@ -794,6 +802,21 @@ test "STRINGTABLE" {
         \\   binary_expression +
         \\    literal 1
         \\    literal 1
+        \\   "hello"
+        \\ }
+        \\
+    );
+
+    // the last optional statement of each type takes precedence
+    try testParse("STRINGTABLE LANGUAGE 1,1 LANGUAGE 1,2 { 0 \"hello\" }",
+        \\root
+        \\ string_table STRINGTABLE [0 common_resource_attributes]
+        \\  language_statement LANGUAGE
+        \\   literal 1
+        \\   literal 2
+        \\ {
+        \\  string_table_string
+        \\   literal 0
         \\   "hello"
         \\ }
         \\

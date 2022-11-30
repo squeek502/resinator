@@ -270,6 +270,9 @@ pub const Node = struct {
             .string_table => {
                 const string_table = @fieldParentPtr(Node.StringTable, "base", node);
                 try writer.print(" {s} [{d} common_resource_attributes]\n", .{ string_table.type.slice(tree.source), string_table.common_resource_attributes.len });
+                if (string_table.language) |language| {
+                    try language.base.dump(tree, writer, indent + 1);
+                }
                 try writer.writeByteNTimes(' ', indent);
                 try writer.writeAll(string_table.begin_token.slice(tree.source));
                 try writer.writeAll("\n");
