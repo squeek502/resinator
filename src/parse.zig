@@ -127,11 +127,14 @@ pub const Parser = struct {
                     else => {},
                 }
                 const id_expression = try self.parseExpression(false);
-                if (id_expression.id == .literal and id_expression.cast(.literal).?.token.id != .number) {
+                if (!id_expression.isNumberExpression()) {
                     return self.failDetails(ErrorDetails{
-                        .err = .expected_token, // TODO: maybe a more specific error
-                        .token = id_expression.cast(.literal).?.token,
-                        .extra = .{ .expected = .number },
+                        .err = .expected_something_else,
+                        .token = id_expression.getFirstToken(),
+                        .extra = .{ .expected_types = .{
+                            .number = true,
+                            .number_expression = true,
+                        } },
                     });
                 }
 
@@ -148,9 +151,9 @@ pub const Parser = struct {
 
                 if (self.state.token.id != .quoted_ascii_string and self.state.token.id != .quoted_wide_string) {
                     return self.failDetails(ErrorDetails{
-                        .err = .expected_token, // TODO: probably a more specific error message
+                        .err = .expected_something_else,
                         .token = self.state.token,
-                        .extra = .{ .expected = .quoted_ascii_string },
+                        .extra = .{ .expected_types = .{ .string_literal = true } },
                     });
                 }
 
@@ -783,6 +786,19 @@ test "STRINGTABLE" {
         \\
     );
 
+    try testParse("STRINGTABLE { 1+1 \"hello\" }",
+        \\root
+        \\ string_table STRINGTABLE [0 common_resource_attributes]
+        \\ {
+        \\  string_table_string
+        \\   binary_expression +
+        \\    literal 1
+        \\    literal 1
+        \\   "hello"
+        \\ }
+        \\
+    );
+
     // TODO: optional-statements on STRINGTABLE
     // try testParse("STRINGTABLE VERSION 1 { 0 \"hello\" }");
 }
@@ -822,6 +838,8 @@ test "parse errors" {
     try testParseError("character '\\x1A' is not allowed", "id RCDATA { \"\x1A\" }");
     try testParseError("character '\\x01' is not allowed outside of string literals", "id RCDATA { \x01 }");
     try testParseError("escaping quotes with \\\" is not allowed (use \"\" instead)", "id RCDATA { \"\\\"\"\" }");
+    try testParseError("expected number or number expression; got '\"hello\"'", "STRINGTABLE { \"hello\" }");
+    try testParseError("expected quoted string literal; got '1'", "STRINGTABLE { 1, 1 }");
 }
 
 fn testParseError(expected_error_str: []const u8, source: []const u8) !void {
