@@ -804,16 +804,14 @@ pub const StringTable = struct {
 
     const SetError = error{StringAlreadyDefined} || Allocator.Error;
 
-    pub fn set(self: *StringTable, allocator: Allocator, id: u16, string_token: Token, node: ?*Node, source: []const u8) SetError!void {
+    pub fn set(self: *StringTable, allocator: Allocator, id: u16, string_token: Token, node: *Node, source: []const u8) SetError!void {
         const block_id = (id / 16) + 1;
         const string_index: u8 = @intCast(u8, id & 0xF);
 
         var get_or_put_result = try self.blocks.getOrPut(allocator, block_id);
         if (!get_or_put_result.found_existing) {
             get_or_put_result.value_ptr.* = Block{};
-            if (node) |n| {
-                get_or_put_result.value_ptr.applyNodeAttributes(n, source);
-            }
+            get_or_put_result.value_ptr.applyNodeAttributes(node, source);
         } else {
             if (get_or_put_result.value_ptr.set_indexes.isSet(string_index)) {
                 return error.StringAlreadyDefined;
@@ -862,6 +860,15 @@ test "StringTable" {
     var string_table = StringTable{};
     defer string_table.deinit(allocator);
 
+    var dummy_node = Node.StringTable{
+        .type = S.makeDummyToken(0),
+        .common_resource_attributes = &.{},
+        .optional_statements = &.{},
+        .begin_token = S.makeDummyToken(0),
+        .strings = &.{},
+        .end_token = S.makeDummyToken(0),
+    };
+
     // randomize an array of ids 0-99
     var ids = ids: {
         var buf: [100]u16 = undefined;
@@ -877,14 +884,14 @@ test "StringTable" {
 
     // set each one in the randomized order
     for (ids) |id| {
-        try string_table.set(allocator, id, S.makeDummyToken(id), null, "");
+        try string_table.set(allocator, id, S.makeDummyToken(id), &dummy_node.base, "");
     }
 
     // make sure each one exists and is the right value when gotten
     var id: u16 = 0;
     while (id < 100) : (id += 1) {
         const dummy = S.makeDummyToken(id);
-        try std.testing.expectError(error.StringAlreadyDefined, string_table.set(allocator, id, dummy, null, ""));
+        try std.testing.expectError(error.StringAlreadyDefined, string_table.set(allocator, id, dummy, &dummy_node.base, ""));
         try std.testing.expectEqual(dummy, string_table.get(id).?);
     }
 
