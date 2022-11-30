@@ -37,6 +37,7 @@ pub const Node = struct {
         string_table,
         string_table_string,
         language_statement,
+        simple_statement,
         invalid,
 
         pub fn Type(comptime id: Id) type {
@@ -50,6 +51,7 @@ pub const Node = struct {
                 .string_table => StringTable,
                 .string_table_string => StringTableString,
                 .language_statement => LanguageStatement,
+                .simple_statement => SimpleStatement,
                 .invalid => Invalid,
             };
         }
@@ -106,7 +108,7 @@ pub const Node = struct {
         base: Node = .{ .id = .string_table },
         type: Token,
         common_resource_attributes: []Token,
-        language: ?*Node.LanguageStatement,
+        optional_statements: []*Node,
         begin_token: Token,
         strings: []*Node,
         end_token: Token,
@@ -125,6 +127,14 @@ pub const Node = struct {
         language_token: Token,
         primary_language_id: *Node,
         sublanguage_id: *Node,
+    };
+
+    /// A statement with one value associated with it.
+    /// Used for CAPTION, CHARACTERISTICS, CLASS, EXSTYLE, MENU, STYLE, VERSION
+    pub const SimpleStatement = struct {
+        base: Node = .{ .id = .simple_statement },
+        identifier: Token,
+        value: *Node,
     };
 
     pub const Invalid = struct {
@@ -210,6 +220,10 @@ pub const Node = struct {
                 const casted = @fieldParentPtr(Node.LanguageStatement, "base", node);
                 return casted.language_token;
             },
+            .simple_statement => {
+                const casted = @fieldParentPtr(Node.SimpleStatement, "base", node);
+                return casted.identifier;
+            },
             .invalid => @panic("TODO getFirstToken for invalid node"),
         }
     }
@@ -270,8 +284,8 @@ pub const Node = struct {
             .string_table => {
                 const string_table = @fieldParentPtr(Node.StringTable, "base", node);
                 try writer.print(" {s} [{d} common_resource_attributes]\n", .{ string_table.type.slice(tree.source), string_table.common_resource_attributes.len });
-                if (string_table.language) |language| {
-                    try language.base.dump(tree, writer, indent + 1);
+                for (string_table.optional_statements) |statement| {
+                    try statement.dump(tree, writer, indent + 1);
                 }
                 try writer.writeByteNTimes(' ', indent);
                 try writer.writeAll(string_table.begin_token.slice(tree.source));
@@ -295,6 +309,11 @@ pub const Node = struct {
                 try writer.print(" {s}\n", .{language.language_token.slice(tree.source)});
                 try language.primary_language_id.dump(tree, writer, indent + 1);
                 try language.sublanguage_id.dump(tree, writer, indent + 1);
+            },
+            .simple_statement => {
+                const statement = @fieldParentPtr(Node.SimpleStatement, "base", node);
+                try writer.print(" {s}\n", .{statement.identifier.slice(tree.source)});
+                try statement.value.dump(tree, writer, indent + 1);
             },
             .invalid => {
                 const invalid = @fieldParentPtr(Node.Invalid, "base", node);

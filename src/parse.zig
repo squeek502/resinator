@@ -88,7 +88,7 @@ pub const Parser = struct {
         const first_token = self.state.token;
         if (first_token.id == .literal and std.mem.eql(u8, first_token.slice(self.lexer.buffer), "LANGUAGE")) {
             const language_statement = try self.parseLanguageStatement();
-            return &language_statement.base;
+            return language_statement;
         } else if (first_token.id == .literal and std.mem.eql(u8, first_token.slice(self.lexer.buffer), "STRINGTABLE")) {
             var common_resource_attributes = std.ArrayList(Token).init(self.state.allocator);
             defer common_resource_attributes.deinit();
@@ -99,11 +99,37 @@ pub const Parser = struct {
                 try common_resource_attributes.append(self.state.token);
                 try self.nextToken(.normal);
             }
-            var language: ?*Node.LanguageStatement = null;
+
+            var optional_statements = std.ArrayList(*Node).init(self.state.allocator);
+            defer optional_statements.deinit();
             while (self.state.token.id == .literal) {
-                if (std.mem.eql(u8, self.state.token.slice(self.lexer.buffer), "LANGUAGE")) {
-                    language = try self.parseLanguageStatement();
+                const slice = self.state.token.slice(self.lexer.buffer);
+                if (std.mem.eql(u8, slice, "LANGUAGE")) {
+                    const language = try self.parseLanguageStatement();
+                    try optional_statements.append(language);
                     try self.nextToken(.normal);
+                } else if (std.mem.eql(u8, slice, "VERSION") or std.mem.eql(u8, slice, "CHARACTERISTICS")) {
+                    const identifier = self.state.token;
+                    const value = try self.parseExpression(false);
+                    if (!value.isNumberExpression()) {
+                        return self.failDetails(ErrorDetails{
+                            .err = .expected_something_else,
+                            .token = value.getFirstToken(),
+                            .extra = .{ .expected_types = .{
+                                .number = true,
+                                .number_expression = true,
+                            } },
+                        });
+                    }
+                    const node = try self.state.arena.create(Node.SimpleStatement);
+                    node.* = .{
+                        .identifier = identifier,
+                        .value = value,
+                    };
+                    try optional_statements.append(&node.base);
+                    try self.nextToken(.normal);
+                } else {
+                    break;
                 }
             }
 
@@ -189,7 +215,7 @@ pub const Parser = struct {
             node.* = .{
                 .type = first_token,
                 .common_resource_attributes = try self.state.arena.dupe(Token, common_resource_attributes.items),
-                .language = language,
+                .optional_statements = try self.state.arena.dupe(*Node, optional_statements.items),
                 .begin_token = begin_token,
                 .strings = try self.state.arena.dupe(*Node, strings.items),
                 .end_token = end_token,
@@ -318,7 +344,7 @@ pub const Parser = struct {
     }
 
     /// Expects the current token to be a literal token that contains the string LANGUAGE
-    fn parseLanguageStatement(self: *Self) Error!*Node.LanguageStatement {
+    fn parseLanguageStatement(self: *Self) Error!*Node {
         const language_token = self.state.token;
 
         const primary_language = try self.parseExpression(false);
@@ -354,7 +380,7 @@ pub const Parser = struct {
             .primary_language_id = primary_language,
             .sublanguage_id = sublanguage,
         };
-        return node;
+        return &node.base;
     }
 
     /// Expects the current token to have already been dealt with, and that the
@@ -807,10 +833,13 @@ test "STRINGTABLE" {
         \\
     );
 
-    // the last optional statement of each type takes precedence
+    // duplicate optional statements are preserved in the AST
     try testParse("STRINGTABLE LANGUAGE 1,1 LANGUAGE 1,2 { 0 \"hello\" }",
         \\root
         \\ string_table STRINGTABLE [0 common_resource_attributes]
+        \\  language_statement LANGUAGE
+        \\   literal 1
+        \\   literal 1
         \\  language_statement LANGUAGE
         \\   literal 1
         \\   literal 2
@@ -822,8 +851,25 @@ test "STRINGTABLE" {
         \\
     );
 
-    // TODO: optional-statements on STRINGTABLE
-    // try testParse("STRINGTABLE VERSION 1 { 0 \"hello\" }");
+    try testParse("STRINGTABLE FIXED VERSION 1 CHARACTERISTICS (1+2) { 0 \"hello\" }",
+        \\root
+        \\ string_table STRINGTABLE [1 common_resource_attributes]
+        \\  simple_statement VERSION
+        \\   literal 1
+        \\  simple_statement CHARACTERISTICS
+        \\   grouped_expression
+        \\   (
+        \\    binary_expression +
+        \\     literal 1
+        \\     literal 2
+        \\   )
+        \\ {
+        \\  string_table_string
+        \\   literal 0
+        \\   "hello"
+        \\ }
+        \\
+    );
 }
 
 test "control characters as whitespace" {
