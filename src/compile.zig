@@ -628,12 +628,11 @@ pub const Compiler = struct {
             .simple_statement => {
                 const simple_statement = @fieldParentPtr(Node.SimpleStatement, "base", node);
                 const result = Compiler.evaluateNumberExpression(simple_statement.value, source);
-                if (std.mem.eql(u8, simple_statement.identifier.slice(source), "VERSION")) {
-                    version.* = result.value;
-                } else if (std.mem.eql(u8, simple_statement.identifier.slice(source), "CHARACTERISTICS")) {
-                    characteristics.* = result.value;
-                } else {
-                    unreachable; // only VERSION and CHARACTERISTICS should be in an optional statements list
+                const statement_type = rc.OptionalStatements.map.get(simple_statement.identifier.slice(source)).?;
+                switch (statement_type) {
+                    .version => version.* = result.value,
+                    .characteristics => characteristics.* = result.value,
+                    else => unreachable, // only VERSION and CHARACTERISTICS should be in an optional statements list
                 }
             },
             else => unreachable, // no other node types should be in an optional statements list
@@ -1265,6 +1264,14 @@ test "stringtable optional-statements" {
     try testCompileWithOutput(
         "STRINGTABLE LANGUAGE 1, 65 { 0 \"hello\" }",
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00*\x00\x00\x00 \x00\x00\x00\xff\xff\x06\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\x01\x04\x00\x00\x00\x00\x00\x00\x00\x00\x05\x00h\x00e\x00l\x00l\x00o\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+        std.fs.cwd(),
+    );
+}
+
+test "case insensitivity" {
+    try testCompileWithOutput(
+        "StringTABLE VERSION 1 characteristics 65536 Version 2 Begin 0 \"hello\" end",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00*\x00\x00\x00 \x00\x00\x00\xff\xff\x06\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x02\x00\x00\x00\x00\x00\x01\x00\x05\x00h\x00e\x00l\x00l\x00o\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
         std.fs.cwd(),
     );
 }

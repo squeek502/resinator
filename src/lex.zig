@@ -22,8 +22,8 @@ pub const Token = struct {
         quoted_ascii_string,
         quoted_wide_string,
         operator,
-        open_brace,
-        close_brace,
+        begin,
+        end,
         comma,
         open_paren,
         close_paren,
@@ -37,8 +37,8 @@ pub const Token = struct {
                 .quoted_ascii_string => "<quoted ascii string>",
                 .quoted_wide_string => "<quoted wide string>",
                 .operator => "<operator>",
-                .open_brace => "<open brace or BEGIN>",
-                .close_brace => "<close brace or END>",
+                .begin => "<'{' or BEGIN>",
+                .end => "<'}' or END>",
                 .comma => ",",
                 .open_paren => "(",
                 .close_paren => ")",
@@ -232,6 +232,14 @@ pub const Lexer = struct {
         literal,
         number_literal,
         preprocessor,
+        // end
+        e,
+        en,
+        // begin
+        b,
+        be,
+        beg,
+        begi,
     };
 
     /// TODO: A not-terrible name
@@ -282,6 +290,14 @@ pub const Lexer = struct {
                         state = .literal_or_quoted_wide_string;
                         self.at_start_of_line = false;
                     },
+                    'E', 'e' => {
+                        state = .e;
+                        self.at_start_of_line = false;
+                    },
+                    'B', 'b' => {
+                        state = .b;
+                        self.at_start_of_line = false;
+                    },
                     '"' => {
                         state = .quoted_ascii_string;
                         self.at_start_of_line = false;
@@ -321,7 +337,7 @@ pub const Lexer = struct {
                     },
                     '{', '}' => {
                         self.index += 1;
-                        result.id = if (c == '{') .open_brace else .close_brace;
+                        result.id = if (c == '{') .begin else .end;
                         self.at_start_of_line = false;
                         break;
                     },
@@ -392,6 +408,64 @@ pub const Lexer = struct {
                         break;
                     },
                     else => {},
+                },
+                .e => switch (c) {
+                    'N', 'n' => {
+                        state = .en;
+                    },
+                    else => {
+                        state = .literal;
+                        self.index -= 1;
+                    },
+                },
+                .en => switch (c) {
+                    'D', 'd' => {
+                        result.id = .end;
+                        self.index += 1;
+                        break;
+                    },
+                    else => {
+                        state = .literal;
+                        self.index -= 1;
+                    },
+                },
+                .b => switch (c) {
+                    'E', 'e' => {
+                        state = .be;
+                    },
+                    else => {
+                        state = .literal;
+                        self.index -= 1;
+                    },
+                },
+                .be => switch (c) {
+                    'G', 'g' => {
+                        state = .beg;
+                    },
+                    else => {
+                        state = .literal;
+                        self.index -= 1;
+                    },
+                },
+                .beg => switch (c) {
+                    'I', 'i' => {
+                        state = .begi;
+                    },
+                    else => {
+                        state = .literal;
+                        self.index -= 1;
+                    },
+                },
+                .begi => switch (c) {
+                    'N', 'n' => {
+                        result.id = .begin;
+                        self.index += 1;
+                        break;
+                    },
+                    else => {
+                        state = .literal;
+                        self.index -= 1;
+                    },
                 },
                 .quoted_ascii_string, .quoted_wide_string => switch (c) {
                     '"' => {
@@ -470,7 +544,7 @@ pub const Lexer = struct {
         } else { // got EOF
             switch (state) {
                 .start => {},
-                .literal_or_quoted_wide_string, .literal => {
+                .literal_or_quoted_wide_string, .literal, .e, .en, .b, .be, .beg, .begi => {
                     result.id = .literal;
                 },
                 .preprocessor => {

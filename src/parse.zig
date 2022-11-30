@@ -7,6 +7,7 @@ const Resource = @import("rc.zig").Resource;
 const Allocator = std.mem.Allocator;
 const ErrorDetails = @import("errors.zig").ErrorDetails;
 const Diagnostics = @import("errors.zig").Diagnostics;
+const rc = @import("rc.zig");
 
 pub const Parser = struct {
     const Self = @This();
@@ -86,260 +87,253 @@ pub const Parser = struct {
     /// Expects the current token to be the first token of the statement.
     fn parseStatement(self: *Self) Error!*Node {
         const first_token = self.state.token;
-        if (first_token.id == .literal and std.mem.eql(u8, first_token.slice(self.lexer.buffer), "LANGUAGE")) {
-            const language_statement = try self.parseLanguageStatement();
-            return language_statement;
-        } else if (first_token.id == .literal and std.mem.eql(u8, first_token.slice(self.lexer.buffer), "STRINGTABLE")) {
-            var common_resource_attributes = std.ArrayList(Token).init(self.state.allocator);
-            defer common_resource_attributes.deinit();
+        // TODO: Is this actually guaranteed? Should it be?
+        std.debug.assert(first_token.id == .literal);
 
-            try self.nextToken(.normal);
-            // common resource attributes must all be contiguous and come before optional-statements
-            while (self.state.token.id == .literal and common_resource_attributes_set.has(self.state.token.slice(self.lexer.buffer))) {
-                try common_resource_attributes.append(self.state.token);
+        if (rc.TopLevelKeywords.map.get(first_token.slice(self.lexer.buffer))) |keyword| switch (keyword) {
+            .language => {
+                const language_statement = try self.parseLanguageStatement();
+                return language_statement;
+            },
+            .stringtable => {
+                var common_resource_attributes = std.ArrayList(Token).init(self.state.allocator);
+                defer common_resource_attributes.deinit();
+
                 try self.nextToken(.normal);
-            }
-
-            var optional_statements = std.ArrayList(*Node).init(self.state.allocator);
-            defer optional_statements.deinit();
-            while (self.state.token.id == .literal) {
-                const slice = self.state.token.slice(self.lexer.buffer);
-                if (std.mem.eql(u8, slice, "LANGUAGE")) {
-                    const language = try self.parseLanguageStatement();
-                    try optional_statements.append(language);
+                // common resource attributes must all be contiguous and come before optional-statements
+                while (self.state.token.id == .literal and rc.CommonResourceAttributes.map.has(self.state.token.slice(self.lexer.buffer))) {
+                    try common_resource_attributes.append(self.state.token);
                     try self.nextToken(.normal);
-                } else if (std.mem.eql(u8, slice, "VERSION") or std.mem.eql(u8, slice, "CHARACTERISTICS")) {
-                    const identifier = self.state.token;
-                    const value = try self.parseExpression(false);
-                    if (!value.isNumberExpression()) {
+                }
+
+                var optional_statements = std.ArrayList(*Node).init(self.state.allocator);
+                defer optional_statements.deinit();
+                while (self.state.token.id == .literal) {
+                    const slice = self.state.token.slice(self.lexer.buffer);
+                    const optional_statement_type = rc.OptionalStatements.map.get(slice) orelse break;
+                    switch (optional_statement_type) {
+                        .language => {
+                            const language = try self.parseLanguageStatement();
+                            try optional_statements.append(language);
+                            try self.nextToken(.normal);
+                        },
+                        .version, .characteristics => {
+                            const identifier = self.state.token;
+                            const value = try self.parseExpression(false);
+                            if (!value.isNumberExpression()) {
+                                return self.failDetails(ErrorDetails{
+                                    .err = .expected_something_else,
+                                    .token = value.getFirstToken(),
+                                    .extra = .{ .expected_types = .{
+                                        .number = true,
+                                        .number_expression = true,
+                                    } },
+                                });
+                            }
+                            const node = try self.state.arena.create(Node.SimpleStatement);
+                            node.* = .{
+                                .identifier = identifier,
+                                .value = value,
+                            };
+                            try optional_statements.append(&node.base);
+                            try self.nextToken(.normal);
+                        },
+                    }
+                }
+
+                const begin_token = self.state.token;
+                try self.check(.begin);
+
+                var strings = std.ArrayList(*Node).init(self.state.allocator);
+                defer strings.deinit();
+                while (true) {
+                    const maybe_end_token = try self.lookaheadToken(.normal);
+                    switch (maybe_end_token.id) {
+                        .end => {
+                            self.nextToken(.normal) catch unreachable;
+                            break;
+                        },
+                        .eof => {
+                            return self.failDetails(ErrorDetails{
+                                .err = .unfinished_string_table_block,
+                                .token = maybe_end_token,
+                            });
+                        },
+                        else => {},
+                    }
+                    const id_expression = try self.parseExpression(false);
+                    if (!id_expression.isNumberExpression()) {
                         return self.failDetails(ErrorDetails{
                             .err = .expected_something_else,
-                            .token = value.getFirstToken(),
+                            .token = id_expression.getFirstToken(),
                             .extra = .{ .expected_types = .{
                                 .number = true,
                                 .number_expression = true,
                             } },
                         });
                     }
-                    const node = try self.state.arena.create(Node.SimpleStatement);
-                    node.* = .{
-                        .identifier = identifier,
-                        .value = value,
-                    };
-                    try optional_statements.append(&node.base);
+
                     try self.nextToken(.normal);
-                } else {
-                    break;
-                }
-            }
-
-            const begin_token = self.state.token;
-            try self.checkBegin();
-
-            var strings = std.ArrayList(*Node).init(self.state.allocator);
-            defer strings.deinit();
-            while (true) {
-                const maybe_end_token = try self.lookaheadToken(.normal);
-                switch (maybe_end_token.id) {
-                    .literal => {
-                        // TODO: Handle this differently, might be nice to fold this into .close_brace
-                        if (std.mem.eql(u8, "END", self.tokenSlice())) {
-                            self.nextToken(.normal) catch unreachable;
-                            break;
-                        }
-                    },
-                    .close_brace => {
-                        self.nextToken(.normal) catch unreachable;
-                        break;
-                    },
-                    .eof => {
-                        return self.failDetails(ErrorDetails{
-                            .err = .unfinished_string_table_block,
-                            .token = maybe_end_token,
-                        });
-                    },
-                    else => {},
-                }
-                const id_expression = try self.parseExpression(false);
-                if (!id_expression.isNumberExpression()) {
-                    return self.failDetails(ErrorDetails{
-                        .err = .expected_something_else,
-                        .token = id_expression.getFirstToken(),
-                        .extra = .{ .expected_types = .{
-                            .number = true,
-                            .number_expression = true,
-                        } },
-                    });
-                }
-
-                try self.nextToken(.normal);
-                const comma_token: ?Token = comma: {
-                    if (self.state.token.id == .comma) {
-                        const token = self.state.token;
-                        try self.nextToken(.normal);
-                        break :comma token;
-                    } else {
-                        break :comma null;
-                    }
-                };
-
-                if (self.state.token.id != .quoted_ascii_string and self.state.token.id != .quoted_wide_string) {
-                    return self.failDetails(ErrorDetails{
-                        .err = .expected_something_else,
-                        .token = self.state.token,
-                        .extra = .{ .expected_types = .{ .string_literal = true } },
-                    });
-                }
-
-                const string_node = try self.state.arena.create(Node.StringTableString);
-                string_node.* = .{
-                    .id = id_expression,
-                    .maybe_comma = comma_token,
-                    .string = self.state.token,
-                };
-                try strings.append(&string_node.base);
-            }
-
-            if (strings.items.len == 0) {
-                return self.failDetails(ErrorDetails{
-                    .err = .expected_token, // TODO: probably a more specific error message
-                    .token = self.state.token,
-                    .extra = .{ .expected = .number },
-                });
-            }
-
-            const end_token = self.state.token;
-            try self.checkEnd();
-
-            const node = try self.state.arena.create(Node.StringTable);
-            node.* = .{
-                .type = first_token,
-                .common_resource_attributes = try self.state.arena.dupe(Token, common_resource_attributes.items),
-                .optional_statements = try self.state.arena.dupe(*Node, optional_statements.items),
-                .begin_token = begin_token,
-                .strings = try self.state.arena.dupe(*Node, strings.items),
-                .end_token = end_token,
-            };
-            return &node.base;
-        } else {
-            try self.checkId();
-            const id_token = first_token;
-            try self.nextToken(.whitespace_delimiter_only);
-            const resource = try self.checkResource();
-            const type_token = self.state.token;
-
-            switch (resource) {
-                .icon, .font, .cursor, .bitmap, .messagetable, .user_defined, .rcdata, .html => {
-                    var common_resource_attributes = std.ArrayList(Token).init(self.state.allocator);
-                    defer common_resource_attributes.deinit();
-
-                    while (true) {
-                        const maybe_common_resource_attribute = try self.lookaheadToken(.normal);
-                        if (maybe_common_resource_attribute.id == .literal and common_resource_attributes_set.has(maybe_common_resource_attribute.slice(self.lexer.buffer))) {
-                            try common_resource_attributes.append(maybe_common_resource_attribute);
-                            self.nextToken(.normal) catch unreachable;
+                    const comma_token: ?Token = comma: {
+                        if (self.state.token.id == .comma) {
+                            const token = self.state.token;
+                            try self.nextToken(.normal);
+                            break :comma token;
                         } else {
-                            break;
+                            break :comma null;
                         }
+                    };
+
+                    if (self.state.token.id != .quoted_ascii_string and self.state.token.id != .quoted_wide_string) {
+                        return self.failDetails(ErrorDetails{
+                            .err = .expected_something_else,
+                            .token = self.state.token,
+                            .extra = .{ .expected_types = .{ .string_literal = true } },
+                        });
                     }
 
-                    const maybe_begin = try self.lookaheadToken(.normal);
-                    if (try self.testBegin(maybe_begin)) {
+                    const string_node = try self.state.arena.create(Node.StringTableString);
+                    string_node.* = .{
+                        .id = id_expression,
+                        .maybe_comma = comma_token,
+                        .string = self.state.token,
+                    };
+                    try strings.append(&string_node.base);
+                }
+
+                if (strings.items.len == 0) {
+                    return self.failDetails(ErrorDetails{
+                        .err = .expected_token, // TODO: probably a more specific error message
+                        .token = self.state.token,
+                        .extra = .{ .expected = .number },
+                    });
+                }
+
+                const end_token = self.state.token;
+                try self.check(.end);
+
+                const node = try self.state.arena.create(Node.StringTable);
+                node.* = .{
+                    .type = first_token,
+                    .common_resource_attributes = try self.state.arena.dupe(Token, common_resource_attributes.items),
+                    .optional_statements = try self.state.arena.dupe(*Node, optional_statements.items),
+                    .begin_token = begin_token,
+                    .strings = try self.state.arena.dupe(*Node, strings.items),
+                    .end_token = end_token,
+                };
+                return &node.base;
+            },
+        };
+
+        const id_token = first_token;
+        try self.nextToken(.whitespace_delimiter_only);
+        const resource = try self.checkResource();
+        const type_token = self.state.token;
+
+        switch (resource) {
+            .icon, .font, .cursor, .bitmap, .messagetable, .user_defined, .rcdata, .html => {
+                var common_resource_attributes = std.ArrayList(Token).init(self.state.allocator);
+                defer common_resource_attributes.deinit();
+
+                while (true) {
+                    const maybe_common_resource_attribute = try self.lookaheadToken(.normal);
+                    if (maybe_common_resource_attribute.id == .literal and rc.CommonResourceAttributes.map.has(maybe_common_resource_attribute.slice(self.lexer.buffer))) {
+                        try common_resource_attributes.append(maybe_common_resource_attribute);
                         self.nextToken(.normal) catch unreachable;
+                    } else {
+                        break;
+                    }
+                }
 
-                        var raw_data = std.ArrayList(*Node).init(self.state.allocator);
-                        defer raw_data.deinit();
-                        while (true) {
-                            const maybe_end_token = try self.lookaheadToken(.normal);
-                            switch (maybe_end_token.id) {
-                                .literal => {
-                                    // TODO: Handle this differently, might be nice to fold this into .close_brace
-                                    if (std.mem.eql(u8, "END", self.tokenSlice())) {
-                                        self.nextToken(.normal) catch unreachable;
-                                        break;
-                                    }
-                                },
-                                .comma => {
-                                    // comma as the first token in a raw data block is an error
-                                    if (raw_data.items.len == 0) {
-                                        return self.failDetails(ErrorDetails{
-                                            .err = .expected_something_else,
-                                            .token = maybe_end_token,
-                                            .extra = .{ .expected_types = .{
-                                                .number = true,
-                                                .number_expression = true,
-                                                .string_literal = true,
-                                            } },
-                                        });
-                                    }
-                                    // otherwise just skip over commas
-                                    self.nextToken(.normal) catch unreachable;
-                                    continue;
-                                },
-                                .close_brace => {
-                                    self.nextToken(.normal) catch unreachable;
-                                    break;
-                                },
-                                .eof => {
+                const maybe_begin = try self.lookaheadToken(.normal);
+                if (maybe_begin.id == .begin) {
+                    self.nextToken(.normal) catch unreachable;
+
+                    var raw_data = std.ArrayList(*Node).init(self.state.allocator);
+                    defer raw_data.deinit();
+                    while (true) {
+                        const maybe_end_token = try self.lookaheadToken(.normal);
+                        switch (maybe_end_token.id) {
+                            .comma => {
+                                // comma as the first token in a raw data block is an error
+                                if (raw_data.items.len == 0) {
                                     return self.failDetails(ErrorDetails{
-                                        .err = .unfinished_raw_data_block,
+                                        .err = .expected_something_else,
                                         .token = maybe_end_token,
-                                    });
-                                },
-                                else => {},
-                            }
-                            const expression = try self.parseExpression(false);
-                            try raw_data.append(expression);
-
-                            if (!expression.isExpressionAlwaysSkipped() and !expression.isNumberExpression() and !expression.isStringLiteral()) {
-                                return self.failDetails(ErrorDetails{
-                                    .err = .expected_something_else,
-                                    .token = expression.getFirstToken(),
-                                    .extra = .{ .expected_types = .{
-                                        .number = true,
-                                        .number_expression = true,
-                                        .string_literal = true,
-                                    } },
-                                });
-                            }
-
-                            if (expression.isNumberExpression()) {
-                                const maybe_close_paren = try self.lookaheadToken(.normal);
-                                if (maybe_close_paren.id == .close_paren) {
-                                    // <number expression>) is an error
-                                    return self.failDetails(ErrorDetails{
-                                        .err = .expected_token,
-                                        .token = maybe_close_paren,
-                                        .extra = .{ .expected = .operator },
+                                        .extra = .{ .expected_types = .{
+                                            .number = true,
+                                            .number_expression = true,
+                                            .string_literal = true,
+                                        } },
                                     });
                                 }
-                            }
+                                // otherwise just skip over commas
+                                self.nextToken(.normal) catch unreachable;
+                                continue;
+                            },
+                            .end => {
+                                self.nextToken(.normal) catch unreachable;
+                                break;
+                            },
+                            .eof => {
+                                return self.failDetails(ErrorDetails{
+                                    .err = .unfinished_raw_data_block,
+                                    .token = maybe_end_token,
+                                });
+                            },
+                            else => {},
+                        }
+                        const expression = try self.parseExpression(false);
+                        try raw_data.append(expression);
+
+                        if (!expression.isExpressionAlwaysSkipped() and !expression.isNumberExpression() and !expression.isStringLiteral()) {
+                            return self.failDetails(ErrorDetails{
+                                .err = .expected_something_else,
+                                .token = expression.getFirstToken(),
+                                .extra = .{ .expected_types = .{
+                                    .number = true,
+                                    .number_expression = true,
+                                    .string_literal = true,
+                                } },
+                            });
                         }
 
-                        const node = try self.state.arena.create(Node.ResourceRawData);
-                        node.* = .{
-                            .id = id_token,
-                            .type = type_token,
-                            .common_resource_attributes = try self.state.arena.dupe(Token, common_resource_attributes.items),
-                            .raw_data = try self.state.arena.dupe(*Node, raw_data.items),
-                        };
-                        return &node.base;
+                        if (expression.isNumberExpression()) {
+                            const maybe_close_paren = try self.lookaheadToken(.normal);
+                            if (maybe_close_paren.id == .close_paren) {
+                                // <number expression>) is an error
+                                return self.failDetails(ErrorDetails{
+                                    .err = .expected_token,
+                                    .token = maybe_close_paren,
+                                    .extra = .{ .expected = .operator },
+                                });
+                            }
+                        }
                     }
 
-                    var filename_expression = try self.parseExpression(false);
-
-                    const node = try self.state.arena.create(Node.ResourceExternal);
+                    const node = try self.state.arena.create(Node.ResourceRawData);
                     node.* = .{
                         .id = id_token,
                         .type = type_token,
                         .common_resource_attributes = try self.state.arena.dupe(Token, common_resource_attributes.items),
-                        .filename = filename_expression,
+                        .raw_data = try self.state.arena.dupe(*Node, raw_data.items),
                     };
                     return &node.base;
-                },
-                .stringtable => unreachable,
-                else => @panic("TODO unhandled resource type"),
-            }
+                }
+
+                var filename_expression = try self.parseExpression(false);
+
+                const node = try self.state.arena.create(Node.ResourceExternal);
+                node.* = .{
+                    .id = id_token,
+                    .type = type_token,
+                    .common_resource_attributes = try self.state.arena.dupe(Token, common_resource_attributes.items),
+                    .filename = filename_expression,
+                };
+                return &node.base;
+            },
+            .stringtable => unreachable,
+            else => @panic("TODO unhandled resource type"),
         }
     }
 
@@ -535,56 +529,6 @@ pub const Parser = struct {
         }
     }
 
-    fn testBegin(self: *Self, token: Token) !bool {
-        switch (token.id) {
-            .open_brace => {
-                return true;
-            },
-            .literal => {
-                if (std.mem.eql(u8, "BEGIN", token.slice(self.lexer.buffer))) {
-                    return true;
-                }
-                return false;
-            },
-            else => return false,
-        }
-    }
-
-    fn checkBegin(self: *Self) !void {
-        if (!(try self.testBegin(self.state.token))) {
-            return self.failDetails(ErrorDetails{
-                .err = .expected_token,
-                .token = self.state.token,
-                .extra = .{ .expected = .open_brace },
-            });
-        }
-    }
-
-    fn testEnd(self: *Self) !bool {
-        switch (self.state.token.id) {
-            .close_brace => {
-                return true;
-            },
-            .literal => {
-                if (std.mem.eql(u8, "END", self.state.token.slice(self.lexer.buffer))) {
-                    return true;
-                }
-                return false;
-            },
-            else => return false,
-        }
-    }
-
-    fn checkEnd(self: *Self) !void {
-        if (!(try self.testEnd())) {
-            return self.failDetails(ErrorDetails{
-                .err = .expected_token,
-                .token = self.state.token,
-                .extra = .{ .expected = .close_brace },
-            });
-        }
-    }
-
     fn check(self: *Self, expected_token_id: Token.Id) !void {
         if (self.state.token.id != expected_token_id) {
             return self.failDetails(ErrorDetails{
@@ -608,18 +552,6 @@ pub const Parser = struct {
         }
     }
 };
-
-const common_resource_attributes_set = std.ComptimeStringMap(void, .{
-    .{"PRELOAD"},
-    .{"LOADONCALL"},
-    .{"FIXED"},
-    .{"MOVEABLE"},
-    .{"DISCARDABLE"},
-    .{"PURE"},
-    .{"IMPURE"},
-    .{"SHARED"},
-    .{"NONSHARED"},
-});
 
 fn testParse(source: []const u8, expected_ast_dump: []const u8) !void {
     const allocator = std.testing.allocator;

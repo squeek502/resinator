@@ -25,6 +25,102 @@ pub const UncheckedSliceWriter = struct {
     }
 };
 
+/// std.ComptimeStringMap, but case-insensitive and therefore only works for ASCII strings
+pub fn ComptimeCaseInsensitiveStringMap(comptime V: type, comptime kvs_list: anytype) type {
+    const precomputed = comptime blk: {
+        @setEvalBranchQuota(2000);
+        const KV = struct {
+            key: []const u8,
+            value: V,
+        };
+        var sorted_kvs: [kvs_list.len]KV = undefined;
+        const lenAsc = (struct {
+            fn lenAsc(context: void, a: KV, b: KV) bool {
+                _ = context;
+                return a.key.len < b.key.len;
+            }
+        }).lenAsc;
+        for (kvs_list) |kv, i| {
+            if (V != void) {
+                sorted_kvs[i] = .{ .key = kv.@"0", .value = kv.@"1" };
+            } else {
+                sorted_kvs[i] = .{ .key = kv.@"0", .value = {} };
+            }
+        }
+        std.sort.sort(KV, &sorted_kvs, {}, lenAsc);
+        const min_len = sorted_kvs[0].key.len;
+        const max_len = sorted_kvs[sorted_kvs.len - 1].key.len;
+        var len_indexes: [max_len + 1]usize = undefined;
+        var len: usize = 0;
+        var i: usize = 0;
+        while (len <= max_len) : (len += 1) {
+            // find the first keyword len == len
+            while (len > sorted_kvs[i].key.len) {
+                i += 1;
+            }
+            len_indexes[len] = i;
+        }
+        break :blk .{
+            .min_len = min_len,
+            .max_len = max_len,
+            .sorted_kvs = sorted_kvs,
+            .len_indexes = len_indexes,
+        };
+    };
+
+    return struct {
+        pub const kvs = precomputed.sorted_kvs;
+
+        pub fn has(str: []const u8) bool {
+            return get(str) != null;
+        }
+
+        pub fn get(str: []const u8) ?V {
+            if (str.len < precomputed.min_len or str.len > precomputed.max_len)
+                return null;
+
+            var i = precomputed.len_indexes[str.len];
+            while (true) {
+                const kv = precomputed.sorted_kvs[i];
+                if (kv.key.len != str.len)
+                    return null;
+                if (std.ascii.eqlIgnoreCase(kv.key, str))
+                    return kv.value;
+                i += 1;
+                if (i >= precomputed.sorted_kvs.len)
+                    return null;
+            }
+        }
+    };
+}
+
+test "comptime case insensitive string map" {
+    const TestEnum = enum {
+        A,
+        B,
+        C,
+        D,
+        E,
+    };
+
+    const map = ComptimeCaseInsensitiveStringMap(TestEnum, .{
+        .{ "THESE", .D },
+        .{ "hAvE", .A },
+        .{ "nothing", .B },
+        .{ "incommon", .C },
+        .{ "SameLen", .E },
+    });
+
+    try std.testing.expectEqual(TestEnum.A, map.get("have").?);
+    try std.testing.expectEqual(TestEnum.B, map.get("Nothing").?);
+    try std.testing.expect(null == map.get("missing"));
+    try std.testing.expectEqual(TestEnum.D, map.get("these").?);
+    try std.testing.expectEqual(TestEnum.E, map.get("SAMELEN").?);
+
+    try std.testing.expect(!map.has("missing"));
+    try std.testing.expect(map.has("These"));
+}
+
 // Similar to std.debug.TTY.Config
 pub const Colors = enum {
     no_color,

@@ -1,4 +1,5 @@
 const std = @import("std");
+const utils = @import("utils.zig");
 
 // https://learn.microsoft.com/en-us/windows/win32/menurc/about-resource-files
 
@@ -24,7 +25,7 @@ pub const Resource = enum {
     versioninfo,
     //vxd, // Obsolete
 
-    const map = std.ComptimeStringMap(Resource, .{
+    const map = utils.ComptimeCaseInsensitiveStringMap(Resource, .{
         .{ "ACCELERATORS", .accelerators },
         .{ "BITMAP", .bitmap },
         .{ "CURSOR", .cursor },
@@ -47,6 +48,31 @@ pub const Resource = enum {
     }
 };
 
+/// https://learn.microsoft.com/en-us/windows/win32/menurc/stringtable-resource#parameters
+pub const OptionalStatements = enum {
+    characteristics,
+    language,
+    version,
+
+    pub const map = utils.ComptimeCaseInsensitiveStringMap(OptionalStatements, .{
+        .{ "CHARACTERISTICS", .characteristics },
+        .{ "LANGUAGE", .language },
+        .{ "VERSION", .version },
+    });
+};
+
+/// Keywords that are be the first token in a statement and (if so) dictate how the rest
+/// of the statement is parsed.
+pub const TopLevelKeywords = enum {
+    language,
+    stringtable,
+
+    pub const map = utils.ComptimeCaseInsensitiveStringMap(TopLevelKeywords, .{
+        .{ "LANGUAGE", .language },
+        .{ "STRINGTABLE", .stringtable },
+    });
+};
+
 pub const CommonResourceAttributes = enum {
     preload,
     loadoncall,
@@ -58,7 +84,7 @@ pub const CommonResourceAttributes = enum {
     shared,
     nonshared,
 
-    pub const map = std.ComptimeStringMap(CommonResourceAttributes, .{
+    pub const map = utils.ComptimeCaseInsensitiveStringMap(CommonResourceAttributes, .{
         .{ "PRELOAD", .preload },
         .{ "LOADONCALL", .loadoncall },
         .{ "FIXED", .fixed },
