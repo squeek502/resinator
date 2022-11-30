@@ -25,6 +25,7 @@ pub const Parser = struct {
 
     pub const State = struct {
         token: Token,
+        lookahead_lexer: Lexer,
         allocator: Allocator,
         arena: Allocator,
         diagnostics: *Diagnostics,
@@ -36,12 +37,12 @@ pub const Parser = struct {
 
         self.state = Parser.State{
             .token = undefined,
+            .lookahead_lexer = undefined,
             .allocator = allocator,
             .arena = arena.allocator(),
             .diagnostics = diagnostics,
         };
 
-        try self.nextToken(.whitespace_delimiter_only);
         const parsed_root = try self.parseRoot();
 
         const tree = try self.state.arena.create(Tree);
@@ -69,7 +70,9 @@ pub const Parser = struct {
     }
 
     fn parseStatements(self: *Self, statements: *std.ArrayList(*Node)) Error!void {
-        while (self.state.token.id != .eof) {
+        while (true) {
+            try self.nextToken(.whitespace_delimiter_only);
+            if (self.state.token.id == .eof) break;
             // TODO: Catch something like an 'invalid resource' error and
             //       append an Invalid node instead or something like that.
             //       This kind of seems to be how the Windows RC compiler works,
@@ -80,6 +83,7 @@ pub const Parser = struct {
         }
     }
 
+    /// Expects the current token to be the first token of the statement.
     fn parseStatement(self: *Self) Error!*Node {
         const first_token = self.state.token;
         if (first_token.id == .literal and std.mem.eql(u8, first_token.slice(self.lexer.buffer), "LANGUAGE")) {
@@ -97,42 +101,41 @@ pub const Parser = struct {
 
             const begin_token = self.state.token;
             try self.checkBegin();
-            try self.nextToken(.normal);
 
             var strings = std.ArrayList(*Node).init(self.state.allocator);
             defer strings.deinit();
             while (true) {
-                switch (self.state.token.id) {
+                const maybe_end_token = try self.lookaheadToken(.normal);
+                switch (maybe_end_token.id) {
                     .literal => {
                         // TODO: Handle this differently, might be nice to fold this into .close_brace
                         if (std.mem.eql(u8, "END", self.tokenSlice())) {
+                            self.nextToken(.normal) catch unreachable;
                             break;
                         }
                     },
                     .close_brace => {
+                        self.nextToken(.normal) catch unreachable;
                         break;
                     },
                     .eof => {
                         return self.failDetails(ErrorDetails{
                             .err = .unfinished_string_table_block,
-                            .token = self.state.token,
+                            .token = maybe_end_token,
                         });
                     },
                     else => {},
                 }
-                const id_expression_result = try self.parseExpression(false);
-                if (id_expression_result.node.id == .literal and id_expression_result.node.cast(.literal).?.token.id != .number) {
+                const id_expression = try self.parseExpression(false);
+                if (id_expression.id == .literal and id_expression.cast(.literal).?.token.id != .number) {
                     return self.failDetails(ErrorDetails{
                         .err = .expected_token, // TODO: maybe a more specific error
-                        .token = id_expression_result.node.cast(.literal).?.token,
+                        .token = id_expression.cast(.literal).?.token,
                         .extra = .{ .expected = .number },
                     });
                 }
 
-                if (!id_expression_result.has_unconsumed_token) {
-                    try self.nextToken(.normal);
-                }
-
+                try self.nextToken(.normal);
                 const comma_token: ?Token = comma: {
                     if (self.state.token.id == .comma) {
                         const token = self.state.token;
@@ -153,13 +156,11 @@ pub const Parser = struct {
 
                 const string_node = try self.state.arena.create(Node.StringTableString);
                 string_node.* = .{
-                    .id = id_expression_result.node,
+                    .id = id_expression,
                     .maybe_comma = comma_token,
                     .string = self.state.token,
                 };
                 try strings.append(&string_node.base);
-
-                try self.nextToken(.normal);
             }
 
             if (strings.items.len == 0) {
@@ -172,7 +173,6 @@ pub const Parser = struct {
 
             const end_token = self.state.token;
             try self.checkEnd();
-            try self.nextToken(.whitespace_delimiter_only);
 
             const node = try self.state.arena.create(Node.StringTable);
             node.* = .{
@@ -190,28 +190,35 @@ pub const Parser = struct {
             try self.nextToken(.whitespace_delimiter_only);
             const resource = try self.checkResource();
             const type_token = self.state.token;
-            try self.nextToken(.normal);
 
             switch (resource) {
                 .icon, .font, .cursor, .bitmap, .messagetable, .user_defined, .rcdata, .html => {
                     var common_resource_attributes = std.ArrayList(Token).init(self.state.allocator);
                     defer common_resource_attributes.deinit();
 
-                    while (self.state.token.id == .literal and common_resource_attributes_set.has(self.state.token.slice(self.lexer.buffer))) {
-                        try common_resource_attributes.append(self.state.token);
-                        try self.nextToken(.normal);
+                    while (true) {
+                        const maybe_common_resource_attribute = try self.lookaheadToken(.normal);
+                        if (maybe_common_resource_attribute.id == .literal and common_resource_attributes_set.has(maybe_common_resource_attribute.slice(self.lexer.buffer))) {
+                            try common_resource_attributes.append(maybe_common_resource_attribute);
+                            self.nextToken(.normal) catch unreachable;
+                        } else {
+                            break;
+                        }
                     }
 
-                    if (try self.testBegin()) {
-                        try self.nextToken(.normal);
+                    const maybe_begin = try self.lookaheadToken(.normal);
+                    if (try self.testBegin(maybe_begin)) {
+                        self.nextToken(.normal) catch unreachable;
 
                         var raw_data = std.ArrayList(*Node).init(self.state.allocator);
                         defer raw_data.deinit();
                         while (true) {
-                            switch (self.state.token.id) {
+                            const maybe_end_token = try self.lookaheadToken(.normal);
+                            switch (maybe_end_token.id) {
                                 .literal => {
                                     // TODO: Handle this differently, might be nice to fold this into .close_brace
                                     if (std.mem.eql(u8, "END", self.tokenSlice())) {
+                                        self.nextToken(.normal) catch unreachable;
                                         break;
                                     }
                                 },
@@ -220,7 +227,7 @@ pub const Parser = struct {
                                     if (raw_data.items.len == 0) {
                                         return self.failDetails(ErrorDetails{
                                             .err = .expected_something_else,
-                                            .token = self.state.token,
+                                            .token = maybe_end_token,
                                             .extra = .{ .expected_types = .{
                                                 .number = true,
                                                 .number_expression = true,
@@ -229,28 +236,28 @@ pub const Parser = struct {
                                         });
                                     }
                                     // otherwise just skip over commas
-                                    try self.nextToken(.normal);
+                                    self.nextToken(.normal) catch unreachable;
                                     continue;
                                 },
                                 .close_brace => {
-                                    try self.nextToken(.whitespace_delimiter_only);
+                                    self.nextToken(.normal) catch unreachable;
                                     break;
                                 },
                                 .eof => {
                                     return self.failDetails(ErrorDetails{
                                         .err = .unfinished_raw_data_block,
-                                        .token = self.state.token,
+                                        .token = maybe_end_token,
                                     });
                                 },
                                 else => {},
                             }
-                            const expression_result = try self.parseExpression(false);
-                            try raw_data.append(expression_result.node);
+                            const expression = try self.parseExpression(false);
+                            try raw_data.append(expression);
 
-                            if (!expression_result.node.isExpressionAlwaysSkipped() and !expression_result.node.isNumberExpression() and !expression_result.node.isStringLiteral()) {
+                            if (!expression.isExpressionAlwaysSkipped() and !expression.isNumberExpression() and !expression.isStringLiteral()) {
                                 return self.failDetails(ErrorDetails{
                                     .err = .expected_something_else,
-                                    .token = expression_result.node.getFirstToken(),
+                                    .token = expression.getFirstToken(),
                                     .extra = .{ .expected_types = .{
                                         .number = true,
                                         .number_expression = true,
@@ -259,17 +266,16 @@ pub const Parser = struct {
                                 });
                             }
 
-                            if (expression_result.node.isNumberExpression() and expression_result.has_unconsumed_token and self.state.token.id == .close_paren) {
-                                // <number expression>) is an error
-                                return self.failDetails(ErrorDetails{
-                                    .err = .expected_token,
-                                    .token = self.state.token,
-                                    .extra = .{ .expected = .operator },
-                                });
-                            }
-
-                            if (!expression_result.has_unconsumed_token) {
-                                try self.nextToken(.normal);
+                            if (expression.isNumberExpression()) {
+                                const maybe_close_paren = try self.lookaheadToken(.normal);
+                                if (maybe_close_paren.id == .close_paren) {
+                                    // <number expression>) is an error
+                                    return self.failDetails(ErrorDetails{
+                                        .err = .expected_token,
+                                        .token = maybe_close_paren,
+                                        .extra = .{ .expected = .operator },
+                                    });
+                                }
                             }
                         }
 
@@ -283,17 +289,14 @@ pub const Parser = struct {
                         return &node.base;
                     }
 
-                    var filename_expression_result = try self.parseExpression(false);
-                    if (!filename_expression_result.has_unconsumed_token) {
-                        try self.nextToken(.whitespace_delimiter_only);
-                    }
+                    var filename_expression = try self.parseExpression(false);
 
                     const node = try self.state.arena.create(Node.ResourceExternal);
                     node.* = .{
                         .id = id_token,
                         .type = type_token,
                         .common_resource_attributes = try self.state.arena.dupe(Token, common_resource_attributes.items),
-                        .filename = filename_expression_result.node,
+                        .filename = filename_expression,
                     };
                     return &node.base;
                 },
@@ -303,59 +306,51 @@ pub const Parser = struct {
         }
     }
 
+    /// Expects the current token to be a literal token that contains the string LANGUAGE
     fn parseLanguageStatement(self: *Self) Error!*Node {
         const language_token = self.state.token;
-        try self.nextToken(.normal);
 
-        const primary_language_result = try self.parseExpression(false);
-        if (!primary_language_result.node.isNumberExpression()) {
+        const primary_language = try self.parseExpression(false);
+        if (!primary_language.isNumberExpression()) {
             return self.failDetails(ErrorDetails{
                 .err = .expected_something_else,
-                .token = primary_language_result.node.getFirstToken(),
+                .token = primary_language.getFirstToken(),
                 .extra = .{ .expected_types = .{
                     .number = true,
                     .number_expression = true,
                 } },
             });
         }
-        if (!primary_language_result.has_unconsumed_token) {
-            try self.nextToken(.normal);
-        }
 
+        try self.nextToken(.normal);
         try self.check(.comma);
-        try self.nextToken(.normal);
 
-        const sublanguage_result = try self.parseExpression(false);
-        if (!sublanguage_result.node.isNumberExpression()) {
+        const sublanguage = try self.parseExpression(false);
+        if (!sublanguage.isNumberExpression()) {
             return self.failDetails(ErrorDetails{
                 .err = .expected_something_else,
-                .token = sublanguage_result.node.getFirstToken(),
+                .token = sublanguage.getFirstToken(),
                 .extra = .{ .expected_types = .{
                     .number = true,
                     .number_expression = true,
                 } },
             });
-        }
-        if (!sublanguage_result.has_unconsumed_token) {
-            // TODO: This is not always the right method to parse the next token
-            try self.nextToken(.normal);
         }
 
         const node = try self.state.arena.create(Node.LanguageStatement);
         node.* = .{
             .language_token = language_token,
-            .primary_language_id = primary_language_result.node,
-            .sublanguage_id = sublanguage_result.node,
+            .primary_language_id = primary_language,
+            .sublanguage_id = sublanguage,
         };
         return &node.base;
     }
 
-    const ExpressionResult = struct {
-        node: *Node,
-        has_unconsumed_token: bool = false,
-    };
-
-    fn parseExpression(self: *Self, is_known_to_be_number_expression: bool) Error!ExpressionResult {
+    /// Expects the current token to have already been dealt with, and that the
+    /// expression will start on the next token.
+    /// After return, the current token will have been dealt with.
+    fn parseExpression(self: *Self, is_known_to_be_number_expression: bool) Error!*Node {
+        try self.nextToken(.normal);
         const possible_lhs: *Node = lhs: {
             switch (self.state.token.id) {
                 .quoted_ascii_string, .quoted_wide_string => {
@@ -363,14 +358,14 @@ pub const Parser = struct {
                     node.* = .{
                         .token = self.state.token,
                     };
-                    return .{ .node = &node.base };
+                    return &node.base;
                 },
                 .literal => {
                     const node = try self.state.arena.create(Node.Literal);
                     node.* = .{
                         .token = self.state.token,
                     };
-                    return .{ .node = &node.base };
+                    return &node.base;
                 },
                 .number => {
                     const node = try self.state.arena.create(Node.Literal);
@@ -382,13 +377,12 @@ pub const Parser = struct {
                 .open_paren => {
                     const open_paren_token = self.state.token;
 
-                    try self.nextToken(.normal);
-                    const expression_result = try self.parseExpression(true);
+                    const expression = try self.parseExpression(true);
 
-                    if (!expression_result.node.isNumberExpression()) {
+                    if (!expression.isNumberExpression()) {
                         return self.failDetails(ErrorDetails{
                             .err = .expected_something_else,
-                            .token = expression_result.node.getFirstToken(),
+                            .token = expression.getFirstToken(),
                             .extra = .{ .expected_types = .{
                                 .number = true,
                                 .number_expression = true,
@@ -396,20 +390,16 @@ pub const Parser = struct {
                         });
                     }
 
-                    if (!expression_result.has_unconsumed_token) {
-                        try self.nextToken(.normal);
-                    }
+                    try self.nextToken(.normal);
+                    // TODO: Add context to error about where the open paren is
+                    try self.check(.close_paren);
 
                     const node = try self.state.arena.create(Node.GroupedExpression);
                     node.* = .{
                         .open_token = open_paren_token,
-                        .expression = expression_result.node,
+                        .expression = expression,
                         .close_token = self.state.token,
                     };
-
-                    // TODO: Add context to error about where the open paren is
-                    try self.check(.close_paren);
-
                     break :lhs &node.base;
                 },
                 .close_paren => {
@@ -421,7 +411,7 @@ pub const Parser = struct {
                         node.* = .{
                             .token = self.state.token,
                         };
-                        return .{ .node = &node.base };
+                        return &node.base;
                     }
                 },
                 else => {},
@@ -439,25 +429,18 @@ pub const Parser = struct {
             });
         };
 
-        try self.nextToken(.normal_expect_operator);
-        const possible_operator = self.state.token;
+        const possible_operator = try self.lookaheadToken(.normal_expect_operator);
         switch (possible_operator.id) {
-            .operator => {},
-            else => {
-                return .{
-                    .node = possible_lhs,
-                    .has_unconsumed_token = true,
-                };
-            },
+            .operator => self.nextToken(.normal_expect_operator) catch unreachable,
+            else => return possible_lhs,
         }
 
-        try self.nextToken(.normal);
-        const rhs_result = try self.parseExpression(true);
+        const rhs_node = try self.parseExpression(true);
 
-        if (!rhs_result.node.isNumberExpression()) {
+        if (!rhs_node.isNumberExpression()) {
             return self.failDetails(ErrorDetails{
                 .err = .expected_something_else,
-                .token = rhs_result.node.getFirstToken(),
+                .token = rhs_node.getFirstToken(),
                 .extra = .{ .expected_types = .{
                     .number = true,
                     .number_expression = true,
@@ -469,13 +452,10 @@ pub const Parser = struct {
         node.* = .{
             .left = possible_lhs,
             .operator = possible_operator,
-            .right = rhs_result.node,
+            .right = rhs_node,
         };
 
-        return .{
-            .node = &node.base,
-            .has_unconsumed_token = rhs_result.has_unconsumed_token,
-        };
+        return &node.base;
     }
 
     fn warnDetails(self: *Self, details: ErrorDetails) Allocator.Error!void {
@@ -490,6 +470,13 @@ pub const Parser = struct {
     fn nextToken(self: *Self, comptime method: Lexer.LexMethod) Error!void {
         self.state.token = self.lexer.next(method) catch |err| {
             return self.failDetails(self.lexer.getErrorDetails(err));
+        };
+    }
+
+    fn lookaheadToken(self: *Self, comptime method: Lexer.LexMethod) Error!Token {
+        self.state.lookahead_lexer = self.lexer.*;
+        return self.state.lookahead_lexer.next(method) catch |err| {
+            return self.failDetails(self.state.lookahead_lexer.getErrorDetails(err));
         };
     }
 
@@ -511,13 +498,13 @@ pub const Parser = struct {
         }
     }
 
-    fn testBegin(self: *Self) !bool {
-        switch (self.state.token.id) {
+    fn testBegin(self: *Self, token: Token) !bool {
+        switch (token.id) {
             .open_brace => {
                 return true;
             },
             .literal => {
-                if (std.mem.eql(u8, "BEGIN", self.state.token.slice(self.lexer.buffer))) {
+                if (std.mem.eql(u8, "BEGIN", token.slice(self.lexer.buffer))) {
                     return true;
                 }
                 return false;
@@ -527,7 +514,7 @@ pub const Parser = struct {
     }
 
     fn checkBegin(self: *Self) !void {
-        if (!(try self.testBegin())) {
+        if (!(try self.testBegin(self.state.token))) {
             return self.failDetails(ErrorDetails{
                 .err = .expected_token,
                 .token = self.state.token,
