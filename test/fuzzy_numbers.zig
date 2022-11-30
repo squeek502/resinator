@@ -40,7 +40,7 @@ test {
             else => return err,
         };
 
-        std.testing.expectEqualSlices(u8, expected_res, buffer.items) catch |e| {
+        resinator.utils.testing.expectEqualBytes(expected_res, buffer.items) catch |e| {
             std.debug.print("\nSource:\n{s}\n", .{source});
             return e;
         };

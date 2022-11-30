@@ -42,7 +42,7 @@ test "single chars" {
             return error.ExpectedError;
         }
 
-        std.testing.expectEqualSlices(u8, expected_res.?, buffer.items) catch |err| {
+        resinator.utils.testing.expectEqualBytes(expected_res.?, buffer.items) catch |err| {
             std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
             return err;
         };
@@ -93,7 +93,7 @@ test "single char escapes" {
             return error.ExpectedError;
         }
 
-        std.testing.expectEqualSlices(u8, expected_res.?, buffer.items) catch |err| {
+        resinator.utils.testing.expectEqualBytes(expected_res.?, buffer.items) catch |err| {
             std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
             return err;
         };
@@ -129,7 +129,6 @@ test "fuzz" {
         const source = source_buffer.items;
 
         // write out the source file to disk for debugging
-        try std.fs.cwd().deleteFile("zig-cache/tmp/fuzzy_ascii_strings.rc");
         try std.fs.cwd().writeFile("zig-cache/tmp/fuzzy_ascii_strings.rc", source);
 
         const expected_res: ?[]const u8 = resinator.compile.getExpectedFromWindowsRCWithDir(allocator, source, tmp.dir, "zig-cache/tmp/" ++ tmp.sub_path) catch null;
@@ -158,7 +157,7 @@ test "fuzz" {
             return error.ExpectedError;
         }
 
-        std.testing.expectEqualSlices(u8, expected_res.?, buffer.items) catch |e| {
+        resinator.utils.testing.expectEqualBytes(expected_res.?, buffer.items) catch |e| {
             std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
             return e;
         };

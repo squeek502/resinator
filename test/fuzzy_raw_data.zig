@@ -61,7 +61,7 @@ fn testAllBytes(source: []u8) !void {
             return error.ExpectedErrorButDidntGetOne;
         }
 
-        std.testing.expectEqualSlices(u8, expected_res.?, buffer.items) catch {
+        resinator.utils.testing.expectEqualBytes(expected_res.?, buffer.items) catch {
             std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
             continue;
         };

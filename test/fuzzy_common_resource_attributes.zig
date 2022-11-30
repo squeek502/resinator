@@ -63,7 +63,7 @@ test "common resource attribute permutations" {
                 else => return err,
             };
 
-            std.testing.expectEqualSlices(u8, expected_res, buffer.items) catch |err| {
+            resinator.utils.testing.expectEqualBytes(expected_res, buffer.items) catch |err| {
                 std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
                 std.debug.print("expected:\n{}\nactual:\n{}\n\n", .{ std.zig.fmtEscapes(expected_res), std.zig.fmtEscapes(buffer.items) });
                 return err;

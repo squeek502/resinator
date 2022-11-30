@@ -905,7 +905,7 @@ fn testCompile(source: []const u8, cwd: std.fs.Dir) !void {
     const expected_res = try getExpectedFromWindowsRC(std.testing.allocator, source);
     defer std.testing.allocator.free(expected_res);
 
-    try std.testing.expectEqualSlices(u8, expected_res, buffer.items);
+    try @import("utils.zig").testing.expectEqualBytes(expected_res, buffer.items);
 }
 
 fn testCompileWithOutput(source: []const u8, expected_output: []const u8, cwd: std.fs.Dir) !void {
@@ -917,11 +917,7 @@ fn testCompileWithOutput(source: []const u8, expected_output: []const u8, cwd: s
 
     try compile(std.testing.allocator, source, buffer.writer(), cwd, &diagnostics);
 
-    std.testing.expectEqualSlices(u8, expected_output, buffer.items) catch |e| {
-        std.debug.print("got:\n{}\n", .{std.zig.fmtEscapes(buffer.items)});
-        std.debug.print("expected:\n{}\n", .{std.zig.fmtEscapes(expected_output)});
-        return e;
-    };
+    try @import("utils.zig").testing.expectEqualBytes(expected_output, buffer.items);
 }
 
 pub fn getExpectedFromWindowsRCWithDir(allocator: Allocator, source: []const u8, cwd: std.fs.Dir, cwd_path: []const u8) ![]const u8 {
