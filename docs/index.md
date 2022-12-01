@@ -5,6 +5,10 @@ layout: home
 
 Currently a dumping ground for various pieces of information related to `.rc` and `.res` files that I haven't found satisfying documentation for elsewhere. Might be organized into something more useful later.
 
+## Random quirks of the MSVC++ `rc` tool
+
+- Resource definitions that specify a filename can specify files in the include path of the `rc` compiler, e.g. `windows.h` and they will be found/used.
+
 ## Common Resource Attributes / Memory Flags
 
 ### Flags
