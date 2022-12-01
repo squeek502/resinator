@@ -3,6 +3,8 @@ resinator
 
 A (very work-in-progress) cross-platform Windows resource-definition script (.rc) to resource file (.res) compiler. The intention is for this to eventually get merged into the Zig compiler as per [this accepted proposal](https://github.com/ziglang/zig/issues/3702).
 
+[WIP dumping ground for various `.rc`/`.res` documentation](https://squeek502.github.io/resinator/)
+
 ## Overview / How it will fit into Zig
 
 A Windows resource-definition file is made up of both C/C++ preprocessor commands and resource definitions.

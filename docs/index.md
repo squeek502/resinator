@@ -41,3 +41,17 @@ Currently a dumping ground for various pieces of information related to `.rc` an
 | `PURE` | `flags | PURE` |
 | `IMPURE` | `flags & ~(PURE | DISCARDABLE)` |
 | `DISCARDABLE` | `flags | (DISCARDABLE | MOVEABLE | PURE)` |
+
+## `FONT` resource
+
+- The `<id>` in the `<id> FONT` definition **must** be an ordinal, not a string.
+- Each `FONT` is stored as normal with type `RT_FONT`. The entire binary contents of the sepcified file are the data. No validation/parsing is done of the data.
+
+At the end of the .res, a single `RT_FONTDIR` resource with the name `FONTDIR` is written, with the data:
+
+| Size/Type | Description |
+|-----------|--------|
+| `u16` | Number of total font resources |
+| - | *Below is repeated for each `RT_FONT` in the `.res`* |
+| `u16` | ID of the `RT_FONT` |
+| 150 bytes | The first 150 bytes of the `FONT`'s file. If the file is smaller than 150 bytes, all missing bytes are filled with `0x00`. |
