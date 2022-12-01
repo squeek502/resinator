@@ -207,27 +207,59 @@ pub const Colors = enum {
 
 pub const testing = struct {
     /// https://github.com/ziglang/zig/pull/13720
+    /// https://github.com/ziglang/zig/pull/13723
     pub fn expectEqualBytes(expected: []const u8, actual: []const u8) !void {
-        std.testing.expectEqualSlices(u8, expected, actual) catch |err| {
+        if (std.mem.indexOfDiff(u8, actual, expected)) |diff_index| {
+            std.debug.print("byte slices differ. first difference occurs at offset {d} (0x{X})\n", .{ diff_index, diff_index });
+
+            const max_window_size: usize = 256;
+
+            // Print a maximum of max_window_size bytes of each input, starting just before the
+            // first difference.
+            var window_start: usize = 0;
+            if (@max(actual.len, expected.len) > max_window_size) {
+                window_start = std.mem.alignBackward(diff_index - @min(diff_index, 16), 16);
+            }
+            const expected_window = expected[window_start..@min(expected.len, window_start + max_window_size)];
+            const expected_truncated = window_start + expected_window.len < expected.len;
+            const actual_window = actual[window_start..@min(actual.len, window_start + max_window_size)];
+            const actual_truncated = window_start + actual_window.len < actual.len;
+
             var differ = BytesDiffer{
-                .expected = expected,
-                .actual = actual,
+                .expected = expected_window,
+                .actual = actual_window,
                 .ttyconf = std.debug.detectTTYConfig(),
             };
             const stderr = std.io.getStdErr();
 
-            std.debug.print("\n============ expected this output: =============\n\n", .{});
+            std.debug.print("\n============ expected this output: =============  len: {} (0x{X})\n\n", .{ expected.len, expected.len });
+            if (window_start > 0) {
+                std.debug.print("... truncated, start offset: 0x{X} ...\n", .{window_start});
+            }
             differ.write(stderr.writer()) catch {};
+            if (expected_truncated) {
+                const end_offset = window_start + expected_window.len;
+                const num_missing_bytes = expected.len - (window_start + expected_window.len);
+                std.debug.print("... truncated, end offset: 0x{X}, remaining bytes: 0x{X} ...\n", .{ end_offset, num_missing_bytes });
+            }
 
             // now print the reverse
-            differ.expected = actual;
-            differ.actual = expected;
-            std.debug.print("\n============= instead found this: ==============\n\n", .{});
+            differ.expected = actual_window;
+            differ.actual = expected_window;
+            std.debug.print("\n============= instead found this: ==============  len: {} (0x{X})\n\n", .{ actual.len, actual.len });
+            if (window_start > 0) {
+                std.debug.print("... truncated, start offset: 0x{X} ...\n", .{window_start});
+            }
             differ.write(stderr.writer()) catch {};
+            if (actual_truncated) {
+                const end_offset = window_start + expected_window.len;
+                const num_missing_bytes = actual.len - (window_start + actual_window.len);
+                std.debug.print("... truncated, end offset: 0x{X}, remaining bytes: 0x{X} ...\n", .{ end_offset, num_missing_bytes });
+            }
             std.debug.print("\n================================================\n\n", .{});
 
-            return err;
-        };
+            return error.TestExpectedEqual;
+        }
     }
 
     pub const BytesDiffer = struct {
@@ -294,4 +326,22 @@ pub const testing = struct {
 //     const a = "helloajsfbnakjnfnjkasfjaa";
 //     const b = "hellobye";
 //     try testing.expectEqualBytes(b, a);
+// }
+
+// test {
+//     const a = ([_]u8{'a'} ** 1017) ++ ([_]u8{'b'} ** 128) ++ ([_]u8{'c'} ** 1024);
+//     const b = ([_]u8{'a'} ** 1024) ++ ([_]u8{'c'} ** 170);
+//     try testing.expectEqualBytes(&a, &b);
+// }
+
+// test {
+//     const a = ([_]u8{'a'} ** 1024);
+//     const b = ([_]u8{'b'} ** 14 ++ [_]u8{'a'} ** 128);
+//     try testing.expectEqualBytes(&b, &a);
+// }
+
+// test {
+//     const a = ([_]u8{'a'} ** 1024);
+//     const b = ([_]u8{'a'} ** 128);
+//     try testing.expectEqualBytes(&a, &b);
 // }
