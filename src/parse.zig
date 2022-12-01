@@ -121,7 +121,7 @@ pub const Parser = struct {
                             const identifier = self.state.token;
                             const value = try self.parseExpression(false);
                             if (!value.isNumberExpression()) {
-                                return self.failDetails(ErrorDetails{
+                                return self.addErrorDetailsAndFail(ErrorDetails{
                                     .err = .expected_something_else,
                                     .token = value.getFirstToken(),
                                     .extra = .{ .expected_types = .{
@@ -154,7 +154,7 @@ pub const Parser = struct {
                             break;
                         },
                         .eof => {
-                            return self.failDetails(ErrorDetails{
+                            return self.addErrorDetailsAndFail(ErrorDetails{
                                 .err = .unfinished_string_table_block,
                                 .token = maybe_end_token,
                             });
@@ -163,7 +163,7 @@ pub const Parser = struct {
                     }
                     const id_expression = try self.parseExpression(false);
                     if (!id_expression.isNumberExpression()) {
-                        return self.failDetails(ErrorDetails{
+                        return self.addErrorDetailsAndFail(ErrorDetails{
                             .err = .expected_something_else,
                             .token = id_expression.getFirstToken(),
                             .extra = .{ .expected_types = .{
@@ -185,7 +185,7 @@ pub const Parser = struct {
                     };
 
                     if (self.state.token.id != .quoted_ascii_string and self.state.token.id != .quoted_wide_string) {
-                        return self.failDetails(ErrorDetails{
+                        return self.addErrorDetailsAndFail(ErrorDetails{
                             .err = .expected_something_else,
                             .token = self.state.token,
                             .extra = .{ .expected_types = .{ .string_literal = true } },
@@ -202,7 +202,7 @@ pub const Parser = struct {
                 }
 
                 if (strings.items.len == 0) {
-                    return self.failDetails(ErrorDetails{
+                    return self.addErrorDetailsAndFail(ErrorDetails{
                         .err = .expected_token, // TODO: probably a more specific error message
                         .token = self.state.token,
                         .extra = .{ .expected = .number },
@@ -250,12 +250,12 @@ pub const Parser = struct {
                     self.nextToken(.normal) catch unreachable;
 
                     if (!resource.canUseRawData()) {
-                        try self.warnDetails(ErrorDetails{
+                        try self.addErrorDetails(ErrorDetails{
                             .err = .resource_type_cant_use_raw_data,
                             .token = maybe_begin,
                             .extra = .{ .resource = resource },
                         });
-                        return self.failDetails(ErrorDetails{
+                        return self.addErrorDetailsAndFail(ErrorDetails{
                             .err = .resource_type_cant_use_raw_data,
                             .type = .note,
                             .print_source_line = false,
@@ -271,7 +271,7 @@ pub const Parser = struct {
                             .comma => {
                                 // comma as the first token in a raw data block is an error
                                 if (raw_data.items.len == 0) {
-                                    return self.failDetails(ErrorDetails{
+                                    return self.addErrorDetailsAndFail(ErrorDetails{
                                         .err = .expected_something_else,
                                         .token = maybe_end_token,
                                         .extra = .{ .expected_types = .{
@@ -290,7 +290,7 @@ pub const Parser = struct {
                                 break;
                             },
                             .eof => {
-                                return self.failDetails(ErrorDetails{
+                                return self.addErrorDetailsAndFail(ErrorDetails{
                                     .err = .unfinished_raw_data_block,
                                     .token = maybe_end_token,
                                 });
@@ -301,7 +301,7 @@ pub const Parser = struct {
                         try raw_data.append(expression);
 
                         if (!expression.isExpressionAlwaysSkipped() and !expression.isNumberExpression() and !expression.isStringLiteral()) {
-                            return self.failDetails(ErrorDetails{
+                            return self.addErrorDetailsAndFail(ErrorDetails{
                                 .err = .expected_something_else,
                                 .token = expression.getFirstToken(),
                                 .extra = .{ .expected_types = .{
@@ -316,7 +316,7 @@ pub const Parser = struct {
                             const maybe_close_paren = try self.lookaheadToken(.normal);
                             if (maybe_close_paren.id == .close_paren) {
                                 // <number expression>) is an error
-                                return self.failDetails(ErrorDetails{
+                                return self.addErrorDetailsAndFail(ErrorDetails{
                                     .err = .expected_token,
                                     .token = maybe_close_paren,
                                     .extra = .{ .expected = .operator },
@@ -357,7 +357,7 @@ pub const Parser = struct {
 
         const primary_language = try self.parseExpression(false);
         if (!primary_language.isNumberExpression()) {
-            return self.failDetails(ErrorDetails{
+            return self.addErrorDetailsAndFail(ErrorDetails{
                 .err = .expected_something_else,
                 .token = primary_language.getFirstToken(),
                 .extra = .{ .expected_types = .{
@@ -372,7 +372,7 @@ pub const Parser = struct {
 
         const sublanguage = try self.parseExpression(false);
         if (!sublanguage.isNumberExpression()) {
-            return self.failDetails(ErrorDetails{
+            return self.addErrorDetailsAndFail(ErrorDetails{
                 .err = .expected_something_else,
                 .token = sublanguage.getFirstToken(),
                 .extra = .{ .expected_types = .{
@@ -425,7 +425,7 @@ pub const Parser = struct {
                     const expression = try self.parseExpression(true);
 
                     if (!expression.isNumberExpression()) {
-                        return self.failDetails(ErrorDetails{
+                        return self.addErrorDetailsAndFail(ErrorDetails{
                             .err = .expected_something_else,
                             .token = expression.getFirstToken(),
                             .extra = .{ .expected_types = .{
@@ -463,7 +463,7 @@ pub const Parser = struct {
             }
 
             // TODO: This may not be the correct way to handle this in all cases?
-            return self.failDetails(ErrorDetails{
+            return self.addErrorDetailsAndFail(ErrorDetails{
                 .err = .expected_something_else,
                 .token = self.state.token,
                 .extra = .{ .expected_types = .{
@@ -483,7 +483,7 @@ pub const Parser = struct {
         const rhs_node = try self.parseExpression(true);
 
         if (!rhs_node.isNumberExpression()) {
-            return self.failDetails(ErrorDetails{
+            return self.addErrorDetailsAndFail(ErrorDetails{
                 .err = .expected_something_else,
                 .token = rhs_node.getFirstToken(),
                 .extra = .{ .expected_types = .{
@@ -503,25 +503,25 @@ pub const Parser = struct {
         return &node.base;
     }
 
-    fn warnDetails(self: *Self, details: ErrorDetails) Allocator.Error!void {
+    fn addErrorDetails(self: *Self, details: ErrorDetails) Allocator.Error!void {
         try self.state.diagnostics.append(details);
     }
 
-    fn failDetails(self: *Self, details: ErrorDetails) Error {
-        try self.warnDetails(details);
+    fn addErrorDetailsAndFail(self: *Self, details: ErrorDetails) Error {
+        try self.addErrorDetails(details);
         return error.ParseError;
     }
 
     fn nextToken(self: *Self, comptime method: Lexer.LexMethod) Error!void {
         self.state.token = self.lexer.next(method) catch |err| {
-            return self.failDetails(self.lexer.getErrorDetails(err));
+            return self.addErrorDetailsAndFail(self.lexer.getErrorDetails(err));
         };
     }
 
     fn lookaheadToken(self: *Self, comptime method: Lexer.LexMethod) Error!Token {
         self.state.lookahead_lexer = self.lexer.*;
         return self.state.lookahead_lexer.next(method) catch |err| {
-            return self.failDetails(self.state.lookahead_lexer.getErrorDetails(err));
+            return self.addErrorDetailsAndFail(self.state.lookahead_lexer.getErrorDetails(err));
         };
     }
 
@@ -534,7 +534,7 @@ pub const Parser = struct {
         switch (self.state.token.id) {
             .literal => {},
             else => {
-                return self.failDetails(ErrorDetails{
+                return self.addErrorDetailsAndFail(ErrorDetails{
                     .err = .expected_token,
                     .token = self.state.token,
                     .extra = .{ .expected = .literal },
@@ -545,7 +545,7 @@ pub const Parser = struct {
 
     fn check(self: *Self, expected_token_id: Token.Id) !void {
         if (self.state.token.id != expected_token_id) {
-            return self.failDetails(ErrorDetails{
+            return self.addErrorDetailsAndFail(ErrorDetails{
                 .err = .expected_token,
                 .token = self.state.token,
                 .extra = .{ .expected = expected_token_id },
@@ -557,7 +557,7 @@ pub const Parser = struct {
         switch (self.state.token.id) {
             .literal => return Resource.fromString(self.state.token.slice(self.lexer.buffer)),
             else => {
-                return self.failDetails(ErrorDetails{
+                return self.addErrorDetailsAndFail(ErrorDetails{
                     .err = .expected_token,
                     .token = self.state.token,
                     .extra = .{ .expected = .literal },

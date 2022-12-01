@@ -280,7 +280,7 @@ pub const Compiler = struct {
         // Init header with data size zero for now, will need to fill it in later
         var header = ResourceHeader.init(self.allocator, node.id.slice(self.source), node.type.slice(self.source), 0, self.state.language) catch |err| switch (err) {
             error.StringResourceAsNumericType => {
-                return self.failDetails(.{
+                return self.addErrorDetailsAndFail(.{
                     .err = .string_resource_as_numeric_type,
                     .token = node.type,
                 });
@@ -482,7 +482,7 @@ pub const Compiler = struct {
     pub fn writeResourceHeader(self: *Compiler, writer: anytype, id_token: Token, type_token: Token, data_size: u32, common_resource_attributes: []Token, language: res.Language) !void {
         var header = ResourceHeader.init(self.allocator, id_token.slice(self.source), type_token.slice(self.source), data_size, language) catch |err| switch (err) {
             error.StringResourceAsNumericType => {
-                return self.failDetails(.{
+                return self.addErrorDetailsAndFail(.{
                     .err = .string_resource_as_numeric_type,
                     .token = type_token,
                 });
@@ -515,13 +515,13 @@ pub const Compiler = struct {
 
             self.state.string_table.set(self.arena, string_id, string.string, &node.base, self.source) catch |err| switch (err) {
                 error.StringAlreadyDefined => {
-                    try self.warnDetails(ErrorDetails{
+                    try self.addErrorDetails(ErrorDetails{
                         .err = .string_already_defined,
                         .token = string.string, // TODO: point to id instead?
                         .extra = .{ .number = string_id },
                     });
                     const existing_definition = self.state.string_table.get(string_id).?;
-                    return self.failDetails(ErrorDetails{
+                    return self.addErrorDetailsAndFail(ErrorDetails{
                         .err = .string_already_defined,
                         .type = .note,
                         .token = existing_definition, // TODO: point to id instead?
@@ -663,12 +663,12 @@ pub const Compiler = struct {
         try header.write(writer);
     }
 
-    fn warnDetails(self: *Compiler, details: ErrorDetails) Allocator.Error!void {
+    fn addErrorDetails(self: *Compiler, details: ErrorDetails) Allocator.Error!void {
         try self.diagnostics.append(details);
     }
 
-    fn failDetails(self: *Compiler, details: ErrorDetails) error{ CompileError, OutOfMemory } {
-        try self.warnDetails(details);
+    fn addErrorDetailsAndFail(self: *Compiler, details: ErrorDetails) error{ CompileError, OutOfMemory } {
+        try self.addErrorDetails(details);
         return error.CompileError;
     }
 };
