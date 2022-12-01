@@ -45,6 +45,7 @@ Currently a dumping ground for various pieces of information related to `.rc` an
 ## `FONT` resource
 
 - The `<id>` in the `<id> FONT` definition **must** be an ordinal, not a string.
+- The `<id>` of each `FONT` must be unique.
 - Each `FONT` is stored as normal with type `RT_FONT`. The entire binary contents of the sepcified file are the data. No validation/parsing is done of the data.
 
 At the end of the .res, a single `RT_FONTDIR` resource with the name `FONTDIR` is written, with the data:
@@ -55,3 +56,6 @@ At the end of the .res, a single `RT_FONTDIR` resource with the name `FONTDIR` i
 | - | *Below is repeated for each `RT_FONT` in the `.res`* |
 | `u16` | ID of the `RT_FONT` |
 | 150 bytes | The first 150 bytes of the `FONT`'s file. If the file is smaller than 150 bytes, all missing bytes are filled with `0x00`. |
+
+{: .note }
+> There appears to be a bug in the MSVC++ `rc` tool where more than 150 bytes are written for a given `RT_FONT` (e.g. 153, and the last bytes starting at byte 149 are a repeat of the first bytes). Unsure what triggers it. So far the only reproduction is with a file that is 60 bytes large.
