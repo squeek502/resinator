@@ -50,10 +50,10 @@ Currently a dumping ground for various pieces of information related to `.rc` an
 ## `FONT` resource
 
 - The `<id>` in the `<id> FONT` definition **must** be an ordinal, not a string.
-- The `<id>` of each `FONT` must be unique.
-- Each `FONT` is stored as normal with type `RT_FONT`. The entire binary contents of the sepcified file are the data. No validation/parsing is done of the data.
+- The `<id>` of each `FONT` must be unique, but this does not fail the compilation, only emits an error. The first `FONT` defined with the `<id>` takes precedence, all others with the same `<id>` are ignored.
+- Each `FONT` is stored with type `RT_FONT`. The entire binary contents of the sepcified file are the data. No validation/parsing is done of the data.
 
-At the end of the .res, a single `RT_FONTDIR` resource with the name `FONTDIR` is written, with the data:
+At the end of the .res, a single `RT_FONTDIR` resource with the name `FONTDIR` is written with the data:
 
 | Size/Type | Description |
 |-----------|--------|
@@ -63,4 +63,7 @@ At the end of the .res, a single `RT_FONTDIR` resource with the name `FONTDIR` i
 | 150 bytes | The first 150 bytes of the `FONT`'s file. If the file is smaller than 150 bytes, all missing bytes are filled with `0x00`. |
 
 {: .note }
-> There appears to be a bug in the MSVC++ `rc` tool where more than 150 bytes are written for a given `RT_FONT` (e.g. 153, and the last bytes starting at byte 149 are a repeat of the first bytes). Unsure what triggers it. So far the only reproduction is with a file that is 60 bytes large.
+> There appears to be a bug in the MSVC++ `rc` tool where more than 150 bytes are written for a given `RT_FONT`. It seems to be dictated by `0x00` bytes within the file. If the first byte of a file is `0x00` the bug will not manifest.
+> - If the file is 140 bytes or smaller with no null bytes, the MSVC++ `rc` tool will crash.
+> - There seems to be a variable number of `0x00` bytes at the end of the 150 bytes in certain circumstances, e.g. if a file is 150 non-NULL bytes in a row, the `FONTDIR` data for it will be 148 bytes and then 2 `0x00` bytes. However, for example, if a file is 31 non-NULL bytes, then a `0x00`, and then 110 more non-NULL bytes, the `FONTDIR` data for it will be the first 142 bytes from the file and then 8 `0x00` bytes.
+> More investigation is needed to understand what's going on here, how it affects the usage, and what behavior actually matters/is correct in terms of what to replicate.

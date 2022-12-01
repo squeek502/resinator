@@ -8,6 +8,7 @@ const Allocator = std.mem.Allocator;
 const ErrorDetails = @import("errors.zig").ErrorDetails;
 const Diagnostics = @import("errors.zig").Diagnostics;
 const rc = @import("rc.zig");
+const res = @import("res.zig");
 
 pub const Parser = struct {
     const Self = @This();
@@ -229,6 +230,17 @@ pub const Parser = struct {
         try self.nextToken(.whitespace_delimiter_only);
         const resource = try self.checkResource();
         const type_token = self.state.token;
+
+        if (resource == .font) {
+            const maybe_ordinal = res.NameOrOrdinal.maybeOrdinalFromString(id_token.slice(self.lexer.buffer));
+            if (maybe_ordinal == null) {
+                return self.addErrorDetailsAndFail(ErrorDetails{
+                    .err = .id_must_be_ordinal,
+                    .token = id_token,
+                    .extra = .{ .resource = resource },
+                });
+            }
+        }
 
         switch (resource) {
             .icon, .font, .cursor, .bitmap, .messagetable, .user_defined, .rcdata, .html => {
@@ -856,6 +868,7 @@ test "parse errors" {
     try testParseError("expected number or number expression; got '\"hello\"'", "STRINGTABLE { \"hello\" }");
     try testParseError("expected quoted string literal; got '1'", "STRINGTABLE { 1, 1 }");
     try testParseError("expected '<filename>', found '{' (resource type 'icon' can't use raw data)", "1 ICON {}");
+    try testParseError("id of resource type 'font' must be an ordinal (u16), got 'string'", "string FONT filename");
 }
 
 fn testParseError(expected_error_str: []const u8, source: []const u8) !void {

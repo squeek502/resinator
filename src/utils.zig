@@ -25,6 +25,37 @@ pub const UncheckedSliceWriter = struct {
     }
 };
 
+/// Slurps the first `size` bytes read into `slurped_header`
+pub fn HeaderSlurpingReader(comptime size: usize, comptime ReaderType: anytype) type {
+    return struct {
+        child_reader: ReaderType,
+        bytes_read: u64 = 0,
+        slurped_header: [size]u8 = [_]u8{0x00} ** size,
+
+        pub const Error = ReaderType.Error;
+        pub const Reader = std.io.Reader(*@This(), Error, read);
+
+        pub fn read(self: *@This(), buf: []u8) Error!usize {
+            const amt = try self.child_reader.read(buf);
+            if (self.bytes_read < size) {
+                const bytes_to_add = @min(amt, size - self.bytes_read);
+                const end_index = self.bytes_read + bytes_to_add;
+                std.mem.copy(u8, self.slurped_header[self.bytes_read..end_index], buf[0..bytes_to_add]);
+            }
+            self.bytes_read += amt;
+            return amt;
+        }
+
+        pub fn reader(self: *@This()) Reader {
+            return .{ .context = self };
+        }
+    };
+}
+
+pub fn headerSlurpingReader(comptime size: usize, reader: anytype) HeaderSlurpingReader(size, @TypeOf(reader)) {
+    return .{ .child_reader = reader };
+}
+
 /// std.ComptimeStringMap, but case-insensitive and therefore only works for ASCII strings
 pub fn ComptimeCaseInsensitiveStringMap(comptime V: type, comptime kvs_list: anytype) type {
     const precomputed = comptime blk: {

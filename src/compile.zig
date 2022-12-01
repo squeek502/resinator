@@ -17,6 +17,8 @@ const res = @import("res.zig");
 const ico = @import("ico.zig");
 const WORD = std.os.windows.WORD;
 const DWORD = std.os.windows.DWORD;
+const utils = @import("utils.zig");
+const NameOrOrdinal = res.NameOrOrdinal;
 
 pub fn compile(allocator: Allocator, source: []const u8, writer: anytype, cwd: std.fs.Dir, diagnostics: *Diagnostics) !void {
     var lexer = Lexer.init(source);
@@ -51,6 +53,7 @@ pub const Compiler = struct {
         icon_id: u16 = 1,
         string_table: StringTable = .{},
         language: res.Language = .{},
+        font_dir: FontDir = .{},
     };
 
     pub fn writeRoot(self: *Compiler, root: *Node.Root, writer: anytype) !void {
@@ -59,6 +62,8 @@ pub const Compiler = struct {
             try self.writeNode(node, writer);
         }
 
+        // now write the FONTDIR (if it has anything in it)
+        try self.state.font_dir.writeResData(self, writer);
         // once we've written every else out, we can write out the finalized STRINGTABLE resources
         var string_table_it = self.state.string_table.blocks.iterator();
         while (string_table_it.next()) |entry| {
@@ -81,141 +86,6 @@ pub const Compiler = struct {
             .simple_statement => @panic("TODO"),
         }
     }
-
-    pub const NameOrOrdinal = union(enum) {
-        name: [:0]const u16,
-        ordinal: u16,
-
-        pub fn deinit(self: NameOrOrdinal, allocator: Allocator) void {
-            switch (self) {
-                .name => |name| {
-                    allocator.free(name);
-                },
-                .ordinal => {},
-            }
-        }
-
-        /// Returns the full length of the amount of bytes that would be written by `write`
-        /// (e.g. for an ordinal it will return the length including the 0xFFFF indicator)
-        pub fn byteLen(self: NameOrOrdinal) u32 {
-            switch (self) {
-                .name => |name| {
-                    // + 1 for 0-terminated, * 2 for bytes per u16
-                    return @intCast(u32, (name.len + 1) * 2);
-                },
-                .ordinal => return 4,
-            }
-        }
-
-        pub fn write(self: NameOrOrdinal, writer: anytype) !void {
-            switch (self) {
-                .name => |name| {
-                    try writer.writeAll(std.mem.sliceAsBytes(name[0 .. name.len + 1]));
-                },
-                .ordinal => |ordinal| {
-                    try writer.writeIntLittle(WORD, 0xffff);
-                    try writer.writeIntLittle(WORD, ordinal);
-                },
-            }
-        }
-
-        pub fn fromString(allocator: Allocator, str: []const u8) !NameOrOrdinal {
-            if (maybeOrdinalFromString(str)) |ordinal| {
-                return ordinal;
-            }
-            return nameFromString(allocator, str);
-        }
-
-        pub fn nameFromString(allocator: Allocator, str: []const u8) !NameOrOrdinal {
-            var as_utf16 = try std.unicode.utf8ToUtf16LeWithNull(allocator, str);
-            // Names have a limit of 256 UTF-16 code units + null terminator
-            // Note: This can cut-off in the middle of a UTF-16, i.e. it can make the
-            //       string end with an unpaired high surrogate
-            if (as_utf16.len > 256) {
-                var limited = allocator.shrink(as_utf16, 257);
-                limited[256] = 0;
-                as_utf16 = limited[0..256 :0];
-            }
-            // ASCII chars in names are always converted to uppercase
-            for (as_utf16) |*char| {
-                if (char.* < 128) {
-                    char.* = std.ascii.toUpper(@intCast(u8, char.*));
-                }
-            }
-            return NameOrOrdinal{ .name = as_utf16 };
-        }
-
-        pub fn maybeOrdinalFromString(str: []const u8) ?NameOrOrdinal {
-            var buf = str;
-            var radix: u8 = 10;
-            if (buf.len > 2 and buf[0] == '0') {
-                switch (str[1]) {
-                    '0'...'9' => {},
-                    'x', 'X' => {
-                        radix = 16;
-                        buf = buf[2..];
-                        // only the first 4 hex digits matter, anything else is ignored
-                        // i.e. 0x12345 is treated as if it were 0x1234
-                        buf.len = @min(buf.len, 4);
-                    },
-                    else => return null,
-                }
-            }
-
-            var result: u16 = 0;
-            for (buf) |c| {
-                const digit = std.fmt.charToDigit(c, radix) catch switch (radix) {
-                    10 => return null,
-                    // If this is hex, then non-hex-digits are treated as a terminator rather
-                    // than an invalid number
-                    16 => break,
-                    else => unreachable,
-                };
-
-                if (result != 0) {
-                    result *%= radix;
-                }
-                result +%= digit;
-            }
-
-            // Zero is not interpretted as a number
-            if (result == 0) return null;
-            return NameOrOrdinal{ .ordinal = result };
-        }
-
-        pub fn predefinedResourceType(self: NameOrOrdinal) ?res.RT {
-            switch (self) {
-                .ordinal => |ordinal| {
-                    switch (@intToEnum(res.RT, ordinal)) {
-                        .ACCELERATOR,
-                        .ANICURSOR,
-                        .ANIICON,
-                        .BITMAP,
-                        .CURSOR,
-                        .DIALOG,
-                        .DLGINCLUDE,
-                        .FONT,
-                        .FONTDIR,
-                        .GROUP_CURSOR,
-                        .GROUP_ICON,
-                        .HTML,
-                        .ICON,
-                        .MANIFEST,
-                        .MENU,
-                        .MESSAGETABLE,
-                        .PLUGPLAY,
-                        .RCDATA,
-                        .STRING,
-                        .VERSION,
-                        .VXD,
-                        => |rt| return rt,
-                        _ => return null,
-                    }
-                },
-                .name => return null,
-            }
-        }
-    };
 
     const Filename = struct {
         utf8: []const u8,
@@ -337,6 +207,29 @@ pub const Compiler = struct {
                     try header.write(writer);
                     try file.seekTo(bmp_header_size);
                     try writeResourceData(writer, file.reader(), header.data_size);
+                    return;
+                },
+                .FONT => {
+                    header.applyMemoryFlags(node.common_resource_attributes, self.source);
+                    const file_size = try file.getEndPos();
+                    // TODO: Error on too large files?
+                    header.data_size = @intCast(u32, file_size);
+                    try header.write(writer);
+
+                    // TODO: This is much weirder than just the first 150 bytes for certain
+                    //       file contents, need to investigate more to understand what should
+                    //       actually be happening here
+                    var header_slurping_reader = utils.headerSlurpingReader(150, file.reader());
+                    try writeResourceData(writer, header_slurping_reader.reader(), header.data_size);
+
+                    // TODO: warning on duplicate FONT ordinals
+                    // The MSVC++ RC compiler prints an error but still continues
+                    // TODO: the first font defined with the ID takes precedence,
+                    //       all others with the same id are ignored
+                    try self.state.font_dir.fonts.append(self.arena, FontDir.Font{
+                        .id = header.name_value.ordinal,
+                        .header_bytes = header_slurping_reader.slurped_header,
+                    });
                     return;
                 },
                 else => {
@@ -503,6 +396,10 @@ pub const Compiler = struct {
         var fifo = FifoBuffer.init();
         try fifo.pump(limited_reader.reader(), writer);
 
+        try writeDataPadding(writer, data_size);
+    }
+
+    pub fn writeDataPadding(writer: anytype, data_size: u32) !void {
         const padding_after_data = std.mem.alignForward(data_size, 4) - data_size;
         try writer.writeByteNTimes(0, padding_after_data);
     }
@@ -670,6 +567,42 @@ pub const Compiler = struct {
     fn addErrorDetailsAndFail(self: *Compiler, details: ErrorDetails) error{ CompileError, OutOfMemory } {
         try self.addErrorDetails(details);
         return error.CompileError;
+    }
+};
+
+pub const FontDir = struct {
+    fonts: std.ArrayListUnmanaged(Font) = .{},
+
+    pub const Font = struct {
+        id: u16,
+        header_bytes: [150]u8,
+    };
+
+    pub fn deinit(self: *FontDir, allocator: Allocator) void {
+        self.fonts.deinit(allocator);
+    }
+
+    pub fn writeResData(self: *FontDir, compiler: *Compiler, writer: anytype) !void {
+        if (self.fonts.items.len == 0) return;
+
+        // u16 count + [(u16 id + 150 bytes) for each font]
+        const data_size = 2 + (2 + 150) * self.fonts.items.len;
+        var header = Compiler.ResourceHeader{
+            .name_value = try NameOrOrdinal.fromString(compiler.allocator, "FONTDIR"),
+            .type_value = NameOrOrdinal{ .ordinal = @enumToInt(res.RT.FONTDIR) },
+            .memory_flags = res.MemoryFlags.defaults(res.RT.FONTDIR),
+            .language = compiler.state.language,
+            .data_size = @intCast(u32, data_size),
+        };
+        defer header.deinit(compiler.allocator);
+
+        try header.write(writer);
+        try writer.writeIntLittle(u16, @intCast(u16, self.fonts.items.len));
+        for (self.fonts.items) |font| {
+            try writer.writeIntLittle(u16, font.id);
+            try writer.writeAll(&font.header_bytes);
+        }
+        try Compiler.writeDataPadding(writer, @intCast(u32, data_size));
     }
 };
 
@@ -1106,6 +1039,7 @@ test "filenames as numeric expressions" {
     try tmp_dir.dir.deleteFile("-1");
 }
 
+// TODO: Move to testing NameOrOrdinal directly, no need for this to be coupled to the Compiler
 test "NameOrOrdinal" {
     // zero is treated as a string
     try testCompileWithOutput(
@@ -1303,5 +1237,20 @@ test "top-level language statements" {
     ,
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x02\x00\x00\x00\x00\x000\x00\x01\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x03\x00\x00\x00\x00\x000\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
         std.fs.cwd(),
+    );
+}
+
+test "font resource" {
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    try tmp_dir.dir.writeFile("empty.fnt", "");
+
+    try testCompileWithOutput(
+        \\1 FONT FIXED empty.fnt
+        \\2 FONT MOVEABLE DISCARDABLE PRELOAD empty.fnt
+    ,
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x08\x00\xff\xff\x01\x00\x00\x00\x00\x00 \x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x08\x00\xff\xff\x02\x00\x00\x00\x00\x00p\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x002\x01\x00\x00,\x00\x00\x00\xff\xff\x07\x00F\x00O\x00N\x00T\x00D\x00I\x00R\x00\x00\x00\x00\x00\x00\x00P\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+        tmp_dir.dir,
     );
 }

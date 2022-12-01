@@ -2,6 +2,7 @@ const std = @import("std");
 const rc = @import("rc.zig");
 const Resource = rc.Resource;
 const CommonResourceAttributes = rc.CommonResourceAttributes;
+const Allocator = std.mem.Allocator;
 
 /// https://learn.microsoft.com/en-us/windows/win32/menurc/resource-types
 pub const RT = enum(u8) {
@@ -104,4 +105,139 @@ pub const MemoryFlags = packed struct(u16) {
 pub const Language = packed struct(u16) {
     primary_language_id: u10 = 0x09, // LANG_ENGLISH
     sublanguage_id: u6 = 0x01, // SUBLANG_ENGLISH_US (since primary is ENGLISH)
+};
+
+pub const NameOrOrdinal = union(enum) {
+    name: [:0]const u16,
+    ordinal: u16,
+
+    pub fn deinit(self: NameOrOrdinal, allocator: Allocator) void {
+        switch (self) {
+            .name => |name| {
+                allocator.free(name);
+            },
+            .ordinal => {},
+        }
+    }
+
+    /// Returns the full length of the amount of bytes that would be written by `write`
+    /// (e.g. for an ordinal it will return the length including the 0xFFFF indicator)
+    pub fn byteLen(self: NameOrOrdinal) u32 {
+        switch (self) {
+            .name => |name| {
+                // + 1 for 0-terminated, * 2 for bytes per u16
+                return @intCast(u32, (name.len + 1) * 2);
+            },
+            .ordinal => return 4,
+        }
+    }
+
+    pub fn write(self: NameOrOrdinal, writer: anytype) !void {
+        switch (self) {
+            .name => |name| {
+                try writer.writeAll(std.mem.sliceAsBytes(name[0 .. name.len + 1]));
+            },
+            .ordinal => |ordinal| {
+                try writer.writeIntLittle(u16, 0xffff);
+                try writer.writeIntLittle(u16, ordinal);
+            },
+        }
+    }
+
+    pub fn fromString(allocator: Allocator, str: []const u8) !NameOrOrdinal {
+        if (maybeOrdinalFromString(str)) |ordinal| {
+            return ordinal;
+        }
+        return nameFromString(allocator, str);
+    }
+
+    pub fn nameFromString(allocator: Allocator, str: []const u8) !NameOrOrdinal {
+        var as_utf16 = try std.unicode.utf8ToUtf16LeWithNull(allocator, str);
+        // Names have a limit of 256 UTF-16 code units + null terminator
+        // Note: This can cut-off in the middle of a UTF-16, i.e. it can make the
+        //       string end with an unpaired high surrogate
+        if (as_utf16.len > 256) {
+            var limited = allocator.shrink(as_utf16, 257);
+            limited[256] = 0;
+            as_utf16 = limited[0..256 :0];
+        }
+        // ASCII chars in names are always converted to uppercase
+        for (as_utf16) |*char| {
+            if (char.* < 128) {
+                char.* = std.ascii.toUpper(@intCast(u8, char.*));
+            }
+        }
+        return NameOrOrdinal{ .name = as_utf16 };
+    }
+
+    pub fn maybeOrdinalFromString(str: []const u8) ?NameOrOrdinal {
+        var buf = str;
+        var radix: u8 = 10;
+        if (buf.len > 2 and buf[0] == '0') {
+            switch (str[1]) {
+                '0'...'9' => {},
+                'x', 'X' => {
+                    radix = 16;
+                    buf = buf[2..];
+                    // only the first 4 hex digits matter, anything else is ignored
+                    // i.e. 0x12345 is treated as if it were 0x1234
+                    buf.len = @min(buf.len, 4);
+                },
+                else => return null,
+            }
+        }
+
+        var result: u16 = 0;
+        for (buf) |c| {
+            const digit = std.fmt.charToDigit(c, radix) catch switch (radix) {
+                10 => return null,
+                // If this is hex, then non-hex-digits are treated as a terminator rather
+                // than an invalid number
+                16 => break,
+                else => unreachable,
+            };
+
+            if (result != 0) {
+                result *%= radix;
+            }
+            result +%= digit;
+        }
+
+        // Zero is not interpretted as a number
+        if (result == 0) return null;
+        return NameOrOrdinal{ .ordinal = result };
+    }
+
+    pub fn predefinedResourceType(self: NameOrOrdinal) ?RT {
+        switch (self) {
+            .ordinal => |ordinal| {
+                switch (@intToEnum(RT, ordinal)) {
+                    .ACCELERATOR,
+                    .ANICURSOR,
+                    .ANIICON,
+                    .BITMAP,
+                    .CURSOR,
+                    .DIALOG,
+                    .DLGINCLUDE,
+                    .FONT,
+                    .FONTDIR,
+                    .GROUP_CURSOR,
+                    .GROUP_ICON,
+                    .HTML,
+                    .ICON,
+                    .MANIFEST,
+                    .MENU,
+                    .MESSAGETABLE,
+                    .PLUGPLAY,
+                    .RCDATA,
+                    .STRING,
+                    .VERSION,
+                    .VXD,
+                    => |rt| return rt,
+                    _ => return null,
+                }
+            },
+            .name => return null,
+        }
+    }
 };

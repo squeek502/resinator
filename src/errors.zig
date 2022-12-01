@@ -111,6 +111,8 @@ pub const ErrorDetails = struct {
         expected_something_else,
         /// `resource` is populated
         resource_type_cant_use_raw_data,
+        /// `resource` is populated
+        id_must_be_ordinal,
 
         // Compiler
         string_resource_as_numeric_type,
@@ -154,6 +156,9 @@ pub const ErrorDetails = struct {
             .resource_type_cant_use_raw_data => switch (self.type) {
                 .err, .warning => try writer.print("expected '<filename>', found '{s}' (resource type '{s}' can't use raw data)", .{ self.token.nameForErrorDisplay(source), @tagName(self.extra.resource) }),
                 .note => try writer.print("if '{s}' is intended to be a filename, it must be specified as a quoted string literal", .{self.token.nameForErrorDisplay(source)}),
+            },
+            .id_must_be_ordinal => {
+                try writer.print("id of resource type '{s}' must be an ordinal (u16), got '{s}'", .{ @tagName(self.extra.resource), self.token.nameForErrorDisplay(source) });
             },
             .string_resource_as_numeric_type => {
                 // TODO: Add note about why this is the case (i.e. it always (?) leads to an invalid .res)
