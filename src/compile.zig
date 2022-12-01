@@ -50,6 +50,7 @@ pub const Compiler = struct {
     pub const State = struct {
         icon_id: u16 = 1,
         string_table: StringTable = .{},
+        language: res.Language = .{},
     };
 
     pub fn writeRoot(self: *Compiler, root: *Node.Root, writer: anytype) !void {
@@ -76,7 +77,7 @@ pub const Compiler = struct {
             .invalid => @panic("TODO"),
             .string_table => try self.writeStringTable(@fieldParentPtr(Node.StringTable, "base", node)),
             .string_table_string => unreachable, // handled by writeStringTable
-            .language_statement => @panic("TODO"),
+            .language_statement => self.writeLanguageStatement(@fieldParentPtr(Node.LanguageStatement, "base", node)),
             .simple_statement => @panic("TODO"),
         }
     }
@@ -277,7 +278,7 @@ pub const Compiler = struct {
         defer file.close();
 
         // Init header with data size zero for now, will need to fill it in later
-        var header = ResourceHeader.init(self.allocator, node.id.slice(self.source), node.type.slice(self.source), 0) catch |err| switch (err) {
+        var header = ResourceHeader.init(self.allocator, node.id.slice(self.source), node.type.slice(self.source), 0, self.state.language) catch |err| switch (err) {
             error.StringResourceAsNumericType => {
                 return self.failDetails(.{
                     .err = .string_resource_as_numeric_type,
@@ -309,6 +310,7 @@ pub const Compiler = struct {
                             .name_value = .{ .ordinal = self.state.icon_id },
                             .data_size = entry.data_size_in_bytes,
                             .memory_flags = icon_memory_flags,
+                            .language = self.state.language,
                         };
                         try image_header.write(writer);
                         try file.seekTo(entry.data_offset_from_start_of_file);
@@ -471,14 +473,14 @@ pub const Compiler = struct {
             try data.write(data_writer);
         }
 
-        try self.writeResourceHeader(writer, node.id, node.type, @intCast(u32, data_buffer.items.len), node.common_resource_attributes);
+        try self.writeResourceHeader(writer, node.id, node.type, @intCast(u32, data_buffer.items.len), node.common_resource_attributes, self.state.language);
 
         var data_fbs = std.io.fixedBufferStream(data_buffer.items);
         try writeResourceData(writer, data_fbs.reader(), @intCast(u32, data_buffer.items.len));
     }
 
-    pub fn writeResourceHeader(self: *Compiler, writer: anytype, id_token: Token, type_token: Token, data_size: u32, common_resource_attributes: []Token) !void {
-        var header = ResourceHeader.init(self.allocator, id_token.slice(self.source), type_token.slice(self.source), data_size) catch |err| switch (err) {
+    pub fn writeResourceHeader(self: *Compiler, writer: anytype, id_token: Token, type_token: Token, data_size: u32, common_resource_attributes: []Token, language: res.Language) !void {
+        var header = ResourceHeader.init(self.allocator, id_token.slice(self.source), type_token.slice(self.source), data_size, language) catch |err| switch (err) {
             error.StringResourceAsNumericType => {
                 return self.failDetails(.{
                     .err = .string_resource_as_numeric_type,
@@ -531,16 +533,24 @@ pub const Compiler = struct {
         }
     }
 
+    /// Expects this to be a top-level LANGUAGE statement
+    pub fn writeLanguageStatement(self: *Compiler, node: *Node.LanguageStatement) void {
+        const primary = Compiler.evaluateNumberExpression(node.primary_language_id, self.source);
+        const sublanguage = Compiler.evaluateNumberExpression(node.sublanguage_id, self.source);
+        self.state.language.primary_language_id = @truncate(u10, primary.value);
+        self.state.language.sublanguage_id = @truncate(u6, sublanguage.value);
+    }
+
     pub const ResourceHeader = struct {
         name_value: NameOrOrdinal,
         type_value: NameOrOrdinal,
-        language: res.Language = .{},
+        language: res.Language,
         memory_flags: MemoryFlags,
         data_size: DWORD,
         version: DWORD = 0,
         characteristics: DWORD = 0,
 
-        pub fn init(allocator: Allocator, id_slice: []const u8, type_slice: []const u8, data_size: DWORD) !ResourceHeader {
+        pub fn init(allocator: Allocator, id_slice: []const u8, type_slice: []const u8, data_size: DWORD, language: res.Language) !ResourceHeader {
             const type_value = type: {
                 const resource_type = Resource.fromString(type_slice);
                 if (resource_type != .user_defined) {
@@ -569,7 +579,7 @@ pub const Compiler = struct {
                 .type_value = type_value,
                 .data_size = data_size,
                 .memory_flags = MemoryFlags.defaults(predefined_resource_type),
-                .language = .{}, // TODO
+                .language = language,
             };
         }
 
@@ -1279,6 +1289,19 @@ test "case insensitivity" {
     try testCompileWithOutput(
         "StringTABLE VERSION 1 characteristics 65536 Version 2 Begin 0 \"hello\" end",
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00*\x00\x00\x00 \x00\x00\x00\xff\xff\x06\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x02\x00\x00\x00\x00\x00\x01\x00\x05\x00h\x00e\x00l\x00l\x00o\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+        std.fs.cwd(),
+    );
+}
+
+test "top-level language statements" {
+    try testCompileWithOutput(
+        \\1 RCDATA {}
+        \\LANGUAGE 1,1
+        \\2 RCDATA {}
+        \\LANGUAGE 0,0
+        \\3 RCDATA {}
+    ,
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x02\x00\x00\x00\x00\x000\x00\x01\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x03\x00\x00\x00\x00\x000\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
         std.fs.cwd(),
     );
 }
