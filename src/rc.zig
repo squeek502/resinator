@@ -46,6 +46,18 @@ pub const Resource = enum {
     pub fn fromString(str: []const u8) Resource {
         return map.get(str) orelse .user_defined;
     }
+
+    pub fn canUseRawData(resource: Resource) bool {
+        return switch (resource) {
+            .user_defined,
+            .html,
+            //.plugplay, // Obsolete
+            .rcdata,
+            //.vxd, // Obsolete
+            => true,
+            else => false,
+        };
+    }
 };
 
 /// https://learn.microsoft.com/en-us/windows/win32/menurc/stringtable-resource#parameters

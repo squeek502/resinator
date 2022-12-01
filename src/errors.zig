@@ -2,6 +2,7 @@ const std = @import("std");
 const Token = @import("lex.zig").Token;
 const SourceMappings = @import("source_mapping.zig").SourceMappings;
 const utils = @import("utils.zig");
+const rc = @import("rc.zig");
 
 pub const Diagnostics = struct {
     errors: std.ArrayListUnmanaged(ErrorDetails) = .{},
@@ -44,11 +45,13 @@ pub const ErrorDetails = struct {
     token: Token,
     // TODO: I don't really like this; notes at least should probably be handled differently
     type: enum { err, warning, note } = .err,
+    print_source_line: bool = true,
     extra: union {
         none: void,
         expected: Token.Id,
         number: u32,
         expected_types: ExpectedTypes,
+        resource: rc.Resource,
     } = .{ .none = {} },
 
     pub const ExpectedTypes = packed struct(u32) {
@@ -106,6 +109,8 @@ pub const ErrorDetails = struct {
         expected_token,
         /// `expected_types` is populated
         expected_something_else,
+        /// `resource` is populated
+        resource_type_cant_use_raw_data,
 
         // Compiler
         string_resource_as_numeric_type,
@@ -145,6 +150,10 @@ pub const ErrorDetails = struct {
                 try writer.writeAll("expected ");
                 try self.extra.expected_types.writeCommaSeparated(writer);
                 return writer.print("; got '{s}'", .{self.token.nameForErrorDisplay(source)});
+            },
+            .resource_type_cant_use_raw_data => switch (self.type) {
+                .err, .warning => try writer.print("expected '<filename>', found '{s}' (resource type '{s}' can't use raw data)", .{ self.token.nameForErrorDisplay(source), @tagName(self.extra.resource) }),
+                .note => try writer.print("if '{s}' is intended to be a filename, it must be specified as a quoted string literal", .{self.token.nameForErrorDisplay(source)}),
             },
             .string_resource_as_numeric_type => {
                 // TODO: Add note about why this is the case (i.e. it always (?) leads to an invalid .res)
@@ -190,6 +199,8 @@ pub fn renderErrorMessage(writer: anytype, colors: utils.Colors, cwd: std.fs.Dir
     try err_details.render(writer, source);
     try writer.writeAll("\n");
     colors.set(writer, .reset);
+
+    if (!err_details.print_source_line) return;
 
     const token_offset = err_details.token.start - source_line_start;
     const source_line = err_details.token.getLine(source, source_line_start);

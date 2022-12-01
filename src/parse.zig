@@ -249,6 +249,20 @@ pub const Parser = struct {
                 if (maybe_begin.id == .begin) {
                     self.nextToken(.normal) catch unreachable;
 
+                    if (!resource.canUseRawData()) {
+                        try self.warnDetails(ErrorDetails{
+                            .err = .resource_type_cant_use_raw_data,
+                            .token = maybe_begin,
+                            .extra = .{ .resource = resource },
+                        });
+                        return self.failDetails(ErrorDetails{
+                            .err = .resource_type_cant_use_raw_data,
+                            .type = .note,
+                            .print_source_line = false,
+                            .token = maybe_begin,
+                        });
+                    }
+
                     var raw_data = std.ArrayList(*Node).init(self.state.allocator);
                     defer raw_data.deinit();
                     while (true) {
@@ -841,6 +855,7 @@ test "parse errors" {
     try testParseError("escaping quotes with \\\" is not allowed (use \"\" instead)", "id RCDATA { \"\\\"\"\" }");
     try testParseError("expected number or number expression; got '\"hello\"'", "STRINGTABLE { \"hello\" }");
     try testParseError("expected quoted string literal; got '1'", "STRINGTABLE { 1, 1 }");
+    try testParseError("expected '<filename>', found '{' (resource type 'icon' can't use raw data)", "1 ICON {}");
 }
 
 fn testParseError(expected_error_str: []const u8, source: []const u8) !void {
@@ -853,7 +868,7 @@ fn testParseError(expected_error_str: []const u8, source: []const u8) !void {
         error.OutOfMemory => |e| return e,
         error.ParseError => {
             if (diagnostics.errors.items.len < 1) return error.NoDiagnostics;
-            if (diagnostics.errors.items.len > 1) @panic("TODO handle parse test with multiple errors");
+            if (diagnostics.errors.items[0].type != .err) @panic("TODO handle parse test with a non-error as the first error");
             var buf: [256]u8 = undefined;
             var fbs = std.io.fixedBufferStream(&buf);
             try diagnostics.errors.items[0].render(fbs.writer(), source);
