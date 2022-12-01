@@ -74,8 +74,9 @@ pub const MemoryFlags = packed struct(u16) {
         } else {
             return switch (predefined_resource_type.?) {
                 .RCDATA, .BITMAP, .HTML => MemoryFlags{ .value = MOVEABLE | PURE },
-                .GROUP_ICON, .GROUP_CURSOR, .STRING => MemoryFlags{ .value = MOVEABLE | PURE | DISCARDABLE },
+                .GROUP_ICON, .GROUP_CURSOR, .STRING, .FONT => MemoryFlags{ .value = MOVEABLE | PURE | DISCARDABLE },
                 .ICON, .CURSOR => MemoryFlags{ .value = MOVEABLE | DISCARDABLE },
+                .FONTDIR => MemoryFlags{ .value = MOVEABLE | PRELOAD },
                 else => {
                     std.debug.print("TODO: {}\n", .{predefined_resource_type.?});
                     @panic("TODO");

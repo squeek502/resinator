@@ -30,7 +30,8 @@ Currently a dumping ground for various pieces of information related to `.rc` an
 |----|---------|
 | `MOVEABLE | DISCARDABLE` | `RT_ICON`, `RT_CURSOR` |
 | `MOVEABLE | PURE` | `RT_RCDATA`, `RT_BITMAP`, `RT_HTML` |
-| `MOVEABLE | PURE | DISCARDABLE` | `RT_GROUP_ICON`, `RT_GROUP_CURSOR`, `RT_STRING` |
+| `MOVEABLE | PURE | DISCARDABLE` | `RT_GROUP_ICON`, `RT_GROUP_CURSOR`, `RT_STRING`, `RT_FONT` |
+| `MOVEABLE | PRELOAD` | `RT_FONTDIR` |
 
 ### Common Resource Attribute effects
 
