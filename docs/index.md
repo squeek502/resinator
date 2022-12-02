@@ -63,7 +63,9 @@ At the end of the .res, a single `RT_FONTDIR` resource with the name `FONTDIR` i
 | 150 bytes | The first 150 bytes of the `FONT`'s file. If the file is smaller than 150 bytes, all missing bytes are filled with `0x00`. |
 
 {: .note }
-> There appears to be a bug in the MSVC++ `rc` tool where more than 150 bytes are written for a given `RT_FONT`. It seems to be dictated by `0x00` bytes within the file. If the first byte of a file is `0x00` the bug will not manifest.
-> - If the file is 140 bytes or smaller with no null bytes, the MSVC++ `rc` tool will crash.
-> - There seems to be a variable number of `0x00` bytes at the end of the 150 bytes in certain circumstances, e.g. if a file is 150 non-NULL bytes in a row, the `FONTDIR` data for it will be 148 bytes and then 2 `0x00` bytes. However, for example, if a file is 31 non-NULL bytes, then a `0x00`, and then 110 more non-NULL bytes, the `FONTDIR` data for it will be the first 142 bytes from the file and then 8 `0x00` bytes.
+> There appears to be a bug in the MSVC++ `rc` tool where more than 150 bytes are written for a given `RT_FONT`, or the 150 bytes are not exactly the first 150 bytes of the file. It seems to be dictated by the length of the file and `0x00` bytes within the file.
+> - If the file is 75 bytes or smaller with no null bytes, the `FONTDIR` data for it will be 149 bytes (the first `n` being the bytes from the file, then the rest are `0x00` padding bytes). After that, there will be `n` bytes from the file again, and then a final `0x00`.
+> - If the file is between 76 and 140 bytes long with no null bytes, the MSVC++ `rc` tool will crash.
+> - There seems to be a variable number of `0x00` bytes at the end of the 150 bytes in certain circumstances, e.g. if a file is 150 non-NULL bytes in a row, the `FONTDIR` data for it will be 148 bytes and then 2 `0x00` bytes. However, if a file is 31 non-NULL bytes, then a `0x00`, and then 110 more non-NULL bytes, the `FONTDIR` data for it will be the first 142 bytes from the file and then 8 `0x00` bytes.
+>
 > More investigation is needed to understand what's going on here, how it affects the usage, and what behavior actually matters/is correct in terms of what to replicate.
