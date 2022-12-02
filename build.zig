@@ -37,52 +37,39 @@ pub fn build(b: *std.build.Builder) void {
         .source = .{ .path = "src/resinator.zig" },
     };
 
-    var fuzzy_numbers = b.addTest("test/fuzzy_numbers.zig");
-    fuzzy_numbers.setBuildMode(mode);
-    fuzzy_numbers.setTarget(target);
-    fuzzy_numbers.addPackage(resinator);
-    const fuzzy_numbers_step = b.step("test_fuzzy_numbers", "Simple fuzz testing for number literals");
-    fuzzy_numbers_step.dependOn(&fuzzy_numbers.step);
+    const fuzzy_max_iterations = b.option(u64, "fuzzy-iterations", "The max iterations for fuzzy tests (default: 1000)") orelse 1000;
 
-    var fuzzy_number_expressions = b.addTest("test/fuzzy_number_expressions.zig");
-    fuzzy_number_expressions.setBuildMode(mode);
-    fuzzy_number_expressions.setTarget(target);
-    fuzzy_number_expressions.addPackage(resinator);
-    const fuzzy_number_expressions_step = b.step("test_fuzzy_number_expressions", "Simple fuzz testing for number expressions");
-    fuzzy_number_expressions_step.dependOn(&fuzzy_number_expressions.step);
+    const test_options = b.addOptions();
+    test_options.addOption(u64, "max_iterations", fuzzy_max_iterations);
 
-    var fuzzy_ascii_strings = b.addTest("test/fuzzy_ascii_strings.zig");
-    fuzzy_ascii_strings.setBuildMode(mode);
-    fuzzy_ascii_strings.setTarget(target);
-    fuzzy_ascii_strings.addPackage(resinator);
-    const fuzzy_ascii_strings_step = b.step("test_fuzzy_ascii_strings", "Simple fuzz testing for ascii string literals");
-    fuzzy_ascii_strings_step.dependOn(&fuzzy_ascii_strings.step);
+    const all_fuzzy_tests_step = b.step("test_fuzzy", "Run all fuzz/property-testing-like tests with a max number of iterations for each");
+    _ = addFuzzyTest(b, "numbers", mode, target, resinator, all_fuzzy_tests_step, test_options);
+    _ = addFuzzyTest(b, "number_expressions", mode, target, resinator, all_fuzzy_tests_step, test_options);
+    _ = addFuzzyTest(b, "ascii_strings", mode, target, resinator, all_fuzzy_tests_step, test_options);
+    _ = addFuzzyTest(b, "numeric_types", mode, target, resinator, all_fuzzy_tests_step, test_options);
+    _ = addFuzzyTest(b, "common_resource_attributes", mode, target, resinator, all_fuzzy_tests_step, test_options);
+    _ = addFuzzyTest(b, "raw_data", mode, target, resinator, all_fuzzy_tests_step, test_options);
+    _ = addFuzzyTest(b, "name_or_ordinal", mode, target, resinator, all_fuzzy_tests_step, test_options);
+}
 
-    var fuzzy_numeric_types = b.addTest("test/fuzzy_numeric_types.zig");
-    fuzzy_numeric_types.setBuildMode(mode);
-    fuzzy_numeric_types.setTarget(target);
-    fuzzy_numeric_types.addPackage(resinator);
-    const fuzzy_numeric_types_step = b.step("test_fuzzy_numeric_types", "Simple fuzz testing for resource types specified as numbers");
-    fuzzy_numeric_types_step.dependOn(&fuzzy_numeric_types.step);
+fn addFuzzyTest(
+    b: *std.build.Builder,
+    comptime name: []const u8,
+    mode: std.builtin.Mode,
+    target: std.zig.CrossTarget,
+    resinator: std.build.Pkg,
+    all_fuzzy_tests_step: *std.build.Step,
+    fuzzy_options: *std.build.OptionsStep,
+) *std.build.LibExeObjStep {
+    var test_step = b.addTest("test/fuzzy_" ++ name ++ ".zig");
+    test_step.setBuildMode(mode);
+    test_step.setTarget(target);
+    test_step.addPackage(resinator);
+    test_step.addOptions("fuzzy_options", fuzzy_options);
+    const test_run_step = b.step("test_fuzzy_" ++ name, "Some fuzz/property-testing-like tests for " ++ name);
+    test_run_step.dependOn(&test_step.step);
 
-    var fuzzy_common_resource_attributes = b.addTest("test/fuzzy_common_resource_attributes.zig");
-    fuzzy_common_resource_attributes.setBuildMode(mode);
-    fuzzy_common_resource_attributes.setTarget(target);
-    fuzzy_common_resource_attributes.addPackage(resinator);
-    const fuzzy_common_resource_attributes_step = b.step("test_fuzzy_common_resource_attributes", "Simple fuzz testing for common resource attributes");
-    fuzzy_common_resource_attributes_step.dependOn(&fuzzy_common_resource_attributes.step);
+    all_fuzzy_tests_step.dependOn(&test_step.step);
 
-    var fuzzy_raw_data = b.addTest("test/fuzzy_raw_data.zig");
-    fuzzy_raw_data.setBuildMode(mode);
-    fuzzy_raw_data.setTarget(target);
-    fuzzy_raw_data.addPackage(resinator);
-    const fuzzy_raw_data_step = b.step("test_fuzzy_raw_data", "Simple fuzz testing for raw data blocks");
-    fuzzy_raw_data_step.dependOn(&fuzzy_raw_data.step);
-
-    var fuzzy_name_or_ordinal = b.addTest("test/fuzzy_name_or_ordinal.zig");
-    fuzzy_name_or_ordinal.setBuildMode(mode);
-    fuzzy_name_or_ordinal.setTarget(target);
-    fuzzy_name_or_ordinal.addPackage(resinator);
-    const fuzzy_name_or_ordinal_step = b.step("test_fuzzy_name_or_ordinal", "Simple fuzz testing for name or ordinals");
-    fuzzy_name_or_ordinal_step.dependOn(&fuzzy_name_or_ordinal.step);
+    return test_step;
 }

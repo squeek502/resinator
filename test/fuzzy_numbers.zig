@@ -1,6 +1,8 @@
 const std = @import("std");
 const resinator = @import("resinator");
 const utils = @import("utils.zig");
+const fuzzy_options = @import("fuzzy_options");
+const iterations = fuzzy_options.max_iterations;
 
 test {
     const allocator = std.testing.allocator;
@@ -13,7 +15,8 @@ test {
     var buffer = std.ArrayList(u8).init(allocator);
     defer buffer.deinit();
 
-    while (true) {
+    var i: u64 = 0;
+    while (iterations == 0 or i < iterations) : (i += 1) {
         source_buffer.shrinkRetainingCapacity(0);
         const literal = try utils.randomNumberLiteral(allocator, rand, true);
         defer allocator.free(literal);
