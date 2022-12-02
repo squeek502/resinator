@@ -884,7 +884,7 @@ fn testParseError(expected_error_str: []const u8, source: []const u8) !void {
             if (diagnostics.errors.items[0].type != .err) @panic("TODO handle parse test with a non-error as the first error");
             var buf: [256]u8 = undefined;
             var fbs = std.io.fixedBufferStream(&buf);
-            try diagnostics.errors.items[0].render(fbs.writer(), source);
+            try diagnostics.errors.items[0].render(fbs.writer(), source, diagnostics.strings.items);
             try std.testing.expectEqualStrings(expected_error_str, fbs.getWritten());
             return;
         },

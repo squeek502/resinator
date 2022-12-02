@@ -147,7 +147,21 @@ pub const Compiler = struct {
         defer filename.deinit(self.allocator);
 
         // TODO: emit error on file not found
-        const file = self.cwd.openFile(filename.utf8, .{}) catch @panic("TODO openFile error handling");
+        const file = self.cwd.openFile(filename.utf8, .{}) catch |err| {
+            const filename_string_index = @intCast(
+                ErrorDetails.FileOpenError.FilenameStringIndex,
+                try self.diagnostics.putString(filename.utf8),
+            );
+            return self.addErrorDetailsAndFail(.{
+                .err = .file_open_error,
+                // TODO get the most relevant token for filename, e.g. in an expression like (1+-1), get the -1 token
+                .token = node.filename.getFirstToken(),
+                .extra = .{ .file_open_error = .{
+                    .err = ErrorDetails.FileOpenError.enumFromError(err),
+                    .filename_string_index = filename_string_index,
+                } },
+            });
+        };
         defer file.close();
 
         // Init header with data size zero for now, will need to fill it in later

@@ -7,6 +7,9 @@ const res = @import("res.zig");
 
 pub const Diagnostics = struct {
     errors: std.ArrayListUnmanaged(ErrorDetails) = .{},
+    /// Append-only, cannot handle removing strings.
+    /// Expects to own all strings within the list.
+    strings: std.ArrayListUnmanaged([]const u8) = .{},
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) Diagnostics {
@@ -17,10 +20,22 @@ pub const Diagnostics = struct {
 
     pub fn deinit(self: *Diagnostics) void {
         self.errors.deinit(self.allocator);
+        for (self.strings.items) |str| {
+            self.allocator.free(str);
+        }
+        self.strings.deinit(self.allocator);
     }
 
     pub fn append(self: *Diagnostics, error_details: ErrorDetails) !void {
         try self.errors.append(self.allocator, error_details);
+    }
+
+    /// Returns the index of the added string
+    pub fn putString(self: *Diagnostics, str: []const u8) !usize {
+        const dupe = try self.allocator.dupe(u8, str);
+        const index = self.strings.items.len;
+        try self.strings.append(self.allocator, dupe);
+        return index;
     }
 
     pub fn renderToStdErr(self: *Diagnostics, cwd: std.fs.Dir, source: []const u8, source_mappings: ?SourceMappings) void {
@@ -36,7 +51,7 @@ pub const Diagnostics = struct {
         defer std.debug.getStderrMutex().unlock();
         const stderr = std.io.getStdErr().writer();
         for (self.errors.items) |err_details| {
-            renderErrorMessage(self.allocator, stderr, colors, cwd, err_details, source, source_mappings) catch return;
+            renderErrorMessage(self.allocator, stderr, colors, cwd, err_details, source, self.strings.items, source_mappings) catch return;
         }
     }
 };
@@ -54,11 +69,33 @@ pub const ErrorDetails = struct {
         expected_types: ExpectedTypes,
         resource: rc.Resource,
         string_and_language: StringAndLanguage,
+        file_open_error: FileOpenError,
     } = .{ .none = {} },
+
+    comptime {
+        // all fields in the extra union should be 32 bits or less
+        for (std.meta.fields(std.meta.fieldInfo(ErrorDetails, .extra).field_type)) |field| {
+            std.debug.assert(@bitSizeOf(field.field_type) <= 32);
+        }
+    }
 
     pub const StringAndLanguage = packed struct(u32) {
         id: u16,
         language: res.Language,
+    };
+
+    pub const FileOpenError = packed struct(u32) {
+        err: FileOpenErrorEnum,
+        filename_string_index: FilenameStringIndex,
+
+        pub const FilenameStringIndex = std.meta.Int(.unsigned, 32 - @bitSizeOf(FileOpenErrorEnum));
+        pub const FileOpenErrorEnum = std.meta.FieldEnum(std.fs.File.OpenError);
+
+        pub fn enumFromError(err: std.fs.File.OpenError) FileOpenErrorEnum {
+            return switch (err) {
+                inline else => |e| @field(ErrorDetails.FileOpenError.FileOpenErrorEnum, @errorName(e)),
+            };
+        }
     };
 
     pub const ExpectedTypes = packed struct(u32) {
@@ -126,9 +163,11 @@ pub const ErrorDetails = struct {
         /// `string_and_language` is populated
         string_already_defined,
         font_id_already_defined,
+        /// `file_open_error` is populated
+        file_open_error,
     };
 
-    pub fn render(self: ErrorDetails, writer: anytype, source: []const u8) !void {
+    pub fn render(self: ErrorDetails, writer: anytype, source: []const u8, strings: []const []const u8) !void {
         switch (self.err) {
             .unfinished_string_literal => {
                 return writer.print("unfinished string literal at '{s}', expected closing '\"'", .{self.token.nameForErrorDisplay(source)});
@@ -182,11 +221,14 @@ pub const ErrorDetails = struct {
                 .warning => return writer.print("skipped duplicate font with id {d}", .{self.extra.number}),
                 .note => return writer.print("previous definition of font with id {d} here", .{self.extra.number}),
             },
+            .file_open_error => {
+                try writer.print("unable to open file '{s}': {s}", .{ strings[self.extra.file_open_error.filename_string_index], @tagName(self.extra.file_open_error.err) });
+            },
         }
     }
 };
 
-pub fn renderErrorMessage(allocator: std.mem.Allocator, writer: anytype, colors: utils.Colors, cwd: std.fs.Dir, err_details: ErrorDetails, source: []const u8, source_mappings: ?SourceMappings) !void {
+pub fn renderErrorMessage(allocator: std.mem.Allocator, writer: anytype, colors: utils.Colors, cwd: std.fs.Dir, err_details: ErrorDetails, source: []const u8, strings: []const []const u8, source_mappings: ?SourceMappings) !void {
     const source_line_start = err_details.token.getLineStart(source);
     const column = err_details.token.calculateColumn(source, 1, source_line_start);
 
@@ -222,7 +264,7 @@ pub fn renderErrorMessage(allocator: std.mem.Allocator, writer: anytype, colors:
     }
     colors.set(writer, .reset);
     colors.set(writer, .bold);
-    try err_details.render(writer, source);
+    try err_details.render(writer, source, strings);
     try writer.writeByte('\n');
     colors.set(writer, .reset);
 
