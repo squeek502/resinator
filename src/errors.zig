@@ -118,6 +118,7 @@ pub const ErrorDetails = struct {
         string_resource_as_numeric_type,
         /// `number` is populated
         string_already_defined,
+        font_id_already_defined,
     };
 
     pub fn render(self: ErrorDetails, writer: anytype, source: []const u8) !void {
@@ -167,6 +168,11 @@ pub const ErrorDetails = struct {
             .string_already_defined => switch (self.type) {
                 .err, .warning => return writer.print("string with id {d} (0x{X}) already defined", .{ self.extra.number, self.extra.number }),
                 .note => return writer.print("previous definition of string with id {d} (0x{X}) here", .{ self.extra.number, self.extra.number }),
+            },
+            .font_id_already_defined => switch (self.type) {
+                .err => return writer.print("font with id {d} already defined", .{self.extra.number}),
+                .warning => return writer.print("skipped duplicate font with id {d}", .{self.extra.number}),
+                .note => return writer.print("previous definition of font with id {d} here", .{self.extra.number}),
             },
         }
     }

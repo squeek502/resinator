@@ -84,4 +84,7 @@ pub fn main() !void {
         },
         else => |e| return e,
     };
+
+    // print any warnings/notes
+    diagnostics.renderToStdErr(std.fs.cwd(), preprocessed_input, mapping_results.mappings);
 }
