@@ -51,8 +51,7 @@ pub const Compiler = struct {
 
     pub const State = struct {
         icon_id: u16 = 1,
-        // TODO: A separate StringTable per language
-        string_table: StringTable = .{},
+        string_tables: StringTablesByLanguage = .{},
         language: res.Language = .{},
         font_dir: FontDir = .{},
     };
@@ -66,9 +65,12 @@ pub const Compiler = struct {
         // now write the FONTDIR (if it has anything in it)
         try self.state.font_dir.writeResData(self, writer);
         // once we've written every else out, we can write out the finalized STRINGTABLE resources
-        var string_table_it = self.state.string_table.blocks.iterator();
-        while (string_table_it.next()) |entry| {
-            try entry.value_ptr.writeResData(self, entry.key_ptr.*, writer);
+        var string_tables_it = self.state.string_tables.tables.iterator();
+        while (string_tables_it.next()) |string_table_entry| {
+            var string_table_it = string_table_entry.value_ptr.blocks.iterator();
+            while (string_table_it.next()) |entry| {
+                try entry.value_ptr.writeResData(self, string_table_entry.key_ptr.*, entry.key_ptr.*, writer);
+            }
         }
     }
 
@@ -430,24 +432,27 @@ pub const Compiler = struct {
     }
 
     pub fn writeStringTable(self: *Compiler, node: *Node.StringTable) !void {
+        const language = getLanguageFromOptionalStatements(node.optional_statements, self.source) orelse self.state.language;
+
         for (node.strings) |string_node| {
             const string = @fieldParentPtr(Node.StringTableString, "base", string_node);
             const string_id_data = try self.evaluateDataExpression(string.id);
             const string_id = string_id_data.number.asWord();
 
-            self.state.string_table.set(self.arena, string_id, string.string, &node.base, self.source) catch |err| switch (err) {
+            self.state.string_tables.set(self.arena, language, string_id, string.string, &node.base, self.source) catch |err| switch (err) {
                 error.StringAlreadyDefined => {
                     try self.addErrorDetails(ErrorDetails{
                         .err = .string_already_defined,
                         .token = string.string, // TODO: point to id instead?
-                        .extra = .{ .number = string_id },
+                        .extra = .{ .string_and_language = .{ .id = string_id, .language = language } },
                     });
-                    const existing_definition = self.state.string_table.get(string_id).?;
+                    const existing_def_table = self.state.string_tables.tables.getPtr(language).?;
+                    const existing_definition = existing_def_table.get(string_id).?;
                     return self.addErrorDetailsAndFail(ErrorDetails{
                         .err = .string_already_defined,
                         .type = .note,
                         .token = existing_definition, // TODO: point to id instead?
-                        .extra = .{ .number = string_id },
+                        .extra = .{ .string_and_language = .{ .id = string_id, .language = language } },
                     });
                 },
                 error.OutOfMemory => |e| return e,
@@ -552,10 +557,7 @@ pub const Compiler = struct {
         for (statements) |node| switch (node.id) {
             .language_statement => {
                 const language_statement = @fieldParentPtr(Node.LanguageStatement, "base", node);
-                const primary = Compiler.evaluateNumberExpression(language_statement.primary_language_id, source);
-                const sublanguage = Compiler.evaluateNumberExpression(language_statement.sublanguage_id, source);
-                language.primary_language_id = @truncate(u10, primary.value);
-                language.sublanguage_id = @truncate(u6, sublanguage.value);
+                language.* = languageFromLanguageStatement(language_statement, source);
             },
             .simple_statement => {
                 const simple_statement = @fieldParentPtr(Node.SimpleStatement, "base", node);
@@ -569,6 +571,26 @@ pub const Compiler = struct {
             },
             else => unreachable, // no other node types should be in an optional statements list
         };
+    }
+
+    pub fn languageFromLanguageStatement(language_statement: *const Node.LanguageStatement, source: []const u8) res.Language {
+        const primary = Compiler.evaluateNumberExpression(language_statement.primary_language_id, source);
+        const sublanguage = Compiler.evaluateNumberExpression(language_statement.sublanguage_id, source);
+        return .{
+            .primary_language_id = @truncate(u10, primary.value),
+            .sublanguage_id = @truncate(u6, sublanguage.value),
+        };
+    }
+
+    pub fn getLanguageFromOptionalStatements(statements: []*Node, source: []const u8) ?res.Language {
+        for (statements) |node| switch (node.id) {
+            .language_statement => {
+                const language_statement = @fieldParentPtr(Node.LanguageStatement, "base", node);
+                return languageFromLanguageStatement(language_statement, source);
+            },
+            else => continue,
+        };
+        return null;
     }
 
     pub fn writeEmptyResource(writer: anytype) !void {
@@ -638,6 +660,26 @@ pub const FontDir = struct {
     }
 };
 
+pub const StringTablesByLanguage = struct {
+    /// String tables for each language are written to the .res file in order depending on
+    /// when the first STRINGTABLE for the language was defined, and all blocks for a given
+    /// language are written contiguously.
+    /// Using an ArrayHashMap here gives us this property for free.
+    tables: std.AutoArrayHashMapUnmanaged(res.Language, StringTable) = .{},
+
+    pub fn deinit(self: *StringTablesByLanguage, allocator: Allocator) void {
+        self.tables.deinit(allocator);
+    }
+
+    pub fn set(self: *StringTablesByLanguage, allocator: Allocator, language: res.Language, id: u16, string_token: Token, node: *Node, source: []const u8) StringTable.SetError!void {
+        var get_or_put_result = try self.tables.getOrPut(allocator, language);
+        if (!get_or_put_result.found_existing) {
+            get_or_put_result.value_ptr.* = StringTable{};
+        }
+        return get_or_put_result.value_ptr.set(allocator, id, string_token, node, source);
+    }
+};
+
 pub const StringTable = struct {
     /// Blocks are written to the .res file in order depending on when the first string
     /// was added to the block (i.e. `STRINGTABLE { 16 "b" 0 "a" }` would then get written
@@ -651,7 +693,6 @@ pub const StringTable = struct {
         memory_flags: MemoryFlags = MemoryFlags.defaults(res.RT.STRING),
         characteristics: u32 = 0,
         version: u32 = 0,
-        language: res.Language = .{},
 
         /// Returns the index to insert the string into the `string_tokens` list.
         /// Returns null if the string should be appended.
@@ -709,13 +750,14 @@ pub const StringTable = struct {
                 .string_table => {
                     const string_table = @fieldParentPtr(Node.StringTable, "base", node);
                     Compiler.applyToMemoryFlags(&self.memory_flags, string_table.common_resource_attributes, source);
-                    Compiler.applyToOptionalStatements(&self.language, &self.version, &self.characteristics, string_table.optional_statements, source);
+                    var dummy_language: res.Language = undefined;
+                    Compiler.applyToOptionalStatements(&dummy_language, &self.version, &self.characteristics, string_table.optional_statements, source);
                 },
                 else => @panic("TODO applyNodeAttributes"),
             }
         }
 
-        pub fn writeResData(self: *Block, compiler: *Compiler, block_id: u16, writer: anytype) !void {
+        pub fn writeResData(self: *Block, compiler: *Compiler, language: res.Language, block_id: u16, writer: anytype) !void {
             var data_buffer = std.ArrayList(u8).init(compiler.allocator);
             defer data_buffer.deinit();
             const data_writer = data_buffer.writer();
@@ -757,7 +799,7 @@ pub const StringTable = struct {
                 .name_value = .{ .ordinal = block_id },
                 .type_value = .{ .ordinal = @enumToInt(res.RT.STRING) },
                 .memory_flags = self.memory_flags,
-                .language = self.language,
+                .language = language,
                 .version = self.version,
                 .characteristics = self.characteristics,
                 .data_size = @intCast(u32, data_buffer.items.len),
@@ -1251,6 +1293,16 @@ test "stringtable optional-statements" {
     );
 }
 
+test "separate stringtable per language" {
+    try testCompileWithOutput(
+        \\STRINGTABLE LANGUAGE 0,0 { 0 "hello" }
+        \\STRINGTABLE LANGUAGE 0,1 { 0 "hello" }
+    ,
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00*\x00\x00\x00 \x00\x00\x00\xff\xff\x06\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x05\x00h\x00e\x00l\x00l\x00o\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00*\x00\x00\x00 \x00\x00\x00\xff\xff\x06\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\x00\x04\x00\x00\x00\x00\x00\x00\x00\x00\x05\x00h\x00e\x00l\x00l\x00o\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+        std.fs.cwd(),
+    );
+}
+
 test "case insensitivity" {
     try testCompileWithOutput(
         "StringTABLE VERSION 1 characteristics 65536 Version 2 Begin 0 \"hello\" end",
@@ -1268,6 +1320,13 @@ test "top-level language statements" {
         \\3 RCDATA {}
     ,
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x02\x00\x00\x00\x00\x000\x00\x01\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x03\x00\x00\x00\x00\x000\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+        std.fs.cwd(),
+    );
+    try testCompileWithOutput(
+        \\LANGUAGE 1,1
+        \\STRINGTABLE { 0 "hello" }
+    ,
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00*\x00\x00\x00 \x00\x00\x00\xff\xff\x06\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\x01\x04\x00\x00\x00\x00\x00\x00\x00\x00\x05\x00h\x00e\x00l\x00l\x00o\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
         std.fs.cwd(),
     );
 }

@@ -3,6 +3,7 @@ const Token = @import("lex.zig").Token;
 const SourceMappings = @import("source_mapping.zig").SourceMappings;
 const utils = @import("utils.zig");
 const rc = @import("rc.zig");
+const res = @import("res.zig");
 
 pub const Diagnostics = struct {
     errors: std.ArrayListUnmanaged(ErrorDetails) = .{},
@@ -52,7 +53,13 @@ pub const ErrorDetails = struct {
         number: u32,
         expected_types: ExpectedTypes,
         resource: rc.Resource,
+        string_and_language: StringAndLanguage,
     } = .{ .none = {} },
+
+    pub const StringAndLanguage = packed struct(u32) {
+        id: u16,
+        language: res.Language,
+    };
 
     pub const ExpectedTypes = packed struct(u32) {
         number: bool = false,
@@ -116,7 +123,7 @@ pub const ErrorDetails = struct {
 
         // Compiler
         string_resource_as_numeric_type,
-        /// `number` is populated
+        /// `string_and_language` is populated
         string_already_defined,
         font_id_already_defined,
     };
@@ -166,8 +173,9 @@ pub const ErrorDetails = struct {
                 .note => try writer.writeAll("using RT_STRING directly likely results in an invalid .res file, use a STRINGTABLE instead"),
             },
             .string_already_defined => switch (self.type) {
-                .err, .warning => return writer.print("string with id {d} (0x{X}) already defined", .{ self.extra.number, self.extra.number }),
-                .note => return writer.print("previous definition of string with id {d} (0x{X}) here", .{ self.extra.number, self.extra.number }),
+                // TODO: better printing of language, using constant names from WinNT.h
+                .err, .warning => return writer.print("string with id {d} (0x{X}) already defined for language {d},{d}", .{ self.extra.string_and_language.id, self.extra.string_and_language.id, self.extra.string_and_language.language.primary_language_id, self.extra.string_and_language.language.sublanguage_id }),
+                .note => return writer.print("previous definition of string with id {d} (0x{X}) here", .{ self.extra.string_and_language.id, self.extra.string_and_language.id }),
             },
             .font_id_already_defined => switch (self.type) {
                 .err => return writer.print("font with id {d} already defined", .{self.extra.number}),
