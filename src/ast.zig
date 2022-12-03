@@ -34,6 +34,8 @@ pub const Node = struct {
         literal,
         binary_expression,
         grouped_expression,
+        accelerators,
+        accelerator,
         string_table,
         string_table_string,
         language_statement,
@@ -48,6 +50,8 @@ pub const Node = struct {
                 .literal => Literal,
                 .binary_expression => BinaryExpression,
                 .grouped_expression => GroupedExpression,
+                .accelerators => Accelerators,
+                .accelerator => Accelerator,
                 .string_table => StringTable,
                 .string_table_string => StringTableString,
                 .language_statement => LanguageStatement,
@@ -102,6 +106,24 @@ pub const Node = struct {
         open_token: Token,
         expression: *Node,
         close_token: Token,
+    };
+
+    pub const Accelerators = struct {
+        base: Node = .{ .id = .accelerators },
+        id: Token,
+        type: Token,
+        common_resource_attributes: []Token,
+        optional_statements: []*Node,
+        begin_token: Token,
+        accelerators: []*Node,
+        end_token: Token,
+    };
+
+    pub const Accelerator = struct {
+        base: Node = .{ .id = .accelerator },
+        event: Token,
+        idvalue: Token,
+        type_and_options: []Token,
     };
 
     pub const StringTable = struct {
@@ -208,6 +230,14 @@ pub const Node = struct {
                 const casted = @fieldParentPtr(Node.GroupedExpression, "base", node);
                 return casted.open_token;
             },
+            .accelerators => {
+                const casted = @fieldParentPtr(Node.Accelerators, "base", node);
+                return casted.id;
+            },
+            .accelerator => {
+                const casted = @fieldParentPtr(Node.Accelerator, "base", node);
+                return casted.event;
+            },
             .string_table => {
                 const casted = @fieldParentPtr(Node.StringTable, "base", node);
                 return casted.type;
@@ -279,6 +309,30 @@ pub const Node = struct {
                 try grouped.expression.dump(tree, writer, indent + 1);
                 try writer.writeByteNTimes(' ', indent);
                 try writer.writeAll(grouped.close_token.slice(tree.source));
+                try writer.writeAll("\n");
+            },
+            .accelerators => {
+                const accelerators = @fieldParentPtr(Node.Accelerators, "base", node);
+                try writer.print(" {s} {s} [{d} common_resource_attributes]\n", .{ accelerators.id.slice(tree.source), accelerators.type.slice(tree.source), accelerators.common_resource_attributes.len });
+                for (accelerators.optional_statements) |statement| {
+                    try statement.dump(tree, writer, indent + 1);
+                }
+                try writer.writeByteNTimes(' ', indent);
+                try writer.writeAll(accelerators.begin_token.slice(tree.source));
+                try writer.writeAll("\n");
+                for (accelerators.accelerators) |accelerator| {
+                    try accelerator.dump(tree, writer, indent + 1);
+                }
+                try writer.writeByteNTimes(' ', indent);
+                try writer.writeAll(accelerators.end_token.slice(tree.source));
+                try writer.writeAll("\n");
+            },
+            .accelerator => {
+                const accelerator = @fieldParentPtr(Node.Accelerator, "base", node);
+                try writer.print(" {s}, {s}", .{ accelerator.event.slice(tree.source), accelerator.idvalue.slice(tree.source) });
+                for (accelerator.type_and_options) |option| {
+                    try writer.print(", {s}", .{option.slice(tree.source)});
+                }
                 try writer.writeAll("\n");
             },
             .string_table => {

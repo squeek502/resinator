@@ -108,3 +108,21 @@ pub const CommonResourceAttributes = enum {
         .{ "NONSHARED", .nonshared },
     });
 };
+
+pub const AcceleratorTypeAndOptions = enum {
+    virtkey,
+    ascii,
+    noinvert,
+    alt,
+    shift,
+    control,
+
+    pub const map = utils.ComptimeCaseInsensitiveStringMap(AcceleratorTypeAndOptions, .{
+        .{ "VIRTKEY", .virtkey },
+        .{ "ASCII", .ascii },
+        .{ "NOINVERT", .noinvert },
+        .{ "ALT", .alt },
+        .{ "SHIFT", .shift },
+        .{ "CONTROL", .control },
+    });
+};

@@ -85,6 +85,78 @@ pub const Parser = struct {
         }
     }
 
+    /// Expects the current token to be a possible common resource attribute.
+    /// After return, the current token will be the first token after all common resource attributes.
+    /// The returned slice is allocated by the parser's arena
+    fn parseCommonResourceAttributes(self: *Self) ![]Token {
+        var common_resource_attributes = std.ArrayListUnmanaged(Token){};
+        while (self.state.token.id == .literal and rc.CommonResourceAttributes.map.has(self.state.token.slice(self.lexer.buffer))) {
+            try common_resource_attributes.append(self.state.arena, self.state.token);
+            try self.nextToken(.normal);
+        }
+        return common_resource_attributes.toOwnedSlice(self.state.arena);
+    }
+
+    /// Like `parseCommonResourceAttributes`, but expects the current token
+    /// to be the token before possible common resource attributes.
+    /// After return, the current token will be the token immediately before the end of the
+    /// common resource attributes (if any). If there are no common resource attributes, the
+    /// current token is unchanged.
+    /// The returned slice is allocated by the parser's arena
+    fn parseCommonResourceAttributesLookahead(self: *Self) ![]Token {
+        var common_resource_attributes = std.ArrayListUnmanaged(Token){};
+        while (true) {
+            const maybe_common_resource_attribute = try self.lookaheadToken(.normal);
+            if (maybe_common_resource_attribute.id == .literal and rc.CommonResourceAttributes.map.has(maybe_common_resource_attribute.slice(self.lexer.buffer))) {
+                try common_resource_attributes.append(self.state.arena, maybe_common_resource_attribute);
+                self.nextToken(.normal) catch unreachable;
+            } else {
+                break;
+            }
+        }
+        return common_resource_attributes.toOwnedSlice(self.state.arena);
+    }
+
+    /// Expects the current token to be a possible optional statement keyword.
+    /// After return, the current token will be the first token after all optional statements.
+    /// The returned slice is allocated by the parser's arena
+    fn parseOptionalStatements(self: *Self) ![]*Node {
+        var optional_statements = std.ArrayListUnmanaged(*Node){};
+        while (self.state.token.id == .literal) {
+            const slice = self.state.token.slice(self.lexer.buffer);
+            const optional_statement_type = rc.OptionalStatements.map.get(slice) orelse break;
+            switch (optional_statement_type) {
+                .language => {
+                    const language = try self.parseLanguageStatement();
+                    try optional_statements.append(self.state.arena, language);
+                    try self.nextToken(.normal);
+                },
+                .version, .characteristics => {
+                    const identifier = self.state.token;
+                    const value = try self.parseExpression(false);
+                    if (!value.isNumberExpression()) {
+                        return self.addErrorDetailsAndFail(ErrorDetails{
+                            .err = .expected_something_else,
+                            .token = value.getFirstToken(),
+                            .extra = .{ .expected_types = .{
+                                .number = true,
+                                .number_expression = true,
+                            } },
+                        });
+                    }
+                    const node = try self.state.arena.create(Node.SimpleStatement);
+                    node.* = .{
+                        .identifier = identifier,
+                        .value = value,
+                    };
+                    try optional_statements.append(self.state.arena, &node.base);
+                    try self.nextToken(.normal);
+                },
+            }
+        }
+        return optional_statements.toOwnedSlice(self.state.arena);
+    }
+
     /// Expects the current token to be the first token of the statement.
     fn parseStatement(self: *Self) Error!*Node {
         const first_token = self.state.token;
@@ -97,50 +169,10 @@ pub const Parser = struct {
                 return language_statement;
             },
             .stringtable => {
-                var common_resource_attributes = std.ArrayList(Token).init(self.state.allocator);
-                defer common_resource_attributes.deinit();
-
                 try self.nextToken(.normal);
                 // common resource attributes must all be contiguous and come before optional-statements
-                while (self.state.token.id == .literal and rc.CommonResourceAttributes.map.has(self.state.token.slice(self.lexer.buffer))) {
-                    try common_resource_attributes.append(self.state.token);
-                    try self.nextToken(.normal);
-                }
-
-                var optional_statements = std.ArrayList(*Node).init(self.state.allocator);
-                defer optional_statements.deinit();
-                while (self.state.token.id == .literal) {
-                    const slice = self.state.token.slice(self.lexer.buffer);
-                    const optional_statement_type = rc.OptionalStatements.map.get(slice) orelse break;
-                    switch (optional_statement_type) {
-                        .language => {
-                            const language = try self.parseLanguageStatement();
-                            try optional_statements.append(language);
-                            try self.nextToken(.normal);
-                        },
-                        .version, .characteristics => {
-                            const identifier = self.state.token;
-                            const value = try self.parseExpression(false);
-                            if (!value.isNumberExpression()) {
-                                return self.addErrorDetailsAndFail(ErrorDetails{
-                                    .err = .expected_something_else,
-                                    .token = value.getFirstToken(),
-                                    .extra = .{ .expected_types = .{
-                                        .number = true,
-                                        .number_expression = true,
-                                    } },
-                                });
-                            }
-                            const node = try self.state.arena.create(Node.SimpleStatement);
-                            node.* = .{
-                                .identifier = identifier,
-                                .value = value,
-                            };
-                            try optional_statements.append(&node.base);
-                            try self.nextToken(.normal);
-                        },
-                    }
-                }
+                const common_resource_attributes = try self.parseCommonResourceAttributes();
+                const optional_statements = try self.parseOptionalStatements();
 
                 const begin_token = self.state.token;
                 try self.check(.begin);
@@ -216,8 +248,8 @@ pub const Parser = struct {
                 const node = try self.state.arena.create(Node.StringTable);
                 node.* = .{
                     .type = first_token,
-                    .common_resource_attributes = try self.state.arena.dupe(Token, common_resource_attributes.items),
-                    .optional_statements = try self.state.arena.dupe(*Node, optional_statements.items),
+                    .common_resource_attributes = common_resource_attributes,
+                    .optional_statements = optional_statements,
                     .begin_token = begin_token,
                     .strings = try self.state.arena.dupe(*Node, strings.items),
                     .end_token = end_token,
@@ -243,19 +275,77 @@ pub const Parser = struct {
         }
 
         switch (resource) {
-            .icon, .font, .cursor, .bitmap, .messagetable, .user_defined, .rcdata, .html => {
-                var common_resource_attributes = std.ArrayList(Token).init(self.state.allocator);
-                defer common_resource_attributes.deinit();
+            .accelerators => {
+                try self.nextToken(.normal);
+                // common resource attributes must all be contiguous and come before optional-statements
+                const common_resource_attributes = try self.parseCommonResourceAttributes();
+                const optional_statements = try self.parseOptionalStatements();
+
+                const begin_token = self.state.token;
+                try self.check(.begin);
+
+                var accelerators = std.ArrayListUnmanaged(*Node){};
 
                 while (true) {
-                    const maybe_common_resource_attribute = try self.lookaheadToken(.normal);
-                    if (maybe_common_resource_attribute.id == .literal and rc.CommonResourceAttributes.map.has(maybe_common_resource_attribute.slice(self.lexer.buffer))) {
-                        try common_resource_attributes.append(maybe_common_resource_attribute);
-                        self.nextToken(.normal) catch unreachable;
-                    } else {
-                        break;
+                    try self.nextToken(.normal);
+                    switch (self.state.token.id) {
+                        .number, .quoted_ascii_string, .quoted_wide_string => {},
+                        else => break,
                     }
+                    const event = self.state.token;
+
+                    try self.nextToken(.normal);
+                    try self.check(.comma);
+
+                    try self.nextToken(.normal);
+                    try self.check(.number);
+                    const idvalue = self.state.token;
+
+                    var type_and_options = std.ArrayListUnmanaged(Token){};
+                    while (true) {
+                        const maybe_comma = try self.lookaheadToken(.normal);
+                        if (maybe_comma.id != .comma) break;
+                        self.nextToken(.normal) catch unreachable;
+
+                        try self.nextToken(.normal);
+                        if (!rc.AcceleratorTypeAndOptions.map.has(self.tokenSlice())) {
+                            return self.addErrorDetailsAndFail(.{
+                                .err = .expected_something_else,
+                                .token = self.state.token,
+                                .extra = .{ .expected_types = .{
+                                    .accelerator_type_or_option = true,
+                                } },
+                            });
+                        }
+                        try type_and_options.append(self.state.arena, self.state.token);
+                    }
+
+                    const node = try self.state.arena.create(Node.Accelerator);
+                    node.* = .{
+                        .event = event,
+                        .idvalue = idvalue,
+                        .type_and_options = type_and_options.toOwnedSlice(self.state.arena),
+                    };
+                    try accelerators.append(self.state.arena, &node.base);
                 }
+
+                const end_token = self.state.token;
+                try self.check(.end);
+
+                const node = try self.state.arena.create(Node.Accelerators);
+                node.* = .{
+                    .id = id_token,
+                    .type = type_token,
+                    .common_resource_attributes = common_resource_attributes,
+                    .optional_statements = optional_statements,
+                    .begin_token = begin_token,
+                    .accelerators = accelerators.toOwnedSlice(self.state.arena),
+                    .end_token = end_token,
+                };
+                return &node.base;
+            },
+            .icon, .font, .cursor, .bitmap, .messagetable, .user_defined, .rcdata, .html => {
+                const common_resource_attributes = try self.parseCommonResourceAttributesLookahead();
 
                 const maybe_begin = try self.lookaheadToken(.normal);
                 if (maybe_begin.id == .begin) {
@@ -341,7 +431,7 @@ pub const Parser = struct {
                     node.* = .{
                         .id = id_token,
                         .type = type_token,
-                        .common_resource_attributes = try self.state.arena.dupe(Token, common_resource_attributes.items),
+                        .common_resource_attributes = common_resource_attributes,
                         .raw_data = try self.state.arena.dupe(*Node, raw_data.items),
                     };
                     return &node.base;
@@ -353,7 +443,7 @@ pub const Parser = struct {
                 node.* = .{
                     .id = id_token,
                     .type = type_token,
-                    .common_resource_attributes = try self.state.arena.dupe(Token, common_resource_attributes.items),
+                    .common_resource_attributes = common_resource_attributes,
                     .filename = filename_expression,
                 };
                 return &node.base;
@@ -857,6 +947,35 @@ test "top-level language statement" {
     );
 }
 
+test "accelerators" {
+    try testParse("1 ACCELERATORS FIXED VERSION 1 {}",
+        \\root
+        \\ accelerators 1 ACCELERATORS [1 common_resource_attributes]
+        \\  simple_statement VERSION
+        \\   literal 1
+        \\ {
+        \\ }
+        \\
+    );
+    try testParse("1 ACCELERATORS { \"^C\", 1 L\"a\", 2 }",
+        \\root
+        \\ accelerators 1 ACCELERATORS [0 common_resource_attributes]
+        \\ {
+        \\  accelerator "^C", 1
+        \\  accelerator L"a", 2
+        \\ }
+        \\
+    );
+    try testParse("1 ACCELERATORS { \"^C\", 1, CONTROL, ASCII, VIRTKEY, ALT, SHIFT }",
+        \\root
+        \\ accelerators 1 ACCELERATORS [0 common_resource_attributes]
+        \\ {
+        \\  accelerator "^C", 1, CONTROL, ASCII, VIRTKEY, ALT, SHIFT
+        \\ }
+        \\
+    );
+}
+
 test "parse errors" {
     try testParseError("unfinished raw data block at '<eof>', expected closing '}' or 'END'", "id RCDATA { 1");
     try testParseError("unfinished string literal at '<eof>', expected closing '\"'", "id RCDATA \"unfinished string");
@@ -869,6 +988,7 @@ test "parse errors" {
     try testParseError("expected quoted string literal; got '1'", "STRINGTABLE { 1, 1 }");
     try testParseError("expected '<filename>', found '{' (resource type 'icon' can't use raw data)", "1 ICON {}");
     try testParseError("id of resource type 'font' must be an ordinal (u16), got 'string'", "string FONT filename");
+    try testParseError("expected accelerator type or option [ASCII, VIRTKEY, etc]; got 'NOTANOPTIONORTYPE'", "1 ACCELERATORS { 1, 1, NOTANOPTIONORTYPE");
 }
 
 fn testParseError(expected_error_str: []const u8, source: []const u8) !void {

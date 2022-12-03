@@ -69,3 +69,16 @@ At the end of the .res, a single `RT_FONTDIR` resource with the name `FONTDIR` i
 > - There seems to be a variable number of `0x00` bytes at the end of the 150 bytes in certain circumstances, e.g. if a file is 150 non-NULL bytes in a row, the `FONTDIR` data for it will be 148 bytes and then 2 `0x00` bytes. However, if a file is 31 non-NULL bytes, then a `0x00`, and then 110 more non-NULL bytes, the `FONTDIR` data for it will be the first 142 bytes from the file and then 8 `0x00` bytes.
 >
 > More investigation is needed to understand what's going on here, how it affects the usage, and what behavior actually matters/is correct in terms of what to replicate.
+
+## `ACCELERATORS` resource
+
+- Warning on `SHIFT` or `CONTROL` without `VIRTKEY`
+- If both `ASCII` and `VIRTKEY` are specified, `VIRTKEY` always takes precedence
+- Things that differ or are unclear from the [documentation](https://learn.microsoft.com/en-us/windows/win32/menurc/accelerators-resource):
+  + `options` and `type` can be intermixed, there is no enforced ordering
+  + All parts of an accelerator require commas between them
+  + "When VIRTKEY is specified and event contains a string, event ~~must be~~ *[will be transformed to be]* uppercase."
+- Some notes about how `event` is compiled:
+  + `"^^"` -> `^`
+  + `"ab"` -> `ba`
+  + `"aba"` (any > 2 char long string) -> invalid accelerator
