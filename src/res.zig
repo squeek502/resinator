@@ -71,11 +71,11 @@ pub const MemoryFlags = packed struct(u16) {
     ///       has a default of only MOVEABLE | DISCARDABLE).
     pub fn defaults(predefined_resource_type: ?RT) MemoryFlags {
         if (predefined_resource_type == null) {
-            return MemoryFlags{ .value = MOVEABLE | PURE };
+            return MemoryFlags{ .value = MOVEABLE | SHARED };
         } else {
             return switch (predefined_resource_type.?) {
-                .RCDATA, .BITMAP, .HTML, .MANIFEST => MemoryFlags{ .value = MOVEABLE | PURE },
-                .GROUP_ICON, .GROUP_CURSOR, .STRING, .FONT => MemoryFlags{ .value = MOVEABLE | PURE | DISCARDABLE },
+                .RCDATA, .BITMAP, .HTML, .MANIFEST => MemoryFlags{ .value = MOVEABLE | SHARED },
+                .GROUP_ICON, .GROUP_CURSOR, .STRING, .FONT => MemoryFlags{ .value = MOVEABLE | SHARED | DISCARDABLE },
                 .ICON, .CURSOR => MemoryFlags{ .value = MOVEABLE | DISCARDABLE },
                 .FONTDIR => MemoryFlags{ .value = MOVEABLE | PRELOAD },
                 else => {

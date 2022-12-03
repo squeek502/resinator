@@ -29,8 +29,8 @@ Currently a dumping ground for various pieces of information related to `.rc` an
 | Default | Types |
 |----|---------|
 | `MOVEABLE | DISCARDABLE` | `RT_ICON`, `RT_CURSOR` |
-| `MOVEABLE | PURE` | `RT_RCDATA`, `RT_BITMAP`, `RT_HTML` |
-| `MOVEABLE | PURE | DISCARDABLE` | `RT_GROUP_ICON`, `RT_GROUP_CURSOR`, `RT_STRING`, `RT_FONT` |
+| `MOVEABLE | SHARED` | `RT_RCDATA`, `RT_BITMAP`, `RT_HTML` |
+| `MOVEABLE | SHARED | DISCARDABLE` | `RT_GROUP_ICON`, `RT_GROUP_CURSOR`, `RT_STRING`, `RT_FONT` |
 | `MOVEABLE | PRELOAD` | `RT_FONTDIR` |
 
 ### Common Resource Attribute effects
@@ -45,7 +45,7 @@ Currently a dumping ground for various pieces of information related to `.rc` an
 | `NONSHARED` | `flags & ~(SHARED | DISCARDABLE)` |
 | `PURE` | `flags | PURE` |
 | `IMPURE` | `flags & ~(PURE | DISCARDABLE)` |
-| `DISCARDABLE` | `flags | (DISCARDABLE | MOVEABLE | PURE)` |
+| `DISCARDABLE` | `flags | (DISCARDABLE | MOVEABLE | SHARED)` |
 
 ## `FONT` resource
 
