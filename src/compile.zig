@@ -218,7 +218,7 @@ pub const Compiler = struct {
                     try icon_dir.writeResData(writer, first_icon_id);
                     return;
                 },
-                .RCDATA, .HTML => {
+                .RCDATA, .HTML, .MANIFEST => {
                     header.applyMemoryFlags(node.common_resource_attributes, self.source);
                 },
                 .BITMAP => {
