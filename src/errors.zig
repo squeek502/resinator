@@ -168,6 +168,7 @@ pub const ErrorDetails = struct {
         /// `file_open_error` is populated
         file_open_error,
         invalid_accelerator_key,
+        accelerator_type_required,
     };
 
     pub fn render(self: ErrorDetails, writer: anytype, source: []const u8, strings: []const []const u8) !void {
@@ -229,6 +230,9 @@ pub const ErrorDetails = struct {
             },
             .invalid_accelerator_key => {
                 try writer.print("invalid accelerator key: {s}", .{self.token.nameForErrorDisplay(source)});
+            },
+            .accelerator_type_required => {
+                try writer.print("accelerator type [ASCII or VIRTKEY] required when key is an integer", .{});
             },
         }
     }

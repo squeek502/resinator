@@ -271,7 +271,17 @@ pub const AcceleratorModifiers = packed struct(u8) {
     pub const last_accelerator_in_table = 1 << 7;
 
     pub fn apply(self: *AcceleratorModifiers, modifier: rc.AcceleratorTypeAndOptions) void {
-        self.value |= switch (modifier) {
+        self.value |= modifierValue(modifier);
+    }
+
+    pub fn isSet(self: AcceleratorModifiers, modifier: rc.AcceleratorTypeAndOptions) bool {
+        // ASCII is set whenever VIRTKEY is not
+        if (modifier == .ascii) return self.value & modifierValue(.virtkey) == 0;
+        return self.value & modifierValue(modifier) != 0;
+    }
+
+    fn modifierValue(modifier: rc.AcceleratorTypeAndOptions) u8 {
+        return switch (modifier) {
             .ascii => ASCII,
             .virtkey => VIRTKEY,
             .noinvert => NOINVERT,
@@ -288,7 +298,7 @@ pub const AcceleratorModifiers = packed struct(u8) {
 
 /// Expects the input to be a parsed string literal
 /// TODO: Codepage-aware handling of certain characters
-pub fn parseAcceleratorKeyString(str: []const u8) !u16 {
+pub fn parseAcceleratorKeyString(str: []const u8, is_virt: bool) !u16 {
     if (str.len == 0 or str.len > 2) {
         return error.InvalidAccelerator;
     }
@@ -315,30 +325,38 @@ pub fn parseAcceleratorKeyString(str: []const u8) !u16 {
     if (str.len == 2) {
         result <<= 8;
         result += windows1252.toCodepoint(str[1]);
+    } else if (is_virt) {
+        switch (result) {
+            'a'...'z' => result -= 0x20, // toUpper
+            else => {},
+        }
     }
     return result;
 }
 
 test "accelerator keys" {
-    try std.testing.expectEqual(@as(u16, 1), try parseAcceleratorKeyString("^a"));
-    try std.testing.expectEqual(@as(u16, 1), try parseAcceleratorKeyString("^A"));
-    try std.testing.expectEqual(@as(u16, 26), try parseAcceleratorKeyString("^Z"));
-    try std.testing.expectEqual(@as(u16, '^'), try parseAcceleratorKeyString("^^"));
+    try std.testing.expectEqual(@as(u16, 1), try parseAcceleratorKeyString("^a", false));
+    try std.testing.expectEqual(@as(u16, 1), try parseAcceleratorKeyString("^A", false));
+    try std.testing.expectEqual(@as(u16, 26), try parseAcceleratorKeyString("^Z", false));
+    try std.testing.expectEqual(@as(u16, '^'), try parseAcceleratorKeyString("^^", false));
 
-    try std.testing.expectEqual(@as(u16, 'a'), try parseAcceleratorKeyString("a"));
-    try std.testing.expectEqual(@as(u16, 0x6162), try parseAcceleratorKeyString("ab"));
+    try std.testing.expectEqual(@as(u16, 'a'), try parseAcceleratorKeyString("a", false));
+    try std.testing.expectEqual(@as(u16, 0x6162), try parseAcceleratorKeyString("ab", false));
+
+    try std.testing.expectEqual(@as(u16, 'C'), try parseAcceleratorKeyString("c", true));
+    try std.testing.expectEqual(@as(u16, 0x6363), try parseAcceleratorKeyString("cc", true));
 
     // \x80 is € in Windows-1252, which is Unicode codepoint 20AC
     // This depends on the code page, though, with codepage 65001, \x80 is parsed as 0x80
-    try std.testing.expectEqual(@as(u16, 0x20AC), try parseAcceleratorKeyString("\x80"));
-    try std.testing.expectEqual(@as(u16, 0xCCAC), try parseAcceleratorKeyString("\x80\x80"));
+    try std.testing.expectEqual(@as(u16, 0x20AC), try parseAcceleratorKeyString("\x80", false));
+    try std.testing.expectEqual(@as(u16, 0xCCAC), try parseAcceleratorKeyString("\x80\x80", false));
 
     // \x83 is ƒ in Windows-1252, which is Unicode codepoint 0192; 0x0192 - 0x40 = 0x0152
-    try std.testing.expectEqual(@as(u16, 0x0152), try parseAcceleratorKeyString("^\x83"));
+    try std.testing.expectEqual(@as(u16, 0x0152), try parseAcceleratorKeyString("^\x83", false));
 
-    try std.testing.expectError(error.ControlCharacterOutOfRange, parseAcceleratorKeyString("^1"));
-    try std.testing.expectError(error.InvalidControlCharacter, parseAcceleratorKeyString("^"));
-    try std.testing.expectError(error.InvalidAccelerator, parseAcceleratorKeyString(""));
-    try std.testing.expectError(error.InvalidAccelerator, parseAcceleratorKeyString("hello"));
-    try std.testing.expectError(error.ControlCharacterOutOfRange, parseAcceleratorKeyString("^\x80"));
+    try std.testing.expectError(error.ControlCharacterOutOfRange, parseAcceleratorKeyString("^1", false));
+    try std.testing.expectError(error.InvalidControlCharacter, parseAcceleratorKeyString("^", false));
+    try std.testing.expectError(error.InvalidAccelerator, parseAcceleratorKeyString("", false));
+    try std.testing.expectError(error.InvalidAccelerator, parseAcceleratorKeyString("hello", false));
+    try std.testing.expectError(error.ControlCharacterOutOfRange, parseAcceleratorKeyString("^\x80", false));
 }

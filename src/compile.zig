@@ -419,7 +419,7 @@ pub const Compiler = struct {
         try writer.writeByteNTimes(0, padding_after_data);
     }
 
-    pub fn evaluateAcceleratorKeyExpression(self: *Compiler, node: *Node) !u16 {
+    pub fn evaluateAcceleratorKeyExpression(self: *Compiler, node: *Node, is_virt: bool) !u16 {
         if (node.isNumberExpression()) {
             return evaluateNumberExpression(node, self.source).asWord();
         } else {
@@ -433,7 +433,7 @@ pub const Compiler = struct {
             }
             const parsed_string = try parseQuotedAsciiString(self.allocator, slice, literal.token.calculateColumn(self.source, 8, null));
             defer self.allocator.free(parsed_string);
-            return res.parseAcceleratorKeyString(parsed_string);
+            return res.parseAcceleratorKeyString(parsed_string, is_virt);
         }
     }
 
@@ -449,7 +449,13 @@ pub const Compiler = struct {
                 const modifier = rc.AcceleratorTypeAndOptions.map.get(type_or_option.slice(self.source)).?;
                 modifiers.apply(modifier);
             }
-            const key = self.evaluateAcceleratorKeyExpression(accelerator.event) catch {
+            if (accelerator.event.isNumberExpression() and !modifiers.isSet(.ascii) and !modifiers.isSet(.virtkey)) {
+                return self.addErrorDetailsAndFail(.{
+                    .err = .accelerator_type_required,
+                    .token = accelerator.event.getFirstToken(),
+                });
+            }
+            const key = self.evaluateAcceleratorKeyExpression(accelerator.event, modifiers.isSet(.virtkey)) catch {
                 // TODO: better error with more context from the caught error
                 return self.addErrorDetailsAndFail(.{
                     .err = .invalid_accelerator_key,
@@ -985,7 +991,13 @@ fn testCompileWithOutput(source: []const u8, expected_output: []const u8, cwd: s
     var diagnostics = Diagnostics.init(std.testing.allocator);
     defer diagnostics.deinit();
 
-    try compile(std.testing.allocator, source, buffer.writer(), cwd, &diagnostics);
+    compile(std.testing.allocator, source, buffer.writer(), cwd, &diagnostics) catch |err| switch (err) {
+        error.ParseError, error.CompileError => {
+            diagnostics.renderToStdErr(cwd, source, null);
+            return err;
+        },
+        else => return err,
+    };
 
     try @import("utils.zig").testing.expectEqualBytes(expected_output, buffer.items);
 }
@@ -1420,7 +1432,7 @@ test "accelerators resource" {
         std.fs.cwd(),
     );
     try testCompileWithOutput(
-        \\1 ACCELERATORS { "C", 65537, VIRTKEY, CONTROL, ALT, SHIFT }
+        \\1 ACCELERATORS { "c", 65537, VIRTKEY, CONTROL, ALT, SHIFT }
     ,
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x08\x00\x00\x00 \x00\x00\x00\xff\xff\t\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x9d\x00C\x00\x01\x00\x00\x00",
         std.fs.cwd(),
