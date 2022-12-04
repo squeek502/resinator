@@ -287,19 +287,41 @@ pub const Parser = struct {
                 var accelerators = std.ArrayListUnmanaged(*Node){};
 
                 while (true) {
-                    try self.nextToken(.normal);
-                    switch (self.state.token.id) {
-                        .number, .quoted_ascii_string, .quoted_wide_string => {},
-                        else => break,
+                    const lookahead = try self.lookaheadToken(.normal);
+                    switch (lookahead.id) {
+                        .end, .eof => {
+                            self.nextToken(.normal) catch unreachable;
+                            break;
+                        },
+                        else => {},
                     }
-                    const event = self.state.token;
+                    const event = try self.parseExpression(false);
+                    if (!event.isNumberExpression() and !event.isStringLiteral()) {
+                        return self.addErrorDetailsAndFail(.{
+                            .err = .expected_something_else,
+                            .token = self.state.token,
+                            .extra = .{ .expected_types = .{
+                                .number = true,
+                                .number_expression = true,
+                                .string_literal = true,
+                            } },
+                        });
+                    }
 
                     try self.nextToken(.normal);
                     try self.check(.comma);
 
-                    try self.nextToken(.normal);
-                    try self.check(.number);
-                    const idvalue = self.state.token;
+                    const idvalue = try self.parseExpression(false);
+                    if (!idvalue.isNumberExpression()) {
+                        return self.addErrorDetailsAndFail(.{
+                            .err = .expected_something_else,
+                            .token = self.state.token,
+                            .extra = .{ .expected_types = .{
+                                .number = true,
+                                .number_expression = true,
+                            } },
+                        });
+                    }
 
                     var type_and_options = std.ArrayListUnmanaged(Token){};
                     while (true) {
@@ -961,16 +983,29 @@ test "accelerators" {
         \\root
         \\ accelerators 1 ACCELERATORS [0 common_resource_attributes]
         \\ {
-        \\  accelerator "^C", 1
-        \\  accelerator L"a", 2
+        \\  accelerator
+        \\   literal "^C"
+        \\   literal 1
+        \\  accelerator
+        \\   literal L"a"
+        \\   literal 2
         \\ }
         \\
     );
-    try testParse("1 ACCELERATORS { \"^C\", 1, CONTROL, ASCII, VIRTKEY, ALT, SHIFT }",
+    try testParse("1 ACCELERATORS { (1+1), -1+1, CONTROL, ASCII, VIRTKEY, ALT, SHIFT }",
         \\root
         \\ accelerators 1 ACCELERATORS [0 common_resource_attributes]
         \\ {
-        \\  accelerator "^C", 1, CONTROL, ASCII, VIRTKEY, ALT, SHIFT
+        \\  accelerator CONTROL, ASCII, VIRTKEY, ALT, SHIFT
+        \\   grouped_expression
+        \\   (
+        \\    binary_expression +
+        \\     literal 1
+        \\     literal 1
+        \\   )
+        \\   binary_expression +
+        \\    literal -1
+        \\    literal 1
         \\ }
         \\
     );
@@ -989,6 +1024,8 @@ test "parse errors" {
     try testParseError("expected '<filename>', found '{' (resource type 'icon' can't use raw data)", "1 ICON {}");
     try testParseError("id of resource type 'font' must be an ordinal (u16), got 'string'", "string FONT filename");
     try testParseError("expected accelerator type or option [ASCII, VIRTKEY, etc]; got 'NOTANOPTIONORTYPE'", "1 ACCELERATORS { 1, 1, NOTANOPTIONORTYPE");
+    try testParseError("expected number, number expression, or quoted string literal; got 'hello'", "1 ACCELERATORS { hello, 1 }");
+    try testParseError("expected number or number expression; got '\"hello\"'", "1 ACCELERATORS { 1, \"hello\" }");
 }
 
 fn testParseError(expected_error_str: []const u8, source: []const u8) !void {

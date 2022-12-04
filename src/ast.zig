@@ -121,8 +121,8 @@ pub const Node = struct {
 
     pub const Accelerator = struct {
         base: Node = .{ .id = .accelerator },
-        event: Token,
-        idvalue: Token,
+        event: *Node,
+        idvalue: *Node,
         type_and_options: []Token,
     };
 
@@ -236,7 +236,7 @@ pub const Node = struct {
             },
             .accelerator => {
                 const casted = @fieldParentPtr(Node.Accelerator, "base", node);
-                return casted.event;
+                return casted.event.getFirstToken();
             },
             .string_table => {
                 const casted = @fieldParentPtr(Node.StringTable, "base", node);
@@ -329,11 +329,14 @@ pub const Node = struct {
             },
             .accelerator => {
                 const accelerator = @fieldParentPtr(Node.Accelerator, "base", node);
-                try writer.print(" {s}, {s}", .{ accelerator.event.slice(tree.source), accelerator.idvalue.slice(tree.source) });
-                for (accelerator.type_and_options) |option| {
-                    try writer.print(", {s}", .{option.slice(tree.source)});
+                for (accelerator.type_and_options) |option, i| {
+                    if (i != 0) try writer.writeAll(",");
+                    try writer.writeByte(' ');
+                    try writer.writeAll(option.slice(tree.source));
                 }
                 try writer.writeAll("\n");
+                try accelerator.event.dump(tree, writer, indent + 1);
+                try accelerator.idvalue.dump(tree, writer, indent + 1);
             },
             .string_table => {
                 const string_table = @fieldParentPtr(Node.StringTable, "base", node);
