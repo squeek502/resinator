@@ -83,7 +83,7 @@ pub const Compiler = struct {
             .binary_expression => @panic("TODO"),
             .grouped_expression => @panic("TODO"),
             .invalid => @panic("TODO"),
-            .accelerators => @panic("TODO"),
+            .accelerators => try self.writeAccelerators(@fieldParentPtr(Node.Accelerators, "base", node), writer),
             .accelerator => unreachable, // handled by writeAccelerators
             .string_table => try self.writeStringTable(@fieldParentPtr(Node.StringTable, "base", node)),
             .string_table_string => unreachable, // handled by writeStringTable
@@ -417,6 +417,69 @@ pub const Compiler = struct {
     pub fn writeDataPadding(writer: anytype, data_size: u32) !void {
         const padding_after_data = std.mem.alignForward(data_size, 4) - data_size;
         try writer.writeByteNTimes(0, padding_after_data);
+    }
+
+    pub fn evaluateAcceleratorKeyExpression(self: *Compiler, node: *Node) !u16 {
+        if (node.isNumberExpression()) {
+            return evaluateNumberExpression(node, self.source).asWord();
+        } else {
+            std.debug.assert(node.isStringLiteral());
+            const literal = @fieldParentPtr(Node.Literal, "base", node);
+            var slice = literal.token.slice(self.source);
+            // TODO: Is this okay?
+            if (literal.token.id == .quoted_wide_string) {
+                // remove the L/l prefix
+                slice = slice[1..];
+            }
+            const parsed_string = try parseQuotedAsciiString(self.allocator, slice, literal.token.calculateColumn(self.source, 8, null));
+            defer self.allocator.free(parsed_string);
+            return res.parseAcceleratorKeyString(parsed_string);
+        }
+    }
+
+    pub fn writeAccelerators(self: *Compiler, node: *Node.Accelerators, writer: anytype) !void {
+        var data_buffer = std.ArrayList(u8).init(self.allocator);
+        defer data_buffer.deinit();
+        const data_writer = data_buffer.writer();
+
+        for (node.accelerators) |accel_node, i| {
+            const accelerator = @fieldParentPtr(Node.Accelerator, "base", accel_node);
+            var modifiers = res.AcceleratorModifiers{};
+            for (accelerator.type_and_options) |type_or_option| {
+                const modifier = rc.AcceleratorTypeAndOptions.map.get(type_or_option.slice(self.source)).?;
+                modifiers.apply(modifier);
+            }
+            const key = self.evaluateAcceleratorKeyExpression(accelerator.event) catch {
+                // TODO: better error with more context from the caught error
+                return self.addErrorDetailsAndFail(.{
+                    .err = .invalid_accelerator_key,
+                    .token = accelerator.event.getFirstToken(),
+                });
+            };
+            const cmd_id = evaluateNumberExpression(accelerator.idvalue, self.source);
+
+            if (i == node.accelerators.len - 1) {
+                modifiers.markLast();
+            }
+
+            try data_writer.writeByte(modifiers.value);
+            try data_writer.writeByte(0); // padding
+            try data_writer.writeIntLittle(u16, key);
+            try data_writer.writeIntLittle(u16, cmd_id.asWord());
+            try data_writer.writeIntLittle(u16, 0); // padding
+        }
+
+        const data_size = @intCast(u32, data_buffer.items.len);
+        var header = try ResourceHeader.init(self.allocator, node.id.slice(self.source), node.type.slice(self.source), data_size, self.state.language);
+        defer header.deinit(self.allocator);
+
+        header.applyMemoryFlags(node.common_resource_attributes, self.source);
+        header.applyOptionalStatements(node.optional_statements, self.source);
+
+        try header.write(writer);
+
+        var data_fbs = std.io.fixedBufferStream(data_buffer.items);
+        try writeResourceData(writer, data_fbs.reader(), data_size);
     }
 
     pub fn writeStringTable(self: *Compiler, node: *Node.StringTable) !void {
@@ -1346,5 +1409,20 @@ test "font resource" {
     ,
         expected,
         tmp_dir.dir,
+    );
+}
+
+test "accelerators resource" {
+    try testCompileWithOutput(
+        \\1 ACCELERATORS { 1, 1, ASCII }
+    ,
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x08\x00\x00\x00 \x00\x00\x00\xff\xff\t\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x80\x00\x01\x00\x01\x00\x00\x00",
+        std.fs.cwd(),
+    );
+    try testCompileWithOutput(
+        \\1 ACCELERATORS { "C", 65537, VIRTKEY, CONTROL, ALT, SHIFT }
+    ,
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x08\x00\x00\x00 \x00\x00\x00\xff\xff\t\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x9d\x00C\x00\x01\x00\x00\x00",
+        std.fs.cwd(),
     );
 }

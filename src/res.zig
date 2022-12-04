@@ -3,6 +3,7 @@ const rc = @import("rc.zig");
 const Resource = rc.Resource;
 const CommonResourceAttributes = rc.CommonResourceAttributes;
 const Allocator = std.mem.Allocator;
+const windows1252 = @import("windows1252.zig");
 
 /// https://learn.microsoft.com/en-us/windows/win32/menurc/resource-types
 pub const RT = enum(u8) {
@@ -85,7 +86,7 @@ pub const MemoryFlags = packed struct(u16) {
             return MemoryFlags{ .value = MOVEABLE | SHARED };
         } else {
             return switch (predefined_resource_type.?) {
-                .RCDATA, .BITMAP, .HTML, .MANIFEST => MemoryFlags{ .value = MOVEABLE | SHARED },
+                .RCDATA, .BITMAP, .HTML, .MANIFEST, .ACCELERATOR => MemoryFlags{ .value = MOVEABLE | SHARED },
                 .GROUP_ICON, .GROUP_CURSOR, .STRING, .FONT => MemoryFlags{ .value = MOVEABLE | SHARED | DISCARDABLE },
                 .ICON, .CURSOR => MemoryFlags{ .value = MOVEABLE | DISCARDABLE },
                 .FONTDIR => MemoryFlags{ .value = MOVEABLE | PRELOAD },
@@ -114,6 +115,8 @@ pub const MemoryFlags = packed struct(u16) {
 
 /// https://learn.microsoft.com/en-us/windows/win32/intl/language-identifiers
 pub const Language = packed struct(u16) {
+    // TODO: Are these defaults dependent on the system's language setting at the time
+    //       that the RC compiler is run?
     primary_language_id: u10 = 0x09, // LANG_ENGLISH
     sublanguage_id: u6 = 0x01, // SUBLANG_ENGLISH_US (since primary is ENGLISH)
 };
@@ -252,3 +255,90 @@ pub const NameOrOrdinal = union(enum) {
         }
     }
 };
+
+/// https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-accel#members
+/// https://devblogs.microsoft.com/oldnewthing/20070316-00/?p=27593
+pub const AcceleratorModifiers = packed struct(u8) {
+    value: u8 = 0,
+
+    pub const ASCII = 0;
+    pub const VIRTKEY = 1;
+    pub const NOINVERT = 1 << 1;
+    pub const SHIFT = 1 << 2;
+    pub const CONTROL = 1 << 3;
+    pub const ALT = 1 << 4;
+    /// Marker for the last accelerator in an accelerator table
+    pub const last_accelerator_in_table = 1 << 7;
+
+    pub fn apply(self: *AcceleratorModifiers, modifier: rc.AcceleratorTypeAndOptions) void {
+        self.value |= switch (modifier) {
+            .ascii => ASCII,
+            .virtkey => VIRTKEY,
+            .noinvert => NOINVERT,
+            .shift => SHIFT,
+            .control => CONTROL,
+            .alt => ALT,
+        };
+    }
+
+    pub fn markLast(self: *AcceleratorModifiers) void {
+        self.value |= last_accelerator_in_table;
+    }
+};
+
+/// Expects the input to be a parsed string literal
+/// TODO: Codepage-aware handling of certain characters
+pub fn parseAcceleratorKeyString(str: []const u8) !u16 {
+    if (str.len == 0 or str.len > 2) {
+        return error.InvalidAccelerator;
+    }
+
+    if (str[0] == '^') {
+        if (str.len == 1) return error.InvalidControlCharacter;
+        // TODO: This should be handled differently if the code page is not 1252
+        const c = str[1];
+        const codepoint = windows1252.toCodepoint(c);
+        switch (codepoint) {
+            '^' => return '^', // special case
+            'a'...'z', 'A'...'Z' => return std.ascii.toLower(c) - 'a' + 1,
+            // For some reason the Windows-1252 characters that have codepoints less
+            // than 0x0200 but greater than 0xFF get converted like so when used in a
+            // ^<char> sequence.
+            // TODO: Understand this better?
+            'ƒ', 'Š', 'Œ', 'Ž', 'š', 'œ', 'ž', 'Ÿ' => return codepoint - 0x40,
+            else => return error.ControlCharacterOutOfRange,
+        }
+    }
+
+    // TODO: This should be handled differently if the code page is not 1252 (see test case)
+    var result: u16 = windows1252.toCodepoint(str[0]);
+    if (str.len == 2) {
+        result <<= 8;
+        result += windows1252.toCodepoint(str[1]);
+    }
+    return result;
+}
+
+test "accelerator keys" {
+    try std.testing.expectEqual(@as(u16, 1), try parseAcceleratorKeyString("^a"));
+    try std.testing.expectEqual(@as(u16, 1), try parseAcceleratorKeyString("^A"));
+    try std.testing.expectEqual(@as(u16, 26), try parseAcceleratorKeyString("^Z"));
+    try std.testing.expectEqual(@as(u16, '^'), try parseAcceleratorKeyString("^^"));
+
+    try std.testing.expectEqual(@as(u16, 'a'), try parseAcceleratorKeyString("a"));
+    try std.testing.expectEqual(@as(u16, 0x6162), try parseAcceleratorKeyString("ab"));
+
+    // \x80 is € in Windows-1252, which is Unicode codepoint 20AC
+    // This depends on the code page, though, with codepage 65001, \x80 is parsed as 0x80
+    try std.testing.expectEqual(@as(u16, 0x20AC), try parseAcceleratorKeyString("\x80"));
+    try std.testing.expectEqual(@as(u16, 0xCCAC), try parseAcceleratorKeyString("\x80\x80"));
+
+    // \x83 is ƒ in Windows-1252, which is Unicode codepoint 0192; 0x0192 - 0x40 = 0x0152
+    try std.testing.expectEqual(@as(u16, 0x0152), try parseAcceleratorKeyString("^\x83"));
+
+    try std.testing.expectError(error.ControlCharacterOutOfRange, parseAcceleratorKeyString("^1"));
+    try std.testing.expectError(error.InvalidControlCharacter, parseAcceleratorKeyString("^"));
+    try std.testing.expectError(error.InvalidAccelerator, parseAcceleratorKeyString(""));
+    try std.testing.expectError(error.InvalidAccelerator, parseAcceleratorKeyString("hello"));
+    try std.testing.expectError(error.ControlCharacterOutOfRange, parseAcceleratorKeyString("^\x80"));
+}

@@ -167,6 +167,7 @@ pub const ErrorDetails = struct {
         font_id_already_defined,
         /// `file_open_error` is populated
         file_open_error,
+        invalid_accelerator_key,
     };
 
     pub fn render(self: ErrorDetails, writer: anytype, source: []const u8, strings: []const []const u8) !void {
@@ -225,6 +226,9 @@ pub const ErrorDetails = struct {
             },
             .file_open_error => {
                 try writer.print("unable to open file '{s}': {s}", .{ strings[self.extra.file_open_error.filename_string_index], @tagName(self.extra.file_open_error.err) });
+            },
+            .invalid_accelerator_key => {
+                try writer.print("invalid accelerator key: {s}", .{self.token.nameForErrorDisplay(source)});
             },
         }
     }

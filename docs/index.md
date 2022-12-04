@@ -29,7 +29,7 @@ Currently a dumping ground for various pieces of information related to `.rc` an
 | Default | Types |
 |----|---------|
 | `MOVEABLE | DISCARDABLE` | `RT_ICON`, `RT_CURSOR` |
-| `MOVEABLE | SHARED` | `RT_RCDATA`, `RT_BITMAP`, `RT_HTML` |
+| `MOVEABLE | SHARED` | `RT_RCDATA`, `RT_BITMAP`, `RT_HTML`, `RT_ACCELERATOR` |
 | `MOVEABLE | SHARED | DISCARDABLE` | `RT_GROUP_ICON`, `RT_GROUP_CURSOR`, `RT_STRING`, `RT_FONT` |
 | `MOVEABLE | PRELOAD` | `RT_FONTDIR` |
 
@@ -73,6 +73,7 @@ At the end of the .res, a single `RT_FONTDIR` resource with the name `FONTDIR` i
 ## `ACCELERATORS` resource
 
 - Warning on `SHIFT` or `CONTROL` without `VIRTKEY`
+- Warning on 'ASCII character not equivalent to virtual key code' (example: `"^C", 1, VIRTKEY`)
 - If both `ASCII` and `VIRTKEY` are specified, `VIRTKEY` always takes precedence
 - Things that differ or are unclear from the [documentation](https://learn.microsoft.com/en-us/windows/win32/menurc/accelerators-resource):
   + `options` and `type` can be intermixed, there is no enforced ordering
