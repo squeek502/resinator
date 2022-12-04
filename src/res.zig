@@ -44,10 +44,21 @@ pub const RT = enum(u8) {
             .menuex => null, // TODO: ?
             .messagetable => .MESSAGETABLE,
             .popup => null,
+            .plugplay => .PLUGPLAY,
             .rcdata => .RCDATA,
-            .stringtable => .STRING,
-            .versioninfo => .VERSION,
+            .stringtable => null, // TODO: Maybe unreachable?
             .user_defined => null,
+            .versioninfo => .VERSION,
+            .vxd => .VXD,
+
+            .cursor_num => .CURSOR,
+            .icon_num => .ICON,
+            .string_num => .STRING,
+            .anicursor_num => .ANICURSOR,
+            .aniicon_num => .ANIICON,
+            .dlginclude_num => .DLGINCLUDE,
+            .fontdir_num => .FONTDIR,
+            .manifest_num => .MANIFEST,
         };
     }
 };

@@ -263,6 +263,19 @@ pub const Parser = struct {
         const resource = try self.checkResource();
         const type_token = self.state.token;
 
+        if (resource == .string_num) {
+            try self.addErrorDetails(.{
+                .err = .string_resource_as_numeric_type,
+                .token = type_token,
+            });
+            return self.addErrorDetailsAndFail(.{
+                .err = .string_resource_as_numeric_type,
+                .token = type_token,
+                .type = .note,
+                .print_source_line = false,
+            });
+        }
+
         if (resource == .font) {
             const maybe_ordinal = res.NameOrOrdinal.maybeOrdinalFromString(id_token.slice(self.lexer.buffer));
             if (maybe_ordinal == null) {
@@ -1026,6 +1039,7 @@ test "parse errors" {
     try testParseError("expected accelerator type or option [ASCII, VIRTKEY, etc]; got 'NOTANOPTIONORTYPE'", "1 ACCELERATORS { 1, 1, NOTANOPTIONORTYPE");
     try testParseError("expected number, number expression, or quoted string literal; got 'hello'", "1 ACCELERATORS { hello, 1 }");
     try testParseError("expected number or number expression; got '\"hello\"'", "1 ACCELERATORS { 1, \"hello\" }");
+    try testParseError("the number 6 (RT_STRING) cannot be used as a resource type", "1 6 {}");
 }
 
 fn testParseError(expected_error_str: []const u8, source: []const u8) !void {

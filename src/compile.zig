@@ -167,21 +167,7 @@ pub const Compiler = struct {
         defer file.close();
 
         // Init header with data size zero for now, will need to fill it in later
-        var header = ResourceHeader.init(self.allocator, node.id.slice(self.source), node.type.slice(self.source), 0, self.state.language) catch |err| switch (err) {
-            error.StringResourceAsNumericType => {
-                try self.addErrorDetails(.{
-                    .err = .string_resource_as_numeric_type,
-                    .token = node.type,
-                });
-                return self.addErrorDetailsAndFail(.{
-                    .err = .string_resource_as_numeric_type,
-                    .token = node.type,
-                    .type = .note,
-                    .print_source_line = false,
-                });
-            },
-            else => |e| return e,
-        };
+        var header = try ResourceHeader.init(self.allocator, node.id.slice(self.source), node.type.slice(self.source), 0, self.state.language);
         defer header.deinit(self.allocator);
 
         if (header.predefinedResourceType()) |predefined_type| {
@@ -410,21 +396,7 @@ pub const Compiler = struct {
     }
 
     pub fn writeResourceHeader(self: *Compiler, writer: anytype, id_token: Token, type_token: Token, data_size: u32, common_resource_attributes: []Token, language: res.Language) !void {
-        var header = ResourceHeader.init(self.allocator, id_token.slice(self.source), type_token.slice(self.source), data_size, language) catch |err| switch (err) {
-            error.StringResourceAsNumericType => {
-                try self.addErrorDetails(.{
-                    .err = .string_resource_as_numeric_type,
-                    .token = type_token,
-                });
-                return self.addErrorDetailsAndFail(.{
-                    .err = .string_resource_as_numeric_type,
-                    .token = type_token,
-                    .type = .note,
-                    .print_source_line = false,
-                });
-            },
-            else => |e| return e,
-        };
+        var header = try ResourceHeader.init(self.allocator, id_token.slice(self.source), type_token.slice(self.source), data_size, language);
         defer header.deinit(self.allocator);
 
         header.applyMemoryFlags(common_resource_attributes, self.source);
@@ -507,10 +479,6 @@ pub const Compiler = struct {
                 }
             };
             errdefer type_value.deinit(allocator);
-
-            if (type_value == .ordinal and type_value.ordinal == @enumToInt(res.RT.STRING)) {
-                return error.StringResourceAsNumericType;
-            }
 
             const name_value = try NameOrOrdinal.fromString(allocator, id_slice);
             errdefer name_value.deinit(allocator);

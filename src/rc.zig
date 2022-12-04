@@ -1,5 +1,6 @@
 const std = @import("std");
 const utils = @import("utils.zig");
+const res = @import("res.zig");
 
 // https://learn.microsoft.com/en-us/windows/win32/menurc/about-resource-files
 
@@ -16,14 +17,24 @@ pub const Resource = enum {
     menuex,
     messagetable,
     popup,
-    //plugplay, // Obsolete
+    plugplay, // Obsolete
     rcdata,
     stringtable,
     //textinclude, // A special resource that is interpreted by Visual C++.
     //typelib, // A special resource that is used with the /TLBID and /TLBOUT linker options
     user_defined,
     versioninfo,
-    //vxd, // Obsolete
+    vxd, // Obsolete
+
+    // Types that can only be specified by numbers, they don't have keywords
+    cursor_num,
+    icon_num,
+    string_num,
+    anicursor_num,
+    aniicon_num,
+    dlginclude_num,
+    fontdir_num,
+    manifest_num,
 
     const map = utils.ComptimeCaseInsensitiveStringMap(Resource, .{
         .{ "ACCELERATORS", .accelerators },
@@ -38,22 +49,58 @@ pub const Resource = enum {
         .{ "MENUEX", .menuex },
         .{ "MESSAGETABLE", .messagetable },
         .{ "POPUP", .popup },
+        .{ "PLUGPLAY", .plugplay },
         .{ "RCDATA", .rcdata },
         .{ "STRINGTABLE", .stringtable },
         .{ "VERSIONINFO", .versioninfo },
+        .{ "VXD", .vxd },
     });
 
     pub fn fromString(str: []const u8) Resource {
+        const maybe_ordinal = res.NameOrOrdinal.maybeOrdinalFromString(str);
+        if (maybe_ordinal) |ordinal| {
+            const rt = @intToEnum(res.RT, ordinal.ordinal);
+            return fromRT(rt);
+        }
         return map.get(str) orelse .user_defined;
+    }
+
+    // TODO: Some comptime validation that RT <-> Resource conversion is synced?
+    pub fn fromRT(rt: res.RT) Resource {
+        return switch (rt) {
+            .ACCELERATOR => .accelerators,
+            .ANICURSOR => .anicursor_num,
+            .ANIICON => .aniicon_num,
+            .BITMAP => .bitmap,
+            .CURSOR => .cursor_num,
+            .DIALOG => .dialog,
+            .DLGINCLUDE => .dlginclude_num,
+            .FONT => .font,
+            .FONTDIR => .fontdir_num,
+            .GROUP_CURSOR => .cursor,
+            .GROUP_ICON => .icon,
+            .HTML => .html,
+            .ICON => .icon_num,
+            .MANIFEST => .manifest_num,
+            .MENU => .menu,
+            .MESSAGETABLE => .messagetable,
+            .PLUGPLAY => .plugplay,
+            .RCDATA => .rcdata,
+            .STRING => .string_num,
+            .VERSION => .versioninfo,
+            .VXD => .vxd,
+            _ => .user_defined,
+        };
     }
 
     pub fn canUseRawData(resource: Resource) bool {
         return switch (resource) {
             .user_defined,
             .html,
-            //.plugplay, // Obsolete
+            .plugplay, // Obsolete
             .rcdata,
-            //.vxd, // Obsolete
+            .vxd, // Obsolete
+            .manifest_num,
             => true,
             else => false,
         };

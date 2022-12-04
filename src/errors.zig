@@ -159,9 +159,9 @@ pub const ErrorDetails = struct {
         resource_type_cant_use_raw_data,
         /// `resource` is populated
         id_must_be_ordinal,
+        string_resource_as_numeric_type,
 
         // Compiler
-        string_resource_as_numeric_type,
         /// `string_and_language` is populated
         string_already_defined,
         font_id_already_defined,
