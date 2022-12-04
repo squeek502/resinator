@@ -155,8 +155,8 @@ pub const NameOrOrdinal = union(enum) {
         }
     }
 
-    pub fn fromString(allocator: Allocator, str: []const u8) !NameOrOrdinal {
-        if (maybeOrdinalFromString(str)) |ordinal| {
+    pub fn fromString(allocator: Allocator, str: []const u8, allow_overflow: bool) !NameOrOrdinal {
+        if (maybeOrdinalFromString(str, allow_overflow)) |ordinal| {
             return ordinal;
         }
         return nameFromString(allocator, str);
@@ -181,7 +181,7 @@ pub const NameOrOrdinal = union(enum) {
         return NameOrOrdinal{ .name = as_utf16 };
     }
 
-    pub fn maybeOrdinalFromString(str: []const u8) ?NameOrOrdinal {
+    pub fn maybeOrdinalFromString(str: []const u8, allow_overflow: bool) ?NameOrOrdinal {
         var buf = str;
         var radix: u8 = 10;
         if (buf.len > 2 and buf[0] == '0') {
@@ -209,9 +209,9 @@ pub const NameOrOrdinal = union(enum) {
             };
 
             if (result != 0) {
-                if (@mulWithOverflow(u16, result, radix, &result)) return null;
+                if (@mulWithOverflow(u16, result, radix, &result) and !allow_overflow) return null;
             }
-            if (@addWithOverflow(u16, result, digit, &result)) return null;
+            if (@addWithOverflow(u16, result, digit, &result) and !allow_overflow) return null;
         }
 
         // Zero is not interpretted as a number

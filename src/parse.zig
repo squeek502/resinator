@@ -277,7 +277,7 @@ pub const Parser = struct {
         }
 
         if (resource == .font) {
-            const maybe_ordinal = res.NameOrOrdinal.maybeOrdinalFromString(id_token.slice(self.lexer.buffer));
+            const maybe_ordinal = res.NameOrOrdinal.maybeOrdinalFromString(id_token.slice(self.lexer.buffer), true);
             if (maybe_ordinal == null) {
                 return self.addErrorDetailsAndFail(ErrorDetails{
                     .err = .id_must_be_ordinal,

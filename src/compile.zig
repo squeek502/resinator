@@ -475,12 +475,12 @@ pub const Compiler = struct {
                         @panic("TODO: unhandled resource -> RT constant conversion");
                     }
                 } else {
-                    break :type try NameOrOrdinal.fromString(allocator, type_slice);
+                    break :type try NameOrOrdinal.fromString(allocator, type_slice, false);
                 }
             };
             errdefer type_value.deinit(allocator);
 
-            const name_value = try NameOrOrdinal.fromString(allocator, id_slice);
+            const name_value = try NameOrOrdinal.fromString(allocator, id_slice, true);
             errdefer name_value.deinit(allocator);
 
             const predefined_resource_type = type_value.predefinedResourceType();
@@ -626,7 +626,7 @@ pub const FontDir = struct {
         // u16 count + [(u16 id + 150 bytes) for each font]
         const data_size = 2 + (2 + 150) * self.fonts.items.len;
         var header = Compiler.ResourceHeader{
-            .name_value = try NameOrOrdinal.fromString(compiler.allocator, "FONTDIR"),
+            .name_value = try NameOrOrdinal.nameFromString(compiler.allocator, "FONTDIR"),
             .type_value = NameOrOrdinal{ .ordinal = @enumToInt(res.RT.FONTDIR) },
             .memory_flags = res.MemoryFlags.defaults(res.RT.FONTDIR),
             .language = compiler.state.language,
@@ -1121,6 +1121,12 @@ test "NameOrOrdinal" {
     try testCompileWithOutput(
         "0o1234 65537 {}",
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x004\x00\x00\x006\x005\x005\x003\x007\x00\x00\x000\x00O\x001\x002\x003\x004\x00\x00\x00\x00\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00",
+        std.fs.cwd(),
+    );
+    // overflow *is* allowed in ids
+    try testCompileWithOutput(
+        "65537 RCDATA {}",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00",
         std.fs.cwd(),
     );
     // non-hex-digits in a hex literal are treated as a terminator

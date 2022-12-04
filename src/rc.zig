@@ -57,7 +57,7 @@ pub const Resource = enum {
     });
 
     pub fn fromString(str: []const u8) Resource {
-        const maybe_ordinal = res.NameOrOrdinal.maybeOrdinalFromString(str);
+        const maybe_ordinal = res.NameOrOrdinal.maybeOrdinalFromString(str, false);
         if (maybe_ordinal) |ordinal| {
             const rt = @intToEnum(res.RT, ordinal.ordinal);
             return fromRT(rt);
