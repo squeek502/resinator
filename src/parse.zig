@@ -379,7 +379,10 @@ pub const Parser = struct {
                 };
                 return &node.base;
             },
-            .icon, .font, .cursor, .bitmap, .messagetable, .user_defined, .rcdata, .html => {
+            .stringtable => unreachable,
+            // Just try everything as a 'generic' resource (raw data or external file)
+            // TODO: More fine-grained switch cases as necessary
+            else => {
                 const common_resource_attributes = try self.parseCommonResourceAttributesLookahead();
 
                 const maybe_begin = try self.lookaheadToken(.normal);
@@ -483,8 +486,6 @@ pub const Parser = struct {
                 };
                 return &node.base;
             },
-            .stringtable => unreachable,
-            else => @panic("TODO unhandled resource type"),
         }
     }
 
