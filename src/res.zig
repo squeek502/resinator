@@ -209,9 +209,9 @@ pub const NameOrOrdinal = union(enum) {
             };
 
             if (result != 0) {
-                result *%= radix;
+                if (@mulWithOverflow(u16, result, radix, &result)) return null;
             }
-            result +%= digit;
+            if (@addWithOverflow(u16, result, digit, &result)) return null;
         }
 
         // Zero is not interpretted as a number
