@@ -1,6 +1,5 @@
 const std = @import("std");
 const utils = @import("utils.zig");
-const resinator = @import("resinator");
 
 const common_resource_attributes: []const []const u8 = &.{
     "PRELOAD",  "LOADONCALL",  "FIXED",
@@ -45,29 +44,7 @@ test "common resource attribute permutations" {
             std.debug.print("{}\n", .{perm_i});
             const source = source_buffer.items;
 
-            const expected_res = resinator.compile.getExpectedFromWindowsRCWithDir(allocator, source, tmp.dir, "zig-cache/tmp/" ++ tmp.sub_path) catch {
-                std.debug.print("\n^^^^^^^^^^^^\nFound input that is rejected by the Windows RC compiler:\n\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
-                return error.UnexpectedRCError;
-            };
-            defer allocator.free(expected_res);
-
-            var diagnostics = resinator.errors.Diagnostics.init(allocator);
-            defer diagnostics.deinit();
-
-            buffer.shrinkRetainingCapacity(0);
-            resinator.compile.compile(allocator, source, buffer.writer(), std.fs.cwd(), &diagnostics) catch |err| switch (err) {
-                error.ParseError, error.CompileError => {
-                    diagnostics.renderToStdErr(std.fs.cwd(), source, null);
-                    return err;
-                },
-                else => return err,
-            };
-
-            resinator.utils.testing.expectEqualBytes(expected_res, buffer.items) catch |err| {
-                std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
-                std.debug.print("expected:\n{}\nactual:\n{}\n\n", .{ std.zig.fmtEscapes(expected_res), std.zig.fmtEscapes(buffer.items) });
-                return err;
-            };
+            try utils.expectSameResOutput(allocator, source, &buffer);
 
             source_buffer.shrinkRetainingCapacity(0);
         }

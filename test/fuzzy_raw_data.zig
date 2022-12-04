@@ -1,5 +1,5 @@
 const std = @import("std");
-const resinator = @import("resinator");
+const utils = @import("utils.zig");
 
 test "single char in raw data block" {
     var source_buf = "1 RCDATA { ? }".*;
@@ -36,35 +36,7 @@ fn testAllBytes(source: []u8) !void {
         source[byte_index] = byte;
         std.debug.print("byte: 0x{X}\n", .{byte});
 
-        const expected_res: ?[]const u8 = resinator.compile.getExpectedFromWindowsRC(allocator, source) catch null;
-        defer if (expected_res != null) allocator.free(expected_res.?);
-
-        var diagnostics = resinator.errors.Diagnostics.init(allocator);
-        defer diagnostics.deinit();
-
-        buffer.shrinkRetainingCapacity(0);
-        resinator.compile.compile(allocator, source, buffer.writer(), std.fs.cwd(), &diagnostics) catch |err| switch (err) {
-            error.ParseError, error.CompileError => {
-                diagnostics.renderToStdErr(std.fs.cwd(), source, null);
-                if (expected_res == null) {
-                    if (byte == 255) break else continue;
-                } else {
-                    std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
-                    return error.DidNotExpectErrorButGotOne;
-                }
-            },
-            else => return err,
-        };
-
-        if (expected_res == null) {
-            std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
-            return error.ExpectedErrorButDidntGetOne;
-        }
-
-        resinator.utils.testing.expectEqualBytes(expected_res.?, buffer.items) catch {
-            std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
-            continue;
-        };
+        try utils.expectSameResOutput(allocator, source, &buffer);
 
         if (byte == 255) break;
     }

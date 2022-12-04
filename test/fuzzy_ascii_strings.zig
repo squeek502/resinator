@@ -1,5 +1,4 @@
 const std = @import("std");
-const resinator = @import("resinator");
 const utils = @import("utils.zig");
 const fuzzy_options = @import("fuzzy_options");
 const iterations = fuzzy_options.max_iterations;
@@ -19,35 +18,7 @@ test "single chars" {
 
         source[byte_index] = byte;
 
-        const expected_res: ?[]const u8 = resinator.compile.getExpectedFromWindowsRC(allocator, source) catch null;
-        defer if (expected_res != null) allocator.free(expected_res.?);
-
-        var diagnostics = resinator.errors.Diagnostics.init(allocator);
-        defer diagnostics.deinit();
-
-        buffer.shrinkRetainingCapacity(0);
-        resinator.compile.compile(allocator, source, buffer.writer(), std.fs.cwd(), &diagnostics) catch |err| switch (err) {
-            error.ParseError, error.CompileError => {
-                diagnostics.renderToStdErr(std.fs.cwd(), source, null);
-                if (expected_res == null) {
-                    if (byte == 255) break else continue;
-                } else {
-                    std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
-                    return err;
-                }
-            },
-            else => return err,
-        };
-
-        if (expected_res == null) {
-            std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
-            return error.ExpectedError;
-        }
-
-        resinator.utils.testing.expectEqualBytes(expected_res.?, buffer.items) catch |err| {
-            std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
-            return err;
-        };
+        try utils.expectSameResOutput(allocator, source, &buffer);
 
         if (byte == 255) break;
     }
@@ -70,35 +41,7 @@ test "single char escapes" {
 
         source[escaped_byte_index] = escaped_byte;
 
-        const expected_res: ?[]const u8 = resinator.compile.getExpectedFromWindowsRC(allocator, source) catch null;
-        defer if (expected_res != null) allocator.free(expected_res.?);
-
-        var diagnostics = resinator.errors.Diagnostics.init(allocator);
-        defer diagnostics.deinit();
-
-        buffer.shrinkRetainingCapacity(0);
-        resinator.compile.compile(allocator, source, buffer.writer(), std.fs.cwd(), &diagnostics) catch |err| switch (err) {
-            error.ParseError, error.CompileError => {
-                diagnostics.renderToStdErr(std.fs.cwd(), source, null);
-                if (expected_res == null) {
-                    if (escaped_byte == 255) break else continue;
-                } else {
-                    std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
-                    return err;
-                }
-            },
-            else => return err,
-        };
-
-        if (expected_res == null) {
-            std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
-            return error.ExpectedError;
-        }
-
-        resinator.utils.testing.expectEqualBytes(expected_res.?, buffer.items) catch |err| {
-            std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
-            return err;
-        };
+        try utils.expectSameResOutput(allocator, source, &buffer);
 
         if (escaped_byte == 255) break;
     }
@@ -134,35 +77,6 @@ test "fuzz" {
         // write out the source file to disk for debugging
         try std.fs.cwd().writeFile("zig-cache/tmp/fuzzy_ascii_strings.rc", source);
 
-        const expected_res: ?[]const u8 = resinator.compile.getExpectedFromWindowsRCWithDir(allocator, source, tmp.dir, "zig-cache/tmp/" ++ tmp.sub_path) catch null;
-        defer if (expected_res != null) allocator.free(expected_res.?);
-
-        var diagnostics = resinator.errors.Diagnostics.init(allocator);
-        defer diagnostics.deinit();
-
-        buffer.shrinkRetainingCapacity(0);
-        resinator.compile.compile(allocator, source, buffer.writer(), tmp.dir, &diagnostics) catch |err| switch (err) {
-            error.ParseError, error.CompileError => {
-                diagnostics.renderToStdErr(std.fs.cwd(), source, null);
-                if (expected_res != null) {
-                    std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
-                    return err;
-                } else {
-                    continue;
-                }
-            },
-            else => return err,
-        };
-
-        if (expected_res == null) {
-            std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
-            std.debug.print("^^^^ expected error from resinator but successfully compiled instead\n\n\n", .{});
-            return error.ExpectedError;
-        }
-
-        resinator.utils.testing.expectEqualBytes(expected_res.?, buffer.items) catch |e| {
-            std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
-            return e;
-        };
+        try utils.expectSameResOutput(allocator, source, &buffer);
     }
 }

@@ -1,5 +1,4 @@
 const std = @import("std");
-const resinator = @import("resinator");
 const utils = @import("utils.zig");
 const fuzzy_options = @import("fuzzy_options");
 const iterations = fuzzy_options.max_iterations;
@@ -27,34 +26,6 @@ test {
 
         const source = source_buffer.items;
 
-        const expected_res: ?[]const u8 = resinator.compile.getExpectedFromWindowsRC(allocator, source) catch null;
-        defer if (expected_res != null) allocator.free(expected_res.?);
-
-        var diagnostics = resinator.errors.Diagnostics.init(allocator);
-        defer diagnostics.deinit();
-
-        buffer.shrinkRetainingCapacity(0);
-        resinator.compile.compile(allocator, source, buffer.writer(), std.fs.cwd(), &diagnostics) catch |err| switch (err) {
-            error.ParseError, error.CompileError => {
-                diagnostics.renderToStdErr(std.fs.cwd(), source, null);
-                if (expected_res == null) {
-                    continue;
-                } else {
-                    std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
-                    return error.DidNotExpectErrorButGotOne;
-                }
-            },
-            else => return err,
-        };
-
-        if (expected_res == null) {
-            std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
-            return error.ExpectedErrorButDidntGetOne;
-        }
-
-        resinator.utils.testing.expectEqualBytes(expected_res.?, buffer.items) catch |err| {
-            std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
-            return err;
-        };
+        try utils.expectSameResOutput(allocator, source, &buffer);
     }
 }
