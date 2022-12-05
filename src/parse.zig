@@ -709,7 +709,8 @@ fn testParse(source: []const u8, expected_ast_dump: []const u8) !void {
     const allocator = std.testing.allocator;
     var diagnostics = Diagnostics.init(allocator);
     defer diagnostics.deinit();
-    var lexer = Lexer.init(source);
+    // TODO: test different code pages
+    var lexer = Lexer.init(source, .windows1252);
     var parser = Parser.init(&lexer);
     var tree = parser.parse(allocator, &diagnostics) catch |err| switch (err) {
         error.ParseError => {
@@ -1047,7 +1048,8 @@ fn testParseError(expected_error_str: []const u8, source: []const u8) !void {
     const allocator = std.testing.allocator;
     var diagnostics = Diagnostics.init(allocator);
     defer diagnostics.deinit();
-    var lexer = Lexer.init(source);
+    // TODO: test different code pages
+    var lexer = Lexer.init(source, .windows1252);
     var parser = Parser.init(&lexer);
     var tree = parser.parse(allocator, &diagnostics) catch |err| switch (err) {
         error.OutOfMemory => |e| return e,

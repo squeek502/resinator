@@ -19,9 +19,12 @@ const WORD = std.os.windows.WORD;
 const DWORD = std.os.windows.DWORD;
 const utils = @import("utils.zig");
 const NameOrOrdinal = res.NameOrOrdinal;
+const CodePage = @import("code_pages.zig").CodePage;
 
 pub fn compile(allocator: Allocator, source: []const u8, writer: anytype, cwd: std.fs.Dir, diagnostics: *Diagnostics) !void {
-    var lexer = Lexer.init(source);
+    // TODO: Take this as a parameter
+    const default_code_page: CodePage = .windows1252;
+    var lexer = Lexer.init(source, default_code_page);
     var parser = Parser.init(&lexer);
     var tree = try parser.parse(allocator, diagnostics);
     defer tree.deinit();

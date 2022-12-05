@@ -7,6 +7,8 @@
 const std = @import("std");
 const ErrorDetails = @import("errors.zig").ErrorDetails;
 const columnsUntilTabStop = @import("literals.zig").columnsUntilTabStop;
+const code_pages = @import("code_pages.zig");
+const CodePage = code_pages.CodePage;
 
 const dumpTokensDuringTests = true;
 
@@ -116,15 +118,17 @@ pub const Lexer = struct {
     line_number: usize = 1,
     at_start_of_line: bool = true,
     error_context_token: ?Token = null,
+    current_code_page: CodePage,
 
     pub const string_literal_length_limit = 4097;
 
     pub const Error = LexError;
 
-    pub fn init(buffer: []const u8) Self {
+    pub fn init(buffer: []const u8, default_code_page: CodePage) Self {
         return Self{
             .buffer = buffer,
             .index = 0,
+            .current_code_page = default_code_page,
         };
     }
 
@@ -163,9 +167,10 @@ pub const Lexer = struct {
         var state = StateWhitespaceDelimiterOnly.start;
 
         var last_line_ending_index: ?usize = null;
+        // This is code page-agnostic, so we can do iteration over bytes here.
         while (self.index < self.buffer.len) : (self.index += 1) {
             const c = self.buffer[self.index];
-            try self.checkForIllegalByte(c, false);
+            try self.checkForIllegalCodepoint(c, false);
             switch (state) {
                 .start => switch (c) {
                     '\r', '\n' => {
@@ -264,8 +269,8 @@ pub const Lexer = struct {
         //       a few of exceptions/edge cases).
         var string_literal_length: usize = 0;
         var string_literal_collapsing_whitespace: bool = false;
-        while (self.index < self.buffer.len) : (self.index += 1) {
-            const c = self.buffer[self.index];
+        while (self.current_code_page.codepointAt(self.index, self.buffer)) |codepoint| : (self.index += codepoint.byte_len) {
+            const c = codepoint.value;
             const in_string_literal = switch (state) {
                 .quoted_ascii_string,
                 .quoted_wide_string,
@@ -276,7 +281,7 @@ pub const Lexer = struct {
                 => true,
                 else => false,
             };
-            try self.checkForIllegalByte(c, in_string_literal);
+            try self.checkForIllegalCodepoint(c, in_string_literal);
             switch (state) {
                 .start => switch (c) {
                     '\r', '\n' => {
@@ -321,9 +326,7 @@ pub const Lexer = struct {
                             self.at_start_of_line = false;
                         }
                     },
-                    // In Windows-1252, ² is \xb2, ³ is \xb3, ¹ is \xb9
-                    // TODO: Support other codepages
-                    '0'...'9', '~', '\xb2', '\xb3', '\xb9' => {
+                    '0'...'9', '~', '²', '³', '¹' => {
                         state = .number_literal;
                         self.at_start_of_line = false;
                     },
@@ -627,8 +630,8 @@ pub const Lexer = struct {
         return true;
     }
 
-    fn checkForIllegalByte(self: *Self, byte: u8, in_string_literal: bool) LexError!void {
-        const err = switch (byte) {
+    fn checkForIllegalCodepoint(self: *Self, codepoint: u21, in_string_literal: bool) LexError!void {
+        const err = switch (codepoint) {
             // 0x00 = NUL
             // 0x1A = Substitute (treated as EOF)
             // NOTE: 0x1A gets treated as EOF by the clang preprocessor so after a .rc file
@@ -671,7 +674,7 @@ pub const Lexer = struct {
 };
 
 fn testLexNormal(source: []const u8, expected_tokens: []const Token.Id) !void {
-    var lexer = Lexer.init(source);
+    var lexer = Lexer.init(source, CodePage.windows1252);
     if (dumpTokensDuringTests) std.debug.print("\n----------------------\n{s}\n----------------------\n", .{lexer.buffer});
     for (expected_tokens) |expected_token_id| {
         const token = try lexer.nextNormal();
@@ -698,4 +701,47 @@ test "normal: string literals" {
     try testLexNormal("\"\"", &.{.quoted_ascii_string});
     // "" is an escaped "
     try testLexNormal("\" \"\" \"", &.{.quoted_ascii_string});
+}
+
+test "superscript chars and code pages" {
+    const firstToken = struct {
+        pub fn firstToken(source: []const u8, default_code_page: CodePage, comptime lex_method: Lexer.LexMethod) LexError!Token {
+            var lexer = Lexer.init(source, default_code_page);
+            return lexer.next(lex_method);
+        }
+    }.firstToken;
+    const utf8_source = "²";
+    const windows1252_source = "\xB2";
+
+    const windows1252_encoded_as_windows1252 = try firstToken(windows1252_source, .windows1252, .normal);
+    try std.testing.expectEqual(Token{
+        .id = .number,
+        .start = 0,
+        .end = 1,
+        .line_number = 1,
+    }, windows1252_encoded_as_windows1252);
+
+    const utf8_encoded_as_windows1252 = try firstToken(utf8_source, .windows1252, .normal);
+    try std.testing.expectEqual(Token{
+        .id = .literal,
+        .start = 0,
+        .end = 2,
+        .line_number = 1,
+    }, utf8_encoded_as_windows1252);
+
+    const utf8_encoded_as_utf8 = try firstToken(utf8_source, .utf8, .normal);
+    try std.testing.expectEqual(Token{
+        .id = .number,
+        .start = 0,
+        .end = 2,
+        .line_number = 1,
+    }, utf8_encoded_as_utf8);
+
+    const windows1252_encoded_as_utf8 = try firstToken(windows1252_source, .utf8, .normal);
+    try std.testing.expectEqual(Token{
+        .id = .literal,
+        .start = 0,
+        .end = 1,
+        .line_number = 1,
+    }, windows1252_encoded_as_utf8);
 }
