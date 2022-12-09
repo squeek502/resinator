@@ -190,7 +190,7 @@ pub fn handleLineCommand(allocator: Allocator, line_command: []const u8, current
     }
     std.debug.assert(filename_literal[0] == '"' and filename_literal[filename_literal.len - 1] == '"');
     // TODO might need to use a more general C-style string parser
-    const filename = try parseQuotedAsciiString(allocator, filename_literal, 0);
+    const filename = try parseQuotedAsciiString(allocator, filename_literal, 0, .windows1252);
     defer allocator.free(filename);
 
     current_mapping.line_num = linenum;

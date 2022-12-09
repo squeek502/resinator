@@ -1,5 +1,6 @@
 const std = @import("std");
 const code_pages = @import("code_pages.zig");
+const windows1252 = @import("windows1252.zig");
 
 /// rc is maximally liberal in terms of what it accepts as a number literal
 /// for data values. As long as it starts with a number or - or ~, that's good enough.
@@ -37,7 +38,7 @@ pub fn isValidNumberDataLiteral(str: []const u8) bool {
 ///       This parse function handles this case the same as the Windows RC compiler, but
 ///       \" within a string literal is treated as an error by the lexer, so the relevant
 ///       branches should never actually be hit during this function.
-pub fn parseQuotedAsciiString(allocator: std.mem.Allocator, str: []const u8, start_column: usize) ![]u8 {
+pub fn parseQuotedAsciiString(allocator: std.mem.Allocator, str: []const u8, start_column: usize, code_page: code_pages.CodePage) ![]u8 {
     std.debug.assert(str.len >= 2); // must at least have 2 double quote chars
 
     var buf = try std.ArrayList(u8).initCapacity(allocator, str.len);
@@ -61,12 +62,12 @@ pub fn parseQuotedAsciiString(allocator: std.mem.Allocator, str: []const u8, sta
     var string_escape_n: u8 = 0;
     var string_escape_i: std.math.IntFittingRange(0, 3) = 0;
     var index: usize = 0;
-    while (index < source.len) : (index += 1) {
-        const c = source[index];
+    while (code_page.codepointAt(index, source)) |codepoint| : (index += codepoint.byte_len) {
+        const c = codepoint.value;
         var backtrack = false;
         defer {
             if (backtrack) {
-                index -= 1;
+                index -= codepoint.byte_len;
             } else {
                 if (c == '\t') {
                     column += columnsUntilTabStop(column, 8);
@@ -88,12 +89,15 @@ pub fn parseQuotedAsciiString(allocator: std.mem.Allocator, str: []const u8, sta
                         try buf.append(' ');
                     }
                 },
-                else => try buf.append(c),
+                else => {
+                    const best_fit = windows1252.bestFitFromCodepoint(c) orelse '?';
+                    try buf.append(best_fit);
+                },
             },
             .quote => switch (c) {
                 '"' => {
                     // "" => "
-                    try buf.append(c);
+                    try buf.append('"');
                     state = .normal;
                 },
                 else => unreachable, // this is a bug in the lexer
@@ -112,7 +116,7 @@ pub fn parseQuotedAsciiString(allocator: std.mem.Allocator, str: []const u8, sta
                 '\r' => state = .escaped_cr,
                 '\n' => state = .escaped_newlines,
                 '0'...'7' => {
-                    string_escape_n = std.fmt.charToDigit(c, 8) catch unreachable;
+                    string_escape_n = std.fmt.charToDigit(@intCast(u8, c), 8) catch unreachable;
                     string_escape_i = 1;
                     state = .escaped_octal;
                 },
@@ -162,7 +166,7 @@ pub fn parseQuotedAsciiString(allocator: std.mem.Allocator, str: []const u8, sta
             .escaped_octal => switch (c) {
                 '0'...'7' => {
                     string_escape_n *%= 8;
-                    string_escape_n +%= std.fmt.charToDigit(c, 8) catch unreachable;
+                    string_escape_n +%= std.fmt.charToDigit(@intCast(u8, c), 8) catch unreachable;
                     string_escape_i += 1;
                     if (string_escape_i == 3) {
                         try buf.append(string_escape_n);
@@ -180,7 +184,7 @@ pub fn parseQuotedAsciiString(allocator: std.mem.Allocator, str: []const u8, sta
             .escaped_hex => switch (c) {
                 '0'...'9', 'a'...'f', 'A'...'F' => {
                     string_escape_n *= 16;
-                    string_escape_n += std.fmt.charToDigit(c, 16) catch unreachable;
+                    string_escape_n += std.fmt.charToDigit(@intCast(u8, c), 16) catch unreachable;
                     string_escape_i += 1;
                     if (string_escape_i == 2) {
                         try buf.append(string_escape_n);
@@ -226,112 +230,157 @@ test "parse quoted ascii string" {
 
     try std.testing.expectEqualSlices(u8, "hello", try parseQuotedAsciiString(arena,
         \\"hello"
-    , 0));
+    , 0, .windows1252));
     // hex with 0 digits
     try std.testing.expectEqualSlices(u8, "\x00", try parseQuotedAsciiString(arena,
         \\"\x"
-    , 0));
+    , 0, .windows1252));
     // hex max of 2 digits
     try std.testing.expectEqualSlices(u8, "\xFFf", try parseQuotedAsciiString(arena,
         \\"\XfFf"
-    , 0));
+    , 0, .windows1252));
     // octal with invalid octal digit
     try std.testing.expectEqualSlices(u8, "\x019", try parseQuotedAsciiString(arena,
         \\"\19"
-    , 0));
+    , 0, .windows1252));
     // escaped quotes
     try std.testing.expectEqualSlices(u8, " \" ", try parseQuotedAsciiString(arena,
         \\" "" "
-    , 0));
+    , 0, .windows1252));
     // backslash right before escaped quotes
     try std.testing.expectEqualSlices(u8, "\"", try parseQuotedAsciiString(arena,
         \\"\"""
-    , 0));
+    , 0, .windows1252));
     // octal overflow
     try std.testing.expectEqualSlices(u8, "\x01", try parseQuotedAsciiString(arena,
         \\"\401"
-    , 0));
+    , 0, .windows1252));
     // escapes
     try std.testing.expectEqualSlices(u8, "\x08\n\r\t\\", try parseQuotedAsciiString(arena,
         \\"\a\n\r\t\\"
-    , 0));
+    , 0, .windows1252));
     // uppercase escapes
     try std.testing.expectEqualSlices(u8, "\x08\\N\\R\t\\", try parseQuotedAsciiString(arena,
         \\"\A\N\R\T\\"
-    , 0));
+    , 0, .windows1252));
     // backslash on its own
     try std.testing.expectEqualSlices(u8, "\\", try parseQuotedAsciiString(arena,
         \\"\"
-    , 0));
+    , 0, .windows1252));
     // unrecognized escapes
     try std.testing.expectEqualSlices(u8, "\\b", try parseQuotedAsciiString(arena,
         \\"\b"
-    , 0));
+    , 0, .windows1252));
     // escaped carriage returns
     try std.testing.expectEqualSlices(u8, "\\", try parseQuotedAsciiString(
         arena,
         "\"\\\r\r\r\r\r\"",
         0,
+        .windows1252,
     ));
     // escaped newlines
     try std.testing.expectEqualSlices(u8, "", try parseQuotedAsciiString(
         arena,
         "\"\\\n\n\n\n\n\"",
         0,
+        .windows1252,
     ));
     // escaped CRLF pairs
     try std.testing.expectEqualSlices(u8, "", try parseQuotedAsciiString(
         arena,
         "\"\\\r\n\r\n\r\n\r\n\r\n\"",
         0,
+        .windows1252,
     ));
     // escaped newlines with other whitespace
     try std.testing.expectEqualSlices(u8, "", try parseQuotedAsciiString(
         arena,
         "\"\\\n    \t\r\n \r\t\n  \t\"",
         0,
+        .windows1252,
     ));
     // literal tab characters get converted to spaces (dependent on source file columns)
     try std.testing.expectEqualSlices(u8, "       ", try parseQuotedAsciiString(
         arena,
         "\"\t\"",
         0,
+        .windows1252,
     ));
     try std.testing.expectEqualSlices(u8, "abc    ", try parseQuotedAsciiString(
         arena,
         "\"abc\t\"",
         0,
+        .windows1252,
     ));
     try std.testing.expectEqualSlices(u8, "abcdefg        ", try parseQuotedAsciiString(
         arena,
         "\"abcdefg\t\"",
         0,
+        .windows1252,
     ));
     try std.testing.expectEqualSlices(u8, "\\      ", try parseQuotedAsciiString(
         arena,
         "\"\\\t\"",
         0,
+        .windows1252,
     ));
     // literal CR's get dropped
     try std.testing.expectEqualSlices(u8, "", try parseQuotedAsciiString(
         arena,
         "\"\r\r\r\r\r\"",
         0,
+        .windows1252,
     ));
     // contiguous newlines and whitespace get collapsed to <space><newline>
     try std.testing.expectEqualSlices(u8, " \n", try parseQuotedAsciiString(
         arena,
         "\"\n\r\r  \r\n \t  \"",
         0,
+        .windows1252,
+    ));
+}
+
+test "parse quoted ascii string with utf8 code page" {
+    var arena_allocator = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_allocator.deinit();
+    const arena = arena_allocator.allocator();
+
+    try std.testing.expectEqualSlices(u8, "", try parseQuotedAsciiString(
+        arena,
+        "\"\"",
+        0,
+        .utf8,
+    ));
+    // Codepoints that don't have a Windows-1252 representation get converted to ?
+    try std.testing.expectEqualSlices(u8, "?????????", try parseQuotedAsciiString(
+        arena,
+        "\"кириллица\"",
+        0,
+        .utf8,
+    ));
+    // Codepoints that have a best fit mapping get converted accordingly,
+    // these are box drawing codepoints
+    try std.testing.expectEqualSlices(u8, "\x2b\x2d\x2b", try parseQuotedAsciiString(
+        arena,
+        "\"┌─┐\"",
+        0,
+        .utf8,
+    ));
+    // Invalid UTF-8 gets converted to ? depending on well-formedness
+    try std.testing.expectEqualSlices(u8, "????", try parseQuotedAsciiString(
+        arena,
+        "\"\xf0\xf0\x80\x80\x80\"",
+        0,
+        .utf8,
     ));
 }
 
 /// TODO: Real implemenation, probably needing to take code_page into account
 /// Notes:
 /// - Wide strings allow for 4 hex digits in escapes (e.g. \xC2AD gets parsed as 0xC2AD)
-pub fn parseQuotedWideStringAlloc(allocator: std.mem.Allocator, str: []const u8, start_column: usize) ![:0]u16 {
+pub fn parseQuotedWideStringAlloc(allocator: std.mem.Allocator, str: []const u8, start_column: usize, code_page: code_pages.CodePage) ![:0]u16 {
     std.debug.assert(str.len >= 3); // L""
-    const parsed = try parseQuotedAsciiString(allocator, str[1..], start_column);
+    const parsed = try parseQuotedAsciiString(allocator, str[1..], start_column, code_page);
     defer allocator.free(parsed);
     return try std.unicode.utf8ToUtf16LeWithNull(allocator, parsed);
 }
