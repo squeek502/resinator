@@ -1,4 +1,5 @@
 const std = @import("std");
+const code_pages = @import("code_pages.zig");
 
 /// rc is maximally liberal in terms of what it accepts as a number literal
 /// for data values. As long as it starts with a number or - or ~, that's good enough.
@@ -366,7 +367,7 @@ pub const Number = struct {
 ///   example that is rejected: 1e1
 ///   example that is accepted: 1ea
 ///   (this function will parse the two examples above the same)
-pub fn parseNumberLiteral(str: []const u8) Number {
+pub fn parseNumberLiteral(str: []const u8, code_page: code_pages.CodePage) Number {
     std.debug.assert(str.len > 0);
     var result = Number{ .value = 0, .is_long = false };
     var radix: u8 = 10;
@@ -400,18 +401,19 @@ pub fn parseNumberLiteral(str: []const u8) Number {
         }
     }
 
-    for (buf) |c| {
+    var i: usize = 0;
+    while (code_page.codepointAt(i, buf)) |codepoint| : (i += codepoint.byte_len) {
+        const c = codepoint.value;
         if (c == 'L' or c == 'l') {
             result.is_long = true;
             break;
         }
-        // on invalid digit for the radix, just stop parsing but don't fail
-        const digit = std.fmt.charToDigit(c, radix) catch switch (c) {
+        const digit = switch (c) {
             // I have no idea why this is the case, but the Windows RC compiler
             // treats ¹, ², and ³ characters as valid digits when the radix is 10
-            // TODO: This is the Windows-1252-encoded version of this, need to
-            //       handle UTF-8, etc.
-            '\xb2', '\xb3', '\xb9' => if (radix != 10) break else c - 0x30,
+            '¹', '²', '³' => if (radix != 10) break else c - 0x30,
+            // On invalid digit for the radix, just stop parsing but don't fail
+            0x00...0x7F => std.fmt.charToDigit(@intCast(u8, c), radix) catch break,
             else => break,
         };
 
@@ -431,54 +433,56 @@ pub fn parseNumberLiteral(str: []const u8) Number {
 }
 
 test "parse number literal" {
-    try std.testing.expectEqual(Number{ .value = 0, .is_long = false }, parseNumberLiteral("0"));
-    try std.testing.expectEqual(Number{ .value = 1, .is_long = false }, parseNumberLiteral("1"));
-    try std.testing.expectEqual(Number{ .value = 1, .is_long = true }, parseNumberLiteral("1L"));
-    try std.testing.expectEqual(Number{ .value = 1, .is_long = true }, parseNumberLiteral("1l"));
-    try std.testing.expectEqual(Number{ .value = 1, .is_long = false }, parseNumberLiteral("1garbageL"));
-    try std.testing.expectEqual(Number{ .value = 4294967295, .is_long = false }, parseNumberLiteral("4294967295"));
-    try std.testing.expectEqual(Number{ .value = 0, .is_long = false }, parseNumberLiteral("4294967296"));
-    try std.testing.expectEqual(Number{ .value = 1, .is_long = true }, parseNumberLiteral("4294967297L"));
+    try std.testing.expectEqual(Number{ .value = 0, .is_long = false }, parseNumberLiteral("0", .windows1252));
+    try std.testing.expectEqual(Number{ .value = 1, .is_long = false }, parseNumberLiteral("1", .windows1252));
+    try std.testing.expectEqual(Number{ .value = 1, .is_long = true }, parseNumberLiteral("1L", .windows1252));
+    try std.testing.expectEqual(Number{ .value = 1, .is_long = true }, parseNumberLiteral("1l", .windows1252));
+    try std.testing.expectEqual(Number{ .value = 1, .is_long = false }, parseNumberLiteral("1garbageL", .windows1252));
+    try std.testing.expectEqual(Number{ .value = 4294967295, .is_long = false }, parseNumberLiteral("4294967295", .windows1252));
+    try std.testing.expectEqual(Number{ .value = 0, .is_long = false }, parseNumberLiteral("4294967296", .windows1252));
+    try std.testing.expectEqual(Number{ .value = 1, .is_long = true }, parseNumberLiteral("4294967297L", .windows1252));
 
     // can handle any length of number, wraps on overflow appropriately
-    const big_overflow = parseNumberLiteral("1000000000000000000000000000000000000000000000000000000000000000000000000000000090000000001");
+    const big_overflow = parseNumberLiteral("1000000000000000000000000000000000000000000000000000000000000000000000000000000090000000001", .windows1252);
     try std.testing.expectEqual(Number{ .value = 4100654081, .is_long = false }, big_overflow);
     try std.testing.expectEqual(@as(u16, 1025), big_overflow.asWord());
 
-    try std.testing.expectEqual(Number{ .value = 0x20, .is_long = false }, parseNumberLiteral("0x20"));
-    try std.testing.expectEqual(Number{ .value = 0x2A, .is_long = true }, parseNumberLiteral("0x2AL"));
-    try std.testing.expectEqual(Number{ .value = 0x2A, .is_long = true }, parseNumberLiteral("0x2aL"));
-    try std.testing.expectEqual(Number{ .value = 0x2A, .is_long = true }, parseNumberLiteral("0x2aL"));
+    try std.testing.expectEqual(Number{ .value = 0x20, .is_long = false }, parseNumberLiteral("0x20", .windows1252));
+    try std.testing.expectEqual(Number{ .value = 0x2A, .is_long = true }, parseNumberLiteral("0x2AL", .windows1252));
+    try std.testing.expectEqual(Number{ .value = 0x2A, .is_long = true }, parseNumberLiteral("0x2aL", .windows1252));
+    try std.testing.expectEqual(Number{ .value = 0x2A, .is_long = true }, parseNumberLiteral("0x2aL", .windows1252));
 
-    try std.testing.expectEqual(Number{ .value = 0o20, .is_long = false }, parseNumberLiteral("0o20"));
-    try std.testing.expectEqual(Number{ .value = 0o20, .is_long = true }, parseNumberLiteral("0o20L"));
-    try std.testing.expectEqual(Number{ .value = 0o2, .is_long = false }, parseNumberLiteral("0o29"));
-    try std.testing.expectEqual(Number{ .value = 0, .is_long = false }, parseNumberLiteral("0O29"));
+    try std.testing.expectEqual(Number{ .value = 0o20, .is_long = false }, parseNumberLiteral("0o20", .windows1252));
+    try std.testing.expectEqual(Number{ .value = 0o20, .is_long = true }, parseNumberLiteral("0o20L", .windows1252));
+    try std.testing.expectEqual(Number{ .value = 0o2, .is_long = false }, parseNumberLiteral("0o29", .windows1252));
+    try std.testing.expectEqual(Number{ .value = 0, .is_long = false }, parseNumberLiteral("0O29", .windows1252));
 
-    try std.testing.expectEqual(Number{ .value = 0xFFFFFFFF, .is_long = false }, parseNumberLiteral("-1"));
-    try std.testing.expectEqual(Number{ .value = 0xFFFFFFFE, .is_long = false }, parseNumberLiteral("~1"));
-    try std.testing.expectEqual(Number{ .value = 0xFFFFFFFF, .is_long = true }, parseNumberLiteral("-4294967297L"));
-    try std.testing.expectEqual(Number{ .value = 0xFFFFFFFE, .is_long = true }, parseNumberLiteral("~4294967297L"));
-    try std.testing.expectEqual(Number{ .value = 0xFFFFFFFD, .is_long = false }, parseNumberLiteral("-0X3"));
+    try std.testing.expectEqual(Number{ .value = 0xFFFFFFFF, .is_long = false }, parseNumberLiteral("-1", .windows1252));
+    try std.testing.expectEqual(Number{ .value = 0xFFFFFFFE, .is_long = false }, parseNumberLiteral("~1", .windows1252));
+    try std.testing.expectEqual(Number{ .value = 0xFFFFFFFF, .is_long = true }, parseNumberLiteral("-4294967297L", .windows1252));
+    try std.testing.expectEqual(Number{ .value = 0xFFFFFFFE, .is_long = true }, parseNumberLiteral("~4294967297L", .windows1252));
+    try std.testing.expectEqual(Number{ .value = 0xFFFFFFFD, .is_long = false }, parseNumberLiteral("-0X3", .windows1252));
 
     // anything after L is ignored
-    try std.testing.expectEqual(Number{ .value = 0x2A, .is_long = true }, parseNumberLiteral("0x2aL5"));
+    try std.testing.expectEqual(Number{ .value = 0x2A, .is_long = true }, parseNumberLiteral("0x2aL5", .windows1252));
 }
 
 test "superscript characters in number literals" {
     // In Windows-1252, ² is \xb2, ³ is \xb3, ¹ is \xb9
-    try std.testing.expectEqual(Number{ .value = 130, .is_long = false }, parseNumberLiteral("\xb2"));
-    try std.testing.expectEqual(Number{ .value = 131, .is_long = false }, parseNumberLiteral("\xb3"));
-    try std.testing.expectEqual(Number{ .value = 137, .is_long = false }, parseNumberLiteral("\xb9"));
+    try std.testing.expectEqual(Number{ .value = 130, .is_long = false }, parseNumberLiteral("\xb2", .windows1252));
+    try std.testing.expectEqual(Number{ .value = 131, .is_long = false }, parseNumberLiteral("\xb3", .windows1252));
+    try std.testing.expectEqual(Number{ .value = 137, .is_long = false }, parseNumberLiteral("\xb9", .windows1252));
 
-    try std.testing.expectEqual(Number{ .value = 147, .is_long = false }, parseNumberLiteral("1\xb9"));
-    try std.testing.expectEqual(Number{ .value = 157, .is_long = false }, parseNumberLiteral("2\xb9"));
-    try std.testing.expectEqual(Number{ .value = 167, .is_long = false }, parseNumberLiteral("3\xb9"));
-    try std.testing.expectEqual(Number{ .value = 227, .is_long = false }, parseNumberLiteral("9\xb9"));
+    try std.testing.expectEqual(Number{ .value = 147, .is_long = false }, parseNumberLiteral("1\xb9", .windows1252));
+    try std.testing.expectEqual(Number{ .value = 157, .is_long = false }, parseNumberLiteral("2\xb9", .windows1252));
+    try std.testing.expectEqual(Number{ .value = 167, .is_long = false }, parseNumberLiteral("3\xb9", .windows1252));
+    try std.testing.expectEqual(Number{ .value = 227, .is_long = false }, parseNumberLiteral("9\xb9", .windows1252));
 
-    try std.testing.expectEqual(Number{ .value = 237, .is_long = false }, parseNumberLiteral("10\xb9"));
-    try std.testing.expectEqual(Number{ .value = 337, .is_long = false }, parseNumberLiteral("20\xb9"));
+    try std.testing.expectEqual(Number{ .value = 237, .is_long = false }, parseNumberLiteral("10\xb9", .windows1252));
+    try std.testing.expectEqual(Number{ .value = 337, .is_long = false }, parseNumberLiteral("20\xb9", .windows1252));
 
-    try std.testing.expectEqual(Number{ .value = 1507, .is_long = false }, parseNumberLiteral("\xb9\xb9"));
-    try std.testing.expectEqual(Number{ .value = 15131, .is_long = false }, parseNumberLiteral("\xb9\xb2\xb3"));
+    try std.testing.expectEqual(Number{ .value = 1507, .is_long = false }, parseNumberLiteral("\xb9\xb9", .windows1252));
+    try std.testing.expectEqual(Number{ .value = 15131, .is_long = false }, parseNumberLiteral("\xb9\xb2\xb3", .windows1252));
+
+    try std.testing.expectEqual(Number{ .value = 15131, .is_long = false }, parseNumberLiteral("¹²³", .utf8));
 }

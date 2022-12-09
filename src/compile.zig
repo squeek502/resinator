@@ -319,7 +319,7 @@ pub const Compiler = struct {
             .literal => {
                 const literal_node = expression_node.cast(.literal).?;
                 std.debug.assert(literal_node.token.id == .number);
-                return parseNumberLiteral(literal_node.token.slice(source));
+                return parseNumberLiteral(literal_node.token.slice(source), literal_node.code_page);
             },
             .binary_expression => {
                 const binary_expression_node = expression_node.cast(.binary_expression).?;
