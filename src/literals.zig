@@ -326,6 +326,8 @@ test "parse quoted ascii string" {
 }
 
 /// TODO: Real implemenation, probably needing to take code_page into account
+/// Notes:
+/// - Wide strings allow for 4 hex digits in escapes (e.g. \xC2AD gets parsed as 0xC2AD)
 pub fn parseQuotedWideStringAlloc(allocator: std.mem.Allocator, str: []const u8, start_column: usize) ![:0]u16 {
     std.debug.assert(str.len >= 3); // L""
     const parsed = try parseQuotedAsciiString(allocator, str[1..], start_column);
