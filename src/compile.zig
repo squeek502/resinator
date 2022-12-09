@@ -499,7 +499,7 @@ pub const Compiler = struct {
             const string_id_data = try self.evaluateDataExpression(string.id);
             const string_id = string_id_data.number.asWord();
 
-            self.state.string_tables.set(self.arena, language, string_id, string.string, &node.base, self.source) catch |err| switch (err) {
+            self.state.string_tables.set(self.arena, language, string_id, string.string, string.code_page, &node.base, self.source) catch |err| switch (err) {
                 error.StringAlreadyDefined => {
                     try self.addErrorDetails(ErrorDetails{
                         .err = .string_already_defined,
@@ -511,7 +511,7 @@ pub const Compiler = struct {
                     return self.addErrorDetailsAndFail(ErrorDetails{
                         .err = .string_already_defined,
                         .type = .note,
-                        .token = existing_definition, // TODO: point to id instead?
+                        .token = existing_definition.token, // TODO: point to id instead?
                         .extra = .{ .string_and_language = .{ .id = string_id, .language = language } },
                     });
                 },
@@ -727,12 +727,12 @@ pub const StringTablesByLanguage = struct {
         self.tables.deinit(allocator);
     }
 
-    pub fn set(self: *StringTablesByLanguage, allocator: Allocator, language: res.Language, id: u16, string_token: Token, node: *Node, source: []const u8) StringTable.SetError!void {
+    pub fn set(self: *StringTablesByLanguage, allocator: Allocator, language: res.Language, id: u16, string_token: Token, code_page: CodePage, node: *Node, source: []const u8) StringTable.SetError!void {
         var get_or_put_result = try self.tables.getOrPut(allocator, language);
         if (!get_or_put_result.found_existing) {
             get_or_put_result.value_ptr.* = StringTable{};
         }
-        return get_or_put_result.value_ptr.set(allocator, id, string_token, node, source);
+        return get_or_put_result.value_ptr.set(allocator, id, string_token, code_page, node, source);
     }
 };
 
@@ -744,13 +744,18 @@ pub const StringTable = struct {
     blocks: std.AutoArrayHashMapUnmanaged(u16, Block) = .{},
 
     pub const Block = struct {
-        string_tokens: std.ArrayListUnmanaged(Token) = .{},
+        strings: std.ArrayListUnmanaged(String) = .{},
         set_indexes: std.bit_set.IntegerBitSet(16) = .{ .mask = 0 },
         memory_flags: MemoryFlags = MemoryFlags.defaults(res.RT.STRING),
         characteristics: u32 = 0,
         version: u32 = 0,
 
-        /// Returns the index to insert the string into the `string_tokens` list.
+        pub const String = struct {
+            token: Token,
+            code_page: CodePage,
+        };
+
+        /// Returns the index to insert the string into the `strings` list.
         /// Returns null if the string should be appended.
         fn getInsertionIndex(self: *Block, index: u8) ?u8 {
             std.debug.assert(!self.set_indexes.isSet(index));
@@ -770,7 +775,7 @@ pub const StringTable = struct {
         }
 
         fn getTokenIndex(self: *Block, string_index: u8) ?u8 {
-            const count = self.string_tokens.items.len;
+            const count = self.strings.items.len;
             if (count == 0) return null;
             if (count == 1) return 0;
 
@@ -795,7 +800,7 @@ pub const StringTable = struct {
             var bit_it = self.set_indexes.iterator(.{});
             var string_index: usize = 0;
             while (bit_it.next()) |bit_index| {
-                const token = self.string_tokens.items[string_index];
+                const token = self.strings.items[string_index];
                 std.debug.print("{}: [{}] {any}\n", .{ bit_index, string_index, token });
                 string_index += 1;
             }
@@ -826,19 +831,17 @@ pub const StringTable = struct {
                     if (i == 15) break else continue;
                 }
 
-                const string_token = self.string_tokens.items[string_i];
-                const slice = string_token.slice(compiler.source);
-                const column = string_token.calculateColumn(compiler.source, 8, null);
+                const string = self.strings.items[string_i];
+                const slice = string.token.slice(compiler.source);
+                const column = string.token.calculateColumn(compiler.source, 8, null);
                 const utf16_string = utf16: {
-                    switch (string_token.id) {
+                    switch (string.token.id) {
                         .quoted_ascii_string => {
-                            // TODO code_page
-                            const parsed = try parseQuotedAsciiString(compiler.allocator, slice, column, .windows1252);
+                            const parsed = try parseQuotedAsciiString(compiler.allocator, slice, column, string.code_page);
                             defer compiler.allocator.free(parsed);
                             break :utf16 try std.unicode.utf8ToUtf16LeWithNull(compiler.allocator, parsed);
                         },
-                        // TODO code_page
-                        .quoted_wide_string => break :utf16 try parseQuotedWideStringAlloc(compiler.allocator, slice, column, .windows1252),
+                        .quoted_wide_string => break :utf16 try parseQuotedWideStringAlloc(compiler.allocator, slice, column, string.code_page),
                         else => unreachable,
                     }
                 };
@@ -872,14 +875,14 @@ pub const StringTable = struct {
     pub fn deinit(self: *StringTable, allocator: Allocator) void {
         var it = self.blocks.iterator();
         while (it.next()) |entry| {
-            entry.value_ptr.string_tokens.deinit(allocator);
+            entry.value_ptr.strings.deinit(allocator);
         }
         self.blocks.deinit(allocator);
     }
 
     const SetError = error{StringAlreadyDefined} || Allocator.Error;
 
-    pub fn set(self: *StringTable, allocator: Allocator, id: u16, string_token: Token, node: *Node, source: []const u8) SetError!void {
+    pub fn set(self: *StringTable, allocator: Allocator, id: u16, string_token: Token, code_page: CodePage, node: *Node, source: []const u8) SetError!void {
         const block_id = (id / 16) + 1;
         const string_index: u8 = @intCast(u8, id & 0xF);
 
@@ -895,20 +898,20 @@ pub const StringTable = struct {
 
         var block = get_or_put_result.value_ptr;
         if (block.getInsertionIndex(string_index)) |insertion_index| {
-            try block.string_tokens.insert(allocator, insertion_index, string_token);
+            try block.strings.insert(allocator, insertion_index, .{ .token = string_token, .code_page = code_page });
         } else {
-            try block.string_tokens.append(allocator, string_token);
+            try block.strings.append(allocator, .{ .token = string_token, .code_page = code_page });
         }
         block.set_indexes.set(string_index);
     }
 
-    pub fn get(self: *StringTable, id: u16) ?Token {
+    pub fn get(self: *StringTable, id: u16) ?Block.String {
         const block_id = (id / 16) + 1;
         const string_index = @intCast(u8, id & 0xF);
 
         const block = self.blocks.getPtr(block_id) orelse return null;
         const token_index = block.getTokenIndex(string_index) orelse return null;
-        return block.string_tokens.items[token_index];
+        return block.strings.items[token_index];
     }
 
     pub fn dump(self: *StringTable) !void {
@@ -959,19 +962,19 @@ test "StringTable" {
 
     // set each one in the randomized order
     for (ids) |id| {
-        try string_table.set(allocator, id, S.makeDummyToken(id), &dummy_node.base, "");
+        try string_table.set(allocator, id, S.makeDummyToken(id), .windows1252, &dummy_node.base, "");
     }
 
     // make sure each one exists and is the right value when gotten
     var id: u16 = 0;
     while (id < 100) : (id += 1) {
         const dummy = S.makeDummyToken(id);
-        try std.testing.expectError(error.StringAlreadyDefined, string_table.set(allocator, id, dummy, &dummy_node.base, ""));
-        try std.testing.expectEqual(dummy, string_table.get(id).?);
+        try std.testing.expectError(error.StringAlreadyDefined, string_table.set(allocator, id, dummy, .windows1252, &dummy_node.base, ""));
+        try std.testing.expectEqual(dummy, string_table.get(id).?.token);
     }
 
     // make sure non-existent string ids are not found
-    try std.testing.expectEqual(@as(?Token, null), string_table.get(100));
+    try std.testing.expectEqual(@as(?StringTable.Block.String, null), string_table.get(100));
 }
 
 fn testCompile(source: []const u8, cwd: std.fs.Dir) !void {

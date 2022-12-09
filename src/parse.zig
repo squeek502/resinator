@@ -230,6 +230,7 @@ pub const Parser = struct {
                         .id = id_expression,
                         .maybe_comma = comma_token,
                         .string = self.state.token,
+                        .code_page = self.lexer.current_code_page,
                     };
                     try strings.append(&string_node.base);
                 }

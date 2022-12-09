@@ -95,7 +95,7 @@ pub const Node = struct {
         token: Token,
         // TODO: It would be nice not to have to store this for each Literal node,
         //       and instead have some type of separate lookup (per line maybe, but
-        //       some tokens can span multiple lines)
+        //       some tokens can span multiple lines); see also StringTableString.code_page
         code_page: code_pages.CodePage,
     };
 
@@ -146,6 +146,10 @@ pub const Node = struct {
         id: *Node,
         maybe_comma: ?Token,
         string: Token,
+        // TODO: It would be nice not to have to store this for each StringTableString node,
+        //       and instead have some type of separate lookup (per line maybe, but
+        //       some tokens can span multiple lines); see also Literal.code_page
+        code_page: code_pages.CodePage,
     };
 
     pub const LanguageStatement = struct {
