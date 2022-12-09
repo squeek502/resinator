@@ -540,6 +540,7 @@ pub const Parser = struct {
                     const node = try self.state.arena.create(Node.Literal);
                     node.* = .{
                         .token = self.state.token,
+                        .code_page = self.lexer.current_code_page,
                     };
                     return &node.base;
                 },
@@ -547,6 +548,7 @@ pub const Parser = struct {
                     const node = try self.state.arena.create(Node.Literal);
                     node.* = .{
                         .token = self.state.token,
+                        .code_page = self.lexer.current_code_page,
                     };
                     return &node.base;
                 },
@@ -554,6 +556,7 @@ pub const Parser = struct {
                     const node = try self.state.arena.create(Node.Literal);
                     node.* = .{
                         .token = self.state.token,
+                        .code_page = self.lexer.current_code_page,
                     };
                     break :lhs &node.base;
                 },
@@ -593,6 +596,7 @@ pub const Parser = struct {
                         const node = try self.state.arena.create(Node.Literal);
                         node.* = .{
                             .token = self.state.token,
+                            .code_page = self.lexer.current_code_page,
                         };
                         return &node.base;
                     }

@@ -29,6 +29,9 @@ pub const Token = struct {
         comma,
         open_paren,
         close_paren,
+        /// This Id is only used for errors, the Lexer will never return one
+        /// of these from a `next` call.
+        preprocessor_command,
         invalid,
         eof,
 
@@ -44,6 +47,7 @@ pub const Token = struct {
                 .comma => ",",
                 .open_paren => "(",
                 .close_paren => ")",
+                .preprocessor_command => "<preprocessor command>",
                 .invalid => unreachable,
                 .eof => "<eof>",
             };
@@ -108,6 +112,9 @@ pub const LexError = error{
     IllegalByte,
     IllegalByteOutsideStringLiterals,
     FoundCStyleEscapedQuote,
+    CodePagePragmaMissingLeftParen,
+    CodePagePragmaMissingRightParen,
+    CodePagePragmaInvalidCodePage,
 };
 
 pub const Lexer = struct {
@@ -202,6 +209,7 @@ pub const Lexer = struct {
                 },
                 .preprocessor => switch (c) {
                     '\r', '\n' => {
+                        try self.evaluatePreprocessorCommand(result.start, self.index);
                         result.start = self.index + 1;
                         state = .start;
                         result.line_number = self.incrementLineNumber(&last_line_ending_index);
@@ -216,6 +224,7 @@ pub const Lexer = struct {
                     result.id = .literal;
                 },
                 .preprocessor => {
+                    try self.evaluatePreprocessorCommand(result.start, self.index);
                     result.start = self.index;
                 },
             }
@@ -363,6 +372,7 @@ pub const Lexer = struct {
                 },
                 .preprocessor => switch (c) {
                     '\r', '\n' => {
+                        try self.evaluatePreprocessorCommand(result.start, self.index);
                         result.start = self.index + 1;
                         state = .start;
                         result.line_number = self.incrementLineNumber(&last_line_ending_index);
@@ -551,6 +561,7 @@ pub const Lexer = struct {
                     result.id = .literal;
                 },
                 .preprocessor => {
+                    try self.evaluatePreprocessorCommand(result.start, self.index);
                     result.start = self.index;
                 },
                 .number_literal => {
@@ -658,6 +669,79 @@ pub const Lexer = struct {
         return err;
     }
 
+    fn evaluatePreprocessorCommand(self: *Self, start: usize, end: usize) !void {
+        const error_context = Token{
+            .id = .preprocessor_command,
+            .start = start,
+            .end = end,
+            .line_number = self.line_number,
+        };
+        const full_command = self.buffer[start..end];
+        var command = full_command;
+
+        // Anything besides exactly this is ignored by the Windows RC implementation
+        const expected_directive = "#pragma";
+        if (!std.mem.startsWith(u8, command, expected_directive)) return;
+        command = command[expected_directive.len..];
+
+        if (command.len == 0 or !std.ascii.isWhitespace(command[0])) return;
+        while (command.len > 0 and std.ascii.isWhitespace(command[0])) {
+            command = command[1..];
+        }
+
+        // Note: CoDe_PaGeZ is also treated as "code_page" by the Windows RC implementation,
+        //       and it will error with 'Missing left parenthesis in code_page #pragma'
+        const expected_extension = "code_page";
+        if (!std.ascii.startsWithIgnoreCase(command, expected_extension)) return;
+        command = command[expected_extension.len..];
+
+        while (command.len > 0 and std.ascii.isWhitespace(command[0])) {
+            command = command[1..];
+        }
+
+        if (command.len == 0 or command[0] != '(') {
+            self.error_context_token = error_context;
+            return error.CodePagePragmaMissingLeftParen;
+        }
+        command = command[1..];
+
+        while (command.len > 0 and std.ascii.isWhitespace(command[0])) {
+            command = command[1..];
+        }
+
+        var num_str: []u8 = command[0..0];
+        while (command.len > 0 and std.ascii.isDigit(command[0])) {
+            command = command[1..];
+            num_str.len += 1;
+        }
+
+        if (num_str.len == 0 or num_str[0] == '0') {
+            self.error_context_token = error_context;
+            return error.CodePagePragmaInvalidCodePage;
+        }
+
+        while (command.len > 0 and std.ascii.isWhitespace(command[0])) {
+            command = command[1..];
+        }
+
+        if (command.len == 0 or command[0] != ')') {
+            self.error_context_token = error_context;
+            return error.CodePagePragmaMissingRightParen;
+        }
+
+        const num = std.fmt.parseUnsigned(u16, num_str, 10) catch {
+            self.error_context_token = error_context;
+            return error.CodePagePragmaInvalidCodePage;
+        };
+
+        const code_page = code_pages.CodePage.getByNumber(num) catch {
+            self.error_context_token = error_context;
+            return error.CodePagePragmaInvalidCodePage;
+        };
+
+        self.current_code_page = code_page;
+    }
+
     pub fn getErrorDetails(self: Self, lex_err: LexError) ErrorDetails {
         const err = switch (lex_err) {
             error.UnfinishedStringLiteral => ErrorDetails.Error.unfinished_string_literal,
@@ -665,6 +749,9 @@ pub const Lexer = struct {
             error.IllegalByte => ErrorDetails.Error.illegal_byte,
             error.IllegalByteOutsideStringLiterals => ErrorDetails.Error.illegal_byte_outside_string_literals,
             error.FoundCStyleEscapedQuote => ErrorDetails.Error.found_c_style_escaped_quote,
+            error.CodePagePragmaMissingLeftParen => ErrorDetails.Error.code_page_pragma_missing_left_paren,
+            error.CodePagePragmaMissingRightParen => ErrorDetails.Error.code_page_pragma_missing_right_paren,
+            error.CodePagePragmaInvalidCodePage => ErrorDetails.Error.code_page_pragma_invalid_code_page,
         };
         return .{
             .err = err,

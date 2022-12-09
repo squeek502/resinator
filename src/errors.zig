@@ -147,6 +147,9 @@ pub const ErrorDetails = struct {
         illegal_byte,
         illegal_byte_outside_string_literals,
         found_c_style_escaped_quote,
+        code_page_pragma_missing_left_paren,
+        code_page_pragma_missing_right_paren,
+        code_page_pragma_invalid_code_page,
 
         // Parser
         unfinished_raw_data_block,
@@ -189,6 +192,15 @@ pub const ErrorDetails = struct {
             },
             .found_c_style_escaped_quote => {
                 return writer.writeAll("escaping quotes with \\\" is not allowed (use \"\" instead)");
+            },
+            .code_page_pragma_missing_left_paren => {
+                return writer.writeAll("expected left parenthesis after 'code_page' in code_page #pragma");
+            },
+            .code_page_pragma_missing_right_paren => {
+                return writer.writeAll("expected right parenthesis after '<number>' in code_page #pragma");
+            },
+            .code_page_pragma_invalid_code_page => {
+                return writer.writeAll("invalid code page in code_page #pragma");
             },
             .unfinished_raw_data_block => {
                 return writer.print("unfinished raw data block at '{s}', expected closing '}}' or 'END'", .{self.token.nameForErrorDisplay(source)});

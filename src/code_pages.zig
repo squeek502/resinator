@@ -93,6 +93,15 @@ pub const CodePage = enum(u16) {
             },
         }
     }
+
+    pub fn getByNumber(num: u16) !CodePage {
+        return switch (num) {
+            1252 => .windows1252,
+            65001 => .utf8,
+            // TODO: Separate out 'invalid' and 'unsupported'
+            else => return error.InvalidCodePage,
+        };
+    }
 };
 
 pub const Utf8 = struct {

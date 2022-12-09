@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Token = @import("lex.zig").Token;
+const code_pages = @import("code_pages.zig");
 
 pub const Tree = struct {
     node: *Node,
@@ -92,6 +93,10 @@ pub const Node = struct {
     pub const Literal = struct {
         base: Node = .{ .id = .literal },
         token: Token,
+        // TODO: It would be nice not to have to store this for each Literal node,
+        //       and instead have some type of separate lookup (per line maybe, but
+        //       some tokens can span multiple lines)
+        code_page: code_pages.CodePage,
     };
 
     pub const BinaryExpression = struct {
