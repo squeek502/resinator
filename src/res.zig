@@ -160,8 +160,8 @@ pub const NameOrOrdinal = union(enum) {
         }
     }
 
-    pub fn fromString(allocator: Allocator, bytes: SourceBytes, allow_overflow: bool) !NameOrOrdinal {
-        if (maybeOrdinalFromString(bytes, allow_overflow)) |ordinal| {
+    pub fn fromString(allocator: Allocator, bytes: SourceBytes) !NameOrOrdinal {
+        if (maybeOrdinalFromString(bytes)) |ordinal| {
             return ordinal;
         }
         return nameFromString(allocator, bytes);
@@ -187,7 +187,7 @@ pub const NameOrOrdinal = union(enum) {
         return NameOrOrdinal{ .name = as_utf16 };
     }
 
-    pub fn maybeOrdinalFromString(bytes: SourceBytes, allow_overflow: bool) ?NameOrOrdinal {
+    pub fn maybeOrdinalFromString(bytes: SourceBytes) ?NameOrOrdinal {
         var buf = bytes.slice;
         var radix: u8 = 10;
         if (buf.len > 2 and buf[0] == '0') {
@@ -204,23 +204,32 @@ pub const NameOrOrdinal = union(enum) {
             }
         }
 
+        var i: usize = 0;
         var result: u16 = 0;
-        for (buf) |c| {
-            const digit = std.fmt.charToDigit(c, radix) catch switch (radix) {
-                10 => return null,
-                // If this is hex, then non-hex-digits are treated as a terminator rather
-                // than an invalid number
-                16 => break,
-                else => unreachable,
+        while (bytes.code_page.codepointAt(i, buf)) |codepoint| : (i += codepoint.byte_len) {
+            const c = codepoint.value;
+            const digit = switch (c) {
+                // I have no idea why this is the case, but the Windows RC compiler
+                // treats ¹, ², and ³ characters as valid digits when the radix is 10
+                '¹', '²', '³' => if (radix != 10) break else @intCast(u8, c) - 0x30,
+                0x00...0x7F => std.fmt.charToDigit(@intCast(u8, c), radix) catch switch (radix) {
+                    10 => return null,
+                    // non-hex-digits are treated as a terminator rather than invalidating
+                    // the number (note: if there are no valid hex digits then the result
+                    // will be zero which is not treated as a valid number)
+                    16 => break,
+                    else => unreachable,
+                },
+                else => break,
             };
 
             if (result != 0) {
-                if (@mulWithOverflow(u16, result, radix, &result) and !allow_overflow) return null;
+                result *%= radix;
             }
-            if (@addWithOverflow(u16, result, digit, &result) and !allow_overflow) return null;
+            result +%= digit;
         }
 
-        // Zero is not interpretted as a number
+        // Anything that resolves to zero is not interpretted as a number
         if (result == 0) return null;
         return NameOrOrdinal{ .ordinal = result };
     }

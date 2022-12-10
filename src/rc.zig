@@ -58,7 +58,7 @@ pub const Resource = enum {
     });
 
     pub fn fromString(bytes: SourceBytes) Resource {
-        const maybe_ordinal = res.NameOrOrdinal.maybeOrdinalFromString(bytes, false);
+        const maybe_ordinal = res.NameOrOrdinal.maybeOrdinalFromString(bytes);
         if (maybe_ordinal) |ordinal| {
             const rt = @intToEnum(res.RT, ordinal.ordinal);
             return fromRT(rt);

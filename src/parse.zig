@@ -287,7 +287,7 @@ pub const Parser = struct {
                 .slice = id_token.slice(self.lexer.buffer),
                 .code_page = id_code_page,
             };
-            const maybe_ordinal = res.NameOrOrdinal.maybeOrdinalFromString(id_bytes, true);
+            const maybe_ordinal = res.NameOrOrdinal.maybeOrdinalFromString(id_bytes);
             if (maybe_ordinal == null) {
                 return self.addErrorDetailsAndFail(ErrorDetails{
                     .err = .id_must_be_ordinal,
