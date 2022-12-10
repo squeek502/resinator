@@ -268,6 +268,97 @@ pub const NameOrOrdinal = union(enum) {
     }
 };
 
+fn expectNameOrOrdinal(expected: NameOrOrdinal, actual: NameOrOrdinal) !void {
+    switch (expected) {
+        .name => {
+            if (actual != .name) return error.TestExpectedEqual;
+            try std.testing.expectEqualSlices(u16, expected.name, actual.name);
+        },
+        .ordinal => {
+            if (actual != .ordinal) return error.TestExpectedEqual;
+            try std.testing.expectEqual(expected.ordinal, actual.ordinal);
+        },
+    }
+}
+
+test "NameOrOrdinal" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const allocator = arena.allocator();
+
+    // zero is treated as a string
+    try expectNameOrOrdinal(
+        NameOrOrdinal{ .name = std.unicode.utf8ToUtf16LeStringLiteral("0") },
+        try NameOrOrdinal.fromString(allocator, .{ .slice = "0", .code_page = .windows1252 }),
+    );
+    // same with overflow that resolves to 0
+    try expectNameOrOrdinal(
+        NameOrOrdinal{ .name = std.unicode.utf8ToUtf16LeStringLiteral("65536") },
+        try NameOrOrdinal.fromString(allocator, .{ .slice = "65536", .code_page = .windows1252 }),
+    );
+    // hex zero is also treated as a string
+    try expectNameOrOrdinal(
+        NameOrOrdinal{ .name = std.unicode.utf8ToUtf16LeStringLiteral("0X0") },
+        try NameOrOrdinal.fromString(allocator, .{ .slice = "0x0", .code_page = .windows1252 }),
+    );
+    // hex numbers work
+    try expectNameOrOrdinal(
+        NameOrOrdinal{ .ordinal = 0x100 },
+        try NameOrOrdinal.fromString(allocator, .{ .slice = "0x100", .code_page = .windows1252 }),
+    );
+    // only the first 4 hex digits matter
+    try expectNameOrOrdinal(
+        NameOrOrdinal{ .ordinal = 0x1234 },
+        try NameOrOrdinal.fromString(allocator, .{ .slice = "0X12345", .code_page = .windows1252 }),
+    );
+    // octal is not supported so it gets treated as a string
+    try expectNameOrOrdinal(
+        NameOrOrdinal{ .name = std.unicode.utf8ToUtf16LeStringLiteral("0O1234") },
+        try NameOrOrdinal.fromString(allocator, .{ .slice = "0o1234", .code_page = .windows1252 }),
+    );
+    // overflow wraps
+    try expectNameOrOrdinal(
+        NameOrOrdinal{ .ordinal = @truncate(u16, 65635) },
+        try NameOrOrdinal.fromString(allocator, .{ .slice = "65635", .code_page = .windows1252 }),
+    );
+    // non-hex-digits in a hex literal are treated as a terminator
+    try expectNameOrOrdinal(
+        NameOrOrdinal{ .ordinal = 0x4 },
+        try NameOrOrdinal.fromString(allocator, .{ .slice = "0x4n", .code_page = .windows1252 }),
+    );
+    try expectNameOrOrdinal(
+        NameOrOrdinal{ .ordinal = 0xFA },
+        try NameOrOrdinal.fromString(allocator, .{ .slice = "0xFAZ92348", .code_page = .windows1252 }),
+    );
+    // 0 at the start is allowed
+    try expectNameOrOrdinal(
+        NameOrOrdinal{ .ordinal = 50 },
+        try NameOrOrdinal.fromString(allocator, .{ .slice = "050", .code_page = .windows1252 }),
+    );
+    // limit of 256 UTF-16 code units, can cut off between a surrogate pair
+    {
+        var expected = blk: {
+            // the input before the 𐐷 character, but uppercased
+            var expected_u8_bytes = "00614982008907933748980730280674788429543776231864944218790698304852300002973622122844631429099469274282385299397783838528QFFL7SHNSIETG0QKLR1UYPBTUV1PMFQRRA0VJDG354GQEDJMUPGPP1W1EXVNTZVEIZ6K3IPQM1AWGEYALMEODYVEZGOD3MFMGEY8FNR4JUETTB1PZDEWSNDRGZUA8SNXP3NGO";
+            var buf: [256:0]u16 = undefined;
+            for (expected_u8_bytes) |byte, i| {
+                buf[i] = byte;
+            }
+            // surrogate pair that is now orphaned
+            buf[255] = 0xD801;
+            break :blk buf;
+        };
+        try expectNameOrOrdinal(
+            NameOrOrdinal{ .name = &expected },
+            try NameOrOrdinal.fromString(allocator, .{
+                .slice = "00614982008907933748980730280674788429543776231864944218790698304852300002973622122844631429099469274282385299397783838528qffL7ShnSIETg0qkLr1UYpbtuv1PMFQRRa0VjDG354GQedJmUPgpp1w1ExVnTzVEiz6K3iPqM1AWGeYALmeODyvEZGOD3MfmGey8fnR4jUeTtB1PzdeWsNDrGzuA8Snxp3NGO𐐷",
+                .code_page = .utf8,
+            }),
+        );
+    }
+}
+
 /// https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-accel#members
 /// https://devblogs.microsoft.com/oldnewthing/20070316-00/?p=27593
 pub const AcceleratorModifiers = packed struct(u8) {
