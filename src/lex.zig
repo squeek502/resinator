@@ -174,9 +174,8 @@ pub const Lexer = struct {
         var state = StateWhitespaceDelimiterOnly.start;
 
         var last_line_ending_index: ?usize = null;
-        // This is code page-agnostic, so we can do iteration over bytes here.
-        while (self.index < self.buffer.len) : (self.index += 1) {
-            const c = self.buffer[self.index];
+        while (self.current_code_page.codepointAt(self.index, self.buffer)) |codepoint| : (self.index += codepoint.byte_len) {
+            const c = codepoint.value;
             try self.checkForIllegalCodepoint(c, false);
             switch (state) {
                 .start => switch (c) {
@@ -186,6 +185,14 @@ pub const Lexer = struct {
                     },
                     ' ', '\t', '\x05'...'\x08', '\x0B'...'\x0C', '\x0E'...'\x1F' => {
                         result.start = self.index + 1;
+                    },
+                    // NBSP only counts as whitespace at the start of a line (but
+                    // can be intermixed with other whitespace). Who knows why.
+                    '\xA0' => if (self.at_start_of_line) {
+                        result.start = self.index + codepoint.byte_len;
+                    } else {
+                        state = .literal;
+                        self.at_start_of_line = false;
                     },
                     '#' => {
                         if (self.at_start_of_line) {
@@ -299,6 +306,14 @@ pub const Lexer = struct {
                     },
                     ' ', '\t', '\x05'...'\x08', '\x0B'...'\x0C', '\x0E'...'\x1F' => {
                         result.start = self.index + 1;
+                    },
+                    // NBSP only counts as whitespace at the start of a line (but
+                    // can be intermixed with other whitespace). Who knows why.
+                    '\xA0' => if (self.at_start_of_line) {
+                        result.start = self.index + codepoint.byte_len;
+                    } else {
+                        state = .literal;
+                        self.at_start_of_line = false;
                     },
                     'L', 'l' => {
                         state = .literal_or_quoted_wide_string;
