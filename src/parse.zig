@@ -3,10 +3,12 @@ const Lexer = @import("lex.zig").Lexer;
 const Token = @import("lex.zig").Token;
 const Node = @import("ast.zig").Node;
 const Tree = @import("ast.zig").Tree;
+const CodePageLookup = @import("ast.zig").CodePageLookup;
 const Resource = @import("rc.zig").Resource;
 const Allocator = std.mem.Allocator;
 const ErrorDetails = @import("errors.zig").ErrorDetails;
 const Diagnostics = @import("errors.zig").Diagnostics;
+const SourceBytes = @import("literals.zig").SourceBytes;
 const rc = @import("rc.zig");
 const res = @import("res.zig");
 
@@ -31,6 +33,7 @@ pub const Parser = struct {
         allocator: Allocator,
         arena: Allocator,
         diagnostics: *Diagnostics,
+        code_page_lookup: CodePageLookup,
     };
 
     pub fn parse(self: *Self, allocator: Allocator, diagnostics: *Diagnostics) Error!*Tree {
@@ -43,6 +46,7 @@ pub const Parser = struct {
             .allocator = allocator,
             .arena = arena.allocator(),
             .diagnostics = diagnostics,
+            .code_page_lookup = CodePageLookup.init(arena.allocator(), self.lexer.current_code_page),
         };
 
         const parsed_root = try self.parseRoot();
@@ -50,6 +54,7 @@ pub const Parser = struct {
         const tree = try self.state.arena.create(Tree);
         tree.* = .{
             .node = parsed_root,
+            .code_pages = self.state.code_page_lookup,
             .source = self.lexer.buffer,
             .arena = arena.state,
             .allocator = allocator,
@@ -230,7 +235,6 @@ pub const Parser = struct {
                         .id = id_expression,
                         .maybe_comma = comma_token,
                         .string = self.state.token,
-                        .code_page = self.lexer.current_code_page,
                     };
                     try strings.append(&string_node.base);
                 }
@@ -260,6 +264,7 @@ pub const Parser = struct {
         };
 
         const id_token = first_token;
+        const id_code_page = self.lexer.current_code_page;
         try self.nextToken(.whitespace_delimiter_only);
         const resource = try self.checkResource();
         const type_token = self.state.token;
@@ -278,7 +283,11 @@ pub const Parser = struct {
         }
 
         if (resource == .font) {
-            const maybe_ordinal = res.NameOrOrdinal.maybeOrdinalFromString(id_token.slice(self.lexer.buffer), true);
+            const id_bytes = SourceBytes{
+                .slice = id_token.slice(self.lexer.buffer),
+                .code_page = id_code_page,
+            };
+            const maybe_ordinal = res.NameOrOrdinal.maybeOrdinalFromString(id_bytes, true);
             if (maybe_ordinal == null) {
                 return self.addErrorDetailsAndFail(ErrorDetails{
                     .err = .id_must_be_ordinal,
@@ -539,26 +548,17 @@ pub const Parser = struct {
             switch (self.state.token.id) {
                 .quoted_ascii_string, .quoted_wide_string => {
                     const node = try self.state.arena.create(Node.Literal);
-                    node.* = .{
-                        .token = self.state.token,
-                        .code_page = self.lexer.current_code_page,
-                    };
+                    node.* = .{ .token = self.state.token };
                     return &node.base;
                 },
                 .literal => {
                     const node = try self.state.arena.create(Node.Literal);
-                    node.* = .{
-                        .token = self.state.token,
-                        .code_page = self.lexer.current_code_page,
-                    };
+                    node.* = .{ .token = self.state.token };
                     return &node.base;
                 },
                 .number => {
                     const node = try self.state.arena.create(Node.Literal);
-                    node.* = .{
-                        .token = self.state.token,
-                        .code_page = self.lexer.current_code_page,
-                    };
+                    node.* = .{ .token = self.state.token };
                     break :lhs &node.base;
                 },
                 .open_paren => {
@@ -595,10 +595,7 @@ pub const Parser = struct {
                     // Very strange.
                     if (!is_known_to_be_number_expression) {
                         const node = try self.state.arena.create(Node.Literal);
-                        node.* = .{
-                            .token = self.state.token,
-                            .code_page = self.lexer.current_code_page,
-                        };
+                        node.* = .{ .token = self.state.token };
                         return &node.base;
                     }
                 },
@@ -659,6 +656,8 @@ pub const Parser = struct {
         self.state.token = self.lexer.next(method) catch |err| {
             return self.addErrorDetailsAndFail(self.lexer.getErrorDetails(err));
         };
+        // After every token, set the code page for its line
+        try self.state.code_page_lookup.setForToken(self.state.token, self.lexer.current_code_page);
     }
 
     fn lookaheadToken(self: *Self, comptime method: Lexer.LexMethod) Error!Token {
@@ -698,7 +697,10 @@ pub const Parser = struct {
 
     fn checkResource(self: *Self) !Resource {
         switch (self.state.token.id) {
-            .literal => return Resource.fromString(self.state.token.slice(self.lexer.buffer)),
+            .literal => return Resource.fromString(.{
+                .slice = self.state.token.slice(self.lexer.buffer),
+                .code_page = self.lexer.current_code_page,
+            }),
             else => {
                 return self.addErrorDetailsAndFail(ErrorDetails{
                     .err = .expected_token,

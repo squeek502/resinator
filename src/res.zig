@@ -4,6 +4,8 @@ const Resource = rc.Resource;
 const CommonResourceAttributes = rc.CommonResourceAttributes;
 const Allocator = std.mem.Allocator;
 const windows1252 = @import("windows1252.zig");
+const CodePage = @import("code_pages.zig").CodePage;
+const SourceBytes = @import("literals.zig").SourceBytes;
 
 /// https://learn.microsoft.com/en-us/windows/win32/menurc/resource-types
 pub const RT = enum(u8) {
@@ -158,15 +160,16 @@ pub const NameOrOrdinal = union(enum) {
         }
     }
 
-    pub fn fromString(allocator: Allocator, str: []const u8, allow_overflow: bool) !NameOrOrdinal {
-        if (maybeOrdinalFromString(str, allow_overflow)) |ordinal| {
+    pub fn fromString(allocator: Allocator, bytes: SourceBytes, allow_overflow: bool) !NameOrOrdinal {
+        if (maybeOrdinalFromString(bytes, allow_overflow)) |ordinal| {
             return ordinal;
         }
-        return nameFromString(allocator, str);
+        return nameFromString(allocator, bytes);
     }
 
-    pub fn nameFromString(allocator: Allocator, str: []const u8) !NameOrOrdinal {
-        var as_utf16 = try std.unicode.utf8ToUtf16LeWithNull(allocator, str);
+    pub fn nameFromString(allocator: Allocator, bytes: SourceBytes) !NameOrOrdinal {
+        // TODO use bytes.code_page
+        var as_utf16 = try std.unicode.utf8ToUtf16LeWithNull(allocator, bytes.slice);
         // Names have a limit of 256 UTF-16 code units + null terminator
         // Note: This can cut-off in the middle of a UTF-16, i.e. it can make the
         //       string end with an unpaired high surrogate
@@ -184,11 +187,11 @@ pub const NameOrOrdinal = union(enum) {
         return NameOrOrdinal{ .name = as_utf16 };
     }
 
-    pub fn maybeOrdinalFromString(str: []const u8, allow_overflow: bool) ?NameOrOrdinal {
-        var buf = str;
+    pub fn maybeOrdinalFromString(bytes: SourceBytes, allow_overflow: bool) ?NameOrOrdinal {
+        var buf = bytes.slice;
         var radix: u8 = 10;
         if (buf.len > 2 and buf[0] == '0') {
-            switch (str[1]) {
+            switch (buf[1]) {
                 '0'...'9' => {},
                 'x', 'X' => {
                     radix = 16;

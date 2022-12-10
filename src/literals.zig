@@ -1,5 +1,6 @@
 const std = @import("std");
 const code_pages = @import("code_pages.zig");
+const CodePage = code_pages.CodePage;
 const windows1252 = @import("windows1252.zig");
 
 /// rc is maximally liberal in terms of what it accepts as a number literal
@@ -11,6 +12,11 @@ pub fn isValidNumberDataLiteral(str: []const u8) bool {
         else => return false,
     }
 }
+
+pub const SourceBytes = struct {
+    slice: []const u8,
+    code_page: CodePage,
+};
 
 /// Valid escapes:
 ///  "" -> "
@@ -38,13 +44,13 @@ pub fn isValidNumberDataLiteral(str: []const u8) bool {
 ///       This parse function handles this case the same as the Windows RC compiler, but
 ///       \" within a string literal is treated as an error by the lexer, so the relevant
 ///       branches should never actually be hit during this function.
-pub fn parseQuotedAsciiString(allocator: std.mem.Allocator, str: []const u8, start_column: usize, code_page: code_pages.CodePage) ![]u8 {
-    std.debug.assert(str.len >= 2); // must at least have 2 double quote chars
+pub fn parseQuotedAsciiString(allocator: std.mem.Allocator, bytes: SourceBytes, start_column: usize) ![]u8 {
+    std.debug.assert(bytes.slice.len >= 2); // must at least have 2 double quote chars
 
-    var buf = try std.ArrayList(u8).initCapacity(allocator, str.len);
+    var buf = try std.ArrayList(u8).initCapacity(allocator, bytes.slice.len);
     errdefer buf.deinit();
 
-    var source = str[1..(str.len - 1)]; // remove start and end "
+    var source = bytes.slice[1..(bytes.slice.len - 1)]; // remove start and end "
 
     const State = enum {
         normal,
@@ -62,7 +68,7 @@ pub fn parseQuotedAsciiString(allocator: std.mem.Allocator, str: []const u8, sta
     var string_escape_n: u8 = 0;
     var string_escape_i: std.math.IntFittingRange(0, 3) = 0;
     var index: usize = 0;
-    while (code_page.codepointAt(index, source)) |codepoint| : (index += codepoint.byte_len) {
+    while (bytes.code_page.codepointAt(index, source)) |codepoint| : (index += codepoint.byte_len) {
         const c = codepoint.value;
         var backtrack = false;
         defer {
@@ -228,115 +234,138 @@ test "parse quoted ascii string" {
     defer arena_allocator.deinit();
     const arena = arena_allocator.allocator();
 
-    try std.testing.expectEqualSlices(u8, "hello", try parseQuotedAsciiString(arena,
+    try std.testing.expectEqualSlices(u8, "hello", try parseQuotedAsciiString(arena, .{
+        .slice = 
         \\"hello"
-    , 0, .windows1252));
+        ,
+        .code_page = .windows1252,
+    }, 0));
     // hex with 0 digits
-    try std.testing.expectEqualSlices(u8, "\x00", try parseQuotedAsciiString(arena,
+    try std.testing.expectEqualSlices(u8, "\x00", try parseQuotedAsciiString(arena, .{
+        .slice = 
         \\"\x"
-    , 0, .windows1252));
+        ,
+        .code_page = .windows1252,
+    }, 0));
     // hex max of 2 digits
-    try std.testing.expectEqualSlices(u8, "\xFFf", try parseQuotedAsciiString(arena,
+    try std.testing.expectEqualSlices(u8, "\xFFf", try parseQuotedAsciiString(arena, .{
+        .slice = 
         \\"\XfFf"
-    , 0, .windows1252));
+        ,
+        .code_page = .windows1252,
+    }, 0));
     // octal with invalid octal digit
-    try std.testing.expectEqualSlices(u8, "\x019", try parseQuotedAsciiString(arena,
+    try std.testing.expectEqualSlices(u8, "\x019", try parseQuotedAsciiString(arena, .{
+        .slice = 
         \\"\19"
-    , 0, .windows1252));
+        ,
+        .code_page = .windows1252,
+    }, 0));
     // escaped quotes
-    try std.testing.expectEqualSlices(u8, " \" ", try parseQuotedAsciiString(arena,
+    try std.testing.expectEqualSlices(u8, " \" ", try parseQuotedAsciiString(arena, .{
+        .slice = 
         \\" "" "
-    , 0, .windows1252));
+        ,
+        .code_page = .windows1252,
+    }, 0));
     // backslash right before escaped quotes
-    try std.testing.expectEqualSlices(u8, "\"", try parseQuotedAsciiString(arena,
+    try std.testing.expectEqualSlices(u8, "\"", try parseQuotedAsciiString(arena, .{
+        .slice = 
         \\"\"""
-    , 0, .windows1252));
+        ,
+        .code_page = .windows1252,
+    }, 0));
     // octal overflow
-    try std.testing.expectEqualSlices(u8, "\x01", try parseQuotedAsciiString(arena,
+    try std.testing.expectEqualSlices(u8, "\x01", try parseQuotedAsciiString(arena, .{
+        .slice = 
         \\"\401"
-    , 0, .windows1252));
+        ,
+        .code_page = .windows1252,
+    }, 0));
     // escapes
-    try std.testing.expectEqualSlices(u8, "\x08\n\r\t\\", try parseQuotedAsciiString(arena,
+    try std.testing.expectEqualSlices(u8, "\x08\n\r\t\\", try parseQuotedAsciiString(arena, .{
+        .slice = 
         \\"\a\n\r\t\\"
-    , 0, .windows1252));
+        ,
+        .code_page = .windows1252,
+    }, 0));
     // uppercase escapes
-    try std.testing.expectEqualSlices(u8, "\x08\\N\\R\t\\", try parseQuotedAsciiString(arena,
+    try std.testing.expectEqualSlices(u8, "\x08\\N\\R\t\\", try parseQuotedAsciiString(arena, .{
+        .slice = 
         \\"\A\N\R\T\\"
-    , 0, .windows1252));
+        ,
+        .code_page = .windows1252,
+    }, 0));
     // backslash on its own
-    try std.testing.expectEqualSlices(u8, "\\", try parseQuotedAsciiString(arena,
+    try std.testing.expectEqualSlices(u8, "\\", try parseQuotedAsciiString(arena, .{
+        .slice = 
         \\"\"
-    , 0, .windows1252));
+        ,
+        .code_page = .windows1252,
+    }, 0));
     // unrecognized escapes
-    try std.testing.expectEqualSlices(u8, "\\b", try parseQuotedAsciiString(arena,
+    try std.testing.expectEqualSlices(u8, "\\b", try parseQuotedAsciiString(arena, .{
+        .slice = 
         \\"\b"
-    , 0, .windows1252));
+        ,
+        .code_page = .windows1252,
+    }, 0));
     // escaped carriage returns
     try std.testing.expectEqualSlices(u8, "\\", try parseQuotedAsciiString(
         arena,
-        "\"\\\r\r\r\r\r\"",
+        .{ .slice = "\"\\\r\r\r\r\r\"", .code_page = .windows1252 },
         0,
-        .windows1252,
     ));
     // escaped newlines
     try std.testing.expectEqualSlices(u8, "", try parseQuotedAsciiString(
         arena,
-        "\"\\\n\n\n\n\n\"",
+        .{ .slice = "\"\\\n\n\n\n\n\"", .code_page = .windows1252 },
         0,
-        .windows1252,
     ));
     // escaped CRLF pairs
     try std.testing.expectEqualSlices(u8, "", try parseQuotedAsciiString(
         arena,
-        "\"\\\r\n\r\n\r\n\r\n\r\n\"",
+        .{ .slice = "\"\\\r\n\r\n\r\n\r\n\r\n\"", .code_page = .windows1252 },
         0,
-        .windows1252,
     ));
     // escaped newlines with other whitespace
     try std.testing.expectEqualSlices(u8, "", try parseQuotedAsciiString(
         arena,
-        "\"\\\n    \t\r\n \r\t\n  \t\"",
+        .{ .slice = "\"\\\n    \t\r\n \r\t\n  \t\"", .code_page = .windows1252 },
         0,
-        .windows1252,
     ));
     // literal tab characters get converted to spaces (dependent on source file columns)
     try std.testing.expectEqualSlices(u8, "       ", try parseQuotedAsciiString(
         arena,
-        "\"\t\"",
+        .{ .slice = "\"\t\"", .code_page = .windows1252 },
         0,
-        .windows1252,
     ));
     try std.testing.expectEqualSlices(u8, "abc    ", try parseQuotedAsciiString(
         arena,
-        "\"abc\t\"",
+        .{ .slice = "\"abc\t\"", .code_page = .windows1252 },
         0,
-        .windows1252,
     ));
     try std.testing.expectEqualSlices(u8, "abcdefg        ", try parseQuotedAsciiString(
         arena,
-        "\"abcdefg\t\"",
+        .{ .slice = "\"abcdefg\t\"", .code_page = .windows1252 },
         0,
-        .windows1252,
     ));
     try std.testing.expectEqualSlices(u8, "\\      ", try parseQuotedAsciiString(
         arena,
-        "\"\\\t\"",
+        .{ .slice = "\"\\\t\"", .code_page = .windows1252 },
         0,
-        .windows1252,
     ));
     // literal CR's get dropped
     try std.testing.expectEqualSlices(u8, "", try parseQuotedAsciiString(
         arena,
-        "\"\r\r\r\r\r\"",
+        .{ .slice = "\"\r\r\r\r\r\"", .code_page = .windows1252 },
         0,
-        .windows1252,
     ));
     // contiguous newlines and whitespace get collapsed to <space><newline>
     try std.testing.expectEqualSlices(u8, " \n", try parseQuotedAsciiString(
         arena,
-        "\"\n\r\r  \r\n \t  \"",
+        .{ .slice = "\"\n\r\r  \r\n \t  \"", .code_page = .windows1252 },
         0,
-        .windows1252,
     ));
 }
 
@@ -347,40 +376,36 @@ test "parse quoted ascii string with utf8 code page" {
 
     try std.testing.expectEqualSlices(u8, "", try parseQuotedAsciiString(
         arena,
-        "\"\"",
+        .{ .slice = "\"\"", .code_page = .utf8 },
         0,
-        .utf8,
     ));
     // Codepoints that don't have a Windows-1252 representation get converted to ?
     try std.testing.expectEqualSlices(u8, "?????????", try parseQuotedAsciiString(
         arena,
-        "\"кириллица\"",
+        .{ .slice = "\"кириллица\"", .code_page = .utf8 },
         0,
-        .utf8,
     ));
     // Codepoints that have a best fit mapping get converted accordingly,
     // these are box drawing codepoints
     try std.testing.expectEqualSlices(u8, "\x2b\x2d\x2b", try parseQuotedAsciiString(
         arena,
-        "\"┌─┐\"",
+        .{ .slice = "\"┌─┐\"", .code_page = .utf8 },
         0,
-        .utf8,
     ));
     // Invalid UTF-8 gets converted to ? depending on well-formedness
     try std.testing.expectEqualSlices(u8, "????", try parseQuotedAsciiString(
         arena,
-        "\"\xf0\xf0\x80\x80\x80\"",
+        .{ .slice = "\"\xf0\xf0\x80\x80\x80\"", .code_page = .utf8 },
         0,
-        .utf8,
     ));
 }
 
 /// TODO: Real implemenation, probably needing to take code_page into account
 /// Notes:
 /// - Wide strings allow for 4 hex digits in escapes (e.g. \xC2AD gets parsed as 0xC2AD)
-pub fn parseQuotedWideStringAlloc(allocator: std.mem.Allocator, str: []const u8, start_column: usize, code_page: code_pages.CodePage) ![:0]u16 {
-    std.debug.assert(str.len >= 3); // L""
-    const parsed = try parseQuotedAsciiString(allocator, str[1..], start_column, code_page);
+pub fn parseQuotedWideStringAlloc(allocator: std.mem.Allocator, bytes: SourceBytes, start_column: usize) ![:0]u16 {
+    std.debug.assert(bytes.slice.len >= 3); // L""
+    const parsed = try parseQuotedAsciiString(allocator, .{ .slice = bytes.slice[1..], .code_page = bytes.code_page }, start_column);
     defer allocator.free(parsed);
     return try std.unicode.utf8ToUtf16LeWithNull(allocator, parsed);
 }
@@ -416,11 +441,11 @@ pub const Number = struct {
 ///   example that is rejected: 1e1
 ///   example that is accepted: 1ea
 ///   (this function will parse the two examples above the same)
-pub fn parseNumberLiteral(str: []const u8, code_page: code_pages.CodePage) Number {
-    std.debug.assert(str.len > 0);
+pub fn parseNumberLiteral(bytes: SourceBytes) Number {
+    std.debug.assert(bytes.slice.len > 0);
     var result = Number{ .value = 0, .is_long = false };
     var radix: u8 = 10;
-    var buf = str;
+    var buf = bytes.slice;
 
     const Prefix = enum { none, minus, complement };
     var prefix: Prefix = .none;
@@ -451,7 +476,7 @@ pub fn parseNumberLiteral(str: []const u8, code_page: code_pages.CodePage) Numbe
     }
 
     var i: usize = 0;
-    while (code_page.codepointAt(i, buf)) |codepoint| : (i += codepoint.byte_len) {
+    while (bytes.code_page.codepointAt(i, buf)) |codepoint| : (i += codepoint.byte_len) {
         const c = codepoint.value;
         if (c == 'L' or c == 'l') {
             result.is_long = true;
@@ -482,56 +507,56 @@ pub fn parseNumberLiteral(str: []const u8, code_page: code_pages.CodePage) Numbe
 }
 
 test "parse number literal" {
-    try std.testing.expectEqual(Number{ .value = 0, .is_long = false }, parseNumberLiteral("0", .windows1252));
-    try std.testing.expectEqual(Number{ .value = 1, .is_long = false }, parseNumberLiteral("1", .windows1252));
-    try std.testing.expectEqual(Number{ .value = 1, .is_long = true }, parseNumberLiteral("1L", .windows1252));
-    try std.testing.expectEqual(Number{ .value = 1, .is_long = true }, parseNumberLiteral("1l", .windows1252));
-    try std.testing.expectEqual(Number{ .value = 1, .is_long = false }, parseNumberLiteral("1garbageL", .windows1252));
-    try std.testing.expectEqual(Number{ .value = 4294967295, .is_long = false }, parseNumberLiteral("4294967295", .windows1252));
-    try std.testing.expectEqual(Number{ .value = 0, .is_long = false }, parseNumberLiteral("4294967296", .windows1252));
-    try std.testing.expectEqual(Number{ .value = 1, .is_long = true }, parseNumberLiteral("4294967297L", .windows1252));
+    try std.testing.expectEqual(Number{ .value = 0, .is_long = false }, parseNumberLiteral(.{ .slice = "0", .code_page = .windows1252 }));
+    try std.testing.expectEqual(Number{ .value = 1, .is_long = false }, parseNumberLiteral(.{ .slice = "1", .code_page = .windows1252 }));
+    try std.testing.expectEqual(Number{ .value = 1, .is_long = true }, parseNumberLiteral(.{ .slice = "1L", .code_page = .windows1252 }));
+    try std.testing.expectEqual(Number{ .value = 1, .is_long = true }, parseNumberLiteral(.{ .slice = "1l", .code_page = .windows1252 }));
+    try std.testing.expectEqual(Number{ .value = 1, .is_long = false }, parseNumberLiteral(.{ .slice = "1garbageL", .code_page = .windows1252 }));
+    try std.testing.expectEqual(Number{ .value = 4294967295, .is_long = false }, parseNumberLiteral(.{ .slice = "4294967295", .code_page = .windows1252 }));
+    try std.testing.expectEqual(Number{ .value = 0, .is_long = false }, parseNumberLiteral(.{ .slice = "4294967296", .code_page = .windows1252 }));
+    try std.testing.expectEqual(Number{ .value = 1, .is_long = true }, parseNumberLiteral(.{ .slice = "4294967297L", .code_page = .windows1252 }));
 
     // can handle any length of number, wraps on overflow appropriately
-    const big_overflow = parseNumberLiteral("1000000000000000000000000000000000000000000000000000000000000000000000000000000090000000001", .windows1252);
+    const big_overflow = parseNumberLiteral(.{ .slice = "1000000000000000000000000000000000000000000000000000000000000000000000000000000090000000001", .code_page = .windows1252 });
     try std.testing.expectEqual(Number{ .value = 4100654081, .is_long = false }, big_overflow);
     try std.testing.expectEqual(@as(u16, 1025), big_overflow.asWord());
 
-    try std.testing.expectEqual(Number{ .value = 0x20, .is_long = false }, parseNumberLiteral("0x20", .windows1252));
-    try std.testing.expectEqual(Number{ .value = 0x2A, .is_long = true }, parseNumberLiteral("0x2AL", .windows1252));
-    try std.testing.expectEqual(Number{ .value = 0x2A, .is_long = true }, parseNumberLiteral("0x2aL", .windows1252));
-    try std.testing.expectEqual(Number{ .value = 0x2A, .is_long = true }, parseNumberLiteral("0x2aL", .windows1252));
+    try std.testing.expectEqual(Number{ .value = 0x20, .is_long = false }, parseNumberLiteral(.{ .slice = "0x20", .code_page = .windows1252 }));
+    try std.testing.expectEqual(Number{ .value = 0x2A, .is_long = true }, parseNumberLiteral(.{ .slice = "0x2AL", .code_page = .windows1252 }));
+    try std.testing.expectEqual(Number{ .value = 0x2A, .is_long = true }, parseNumberLiteral(.{ .slice = "0x2aL", .code_page = .windows1252 }));
+    try std.testing.expectEqual(Number{ .value = 0x2A, .is_long = true }, parseNumberLiteral(.{ .slice = "0x2aL", .code_page = .windows1252 }));
 
-    try std.testing.expectEqual(Number{ .value = 0o20, .is_long = false }, parseNumberLiteral("0o20", .windows1252));
-    try std.testing.expectEqual(Number{ .value = 0o20, .is_long = true }, parseNumberLiteral("0o20L", .windows1252));
-    try std.testing.expectEqual(Number{ .value = 0o2, .is_long = false }, parseNumberLiteral("0o29", .windows1252));
-    try std.testing.expectEqual(Number{ .value = 0, .is_long = false }, parseNumberLiteral("0O29", .windows1252));
+    try std.testing.expectEqual(Number{ .value = 0o20, .is_long = false }, parseNumberLiteral(.{ .slice = "0o20", .code_page = .windows1252 }));
+    try std.testing.expectEqual(Number{ .value = 0o20, .is_long = true }, parseNumberLiteral(.{ .slice = "0o20L", .code_page = .windows1252 }));
+    try std.testing.expectEqual(Number{ .value = 0o2, .is_long = false }, parseNumberLiteral(.{ .slice = "0o29", .code_page = .windows1252 }));
+    try std.testing.expectEqual(Number{ .value = 0, .is_long = false }, parseNumberLiteral(.{ .slice = "0O29", .code_page = .windows1252 }));
 
-    try std.testing.expectEqual(Number{ .value = 0xFFFFFFFF, .is_long = false }, parseNumberLiteral("-1", .windows1252));
-    try std.testing.expectEqual(Number{ .value = 0xFFFFFFFE, .is_long = false }, parseNumberLiteral("~1", .windows1252));
-    try std.testing.expectEqual(Number{ .value = 0xFFFFFFFF, .is_long = true }, parseNumberLiteral("-4294967297L", .windows1252));
-    try std.testing.expectEqual(Number{ .value = 0xFFFFFFFE, .is_long = true }, parseNumberLiteral("~4294967297L", .windows1252));
-    try std.testing.expectEqual(Number{ .value = 0xFFFFFFFD, .is_long = false }, parseNumberLiteral("-0X3", .windows1252));
+    try std.testing.expectEqual(Number{ .value = 0xFFFFFFFF, .is_long = false }, parseNumberLiteral(.{ .slice = "-1", .code_page = .windows1252 }));
+    try std.testing.expectEqual(Number{ .value = 0xFFFFFFFE, .is_long = false }, parseNumberLiteral(.{ .slice = "~1", .code_page = .windows1252 }));
+    try std.testing.expectEqual(Number{ .value = 0xFFFFFFFF, .is_long = true }, parseNumberLiteral(.{ .slice = "-4294967297L", .code_page = .windows1252 }));
+    try std.testing.expectEqual(Number{ .value = 0xFFFFFFFE, .is_long = true }, parseNumberLiteral(.{ .slice = "~4294967297L", .code_page = .windows1252 }));
+    try std.testing.expectEqual(Number{ .value = 0xFFFFFFFD, .is_long = false }, parseNumberLiteral(.{ .slice = "-0X3", .code_page = .windows1252 }));
 
     // anything after L is ignored
-    try std.testing.expectEqual(Number{ .value = 0x2A, .is_long = true }, parseNumberLiteral("0x2aL5", .windows1252));
+    try std.testing.expectEqual(Number{ .value = 0x2A, .is_long = true }, parseNumberLiteral(.{ .slice = "0x2aL5", .code_page = .windows1252 }));
 }
 
 test "superscript characters in number literals" {
     // In Windows-1252, ² is \xb2, ³ is \xb3, ¹ is \xb9
-    try std.testing.expectEqual(Number{ .value = 130, .is_long = false }, parseNumberLiteral("\xb2", .windows1252));
-    try std.testing.expectEqual(Number{ .value = 131, .is_long = false }, parseNumberLiteral("\xb3", .windows1252));
-    try std.testing.expectEqual(Number{ .value = 137, .is_long = false }, parseNumberLiteral("\xb9", .windows1252));
+    try std.testing.expectEqual(Number{ .value = 130, .is_long = false }, parseNumberLiteral(.{ .slice = "\xb2", .code_page = .windows1252 }));
+    try std.testing.expectEqual(Number{ .value = 131, .is_long = false }, parseNumberLiteral(.{ .slice = "\xb3", .code_page = .windows1252 }));
+    try std.testing.expectEqual(Number{ .value = 137, .is_long = false }, parseNumberLiteral(.{ .slice = "\xb9", .code_page = .windows1252 }));
 
-    try std.testing.expectEqual(Number{ .value = 147, .is_long = false }, parseNumberLiteral("1\xb9", .windows1252));
-    try std.testing.expectEqual(Number{ .value = 157, .is_long = false }, parseNumberLiteral("2\xb9", .windows1252));
-    try std.testing.expectEqual(Number{ .value = 167, .is_long = false }, parseNumberLiteral("3\xb9", .windows1252));
-    try std.testing.expectEqual(Number{ .value = 227, .is_long = false }, parseNumberLiteral("9\xb9", .windows1252));
+    try std.testing.expectEqual(Number{ .value = 147, .is_long = false }, parseNumberLiteral(.{ .slice = "1\xb9", .code_page = .windows1252 }));
+    try std.testing.expectEqual(Number{ .value = 157, .is_long = false }, parseNumberLiteral(.{ .slice = "2\xb9", .code_page = .windows1252 }));
+    try std.testing.expectEqual(Number{ .value = 167, .is_long = false }, parseNumberLiteral(.{ .slice = "3\xb9", .code_page = .windows1252 }));
+    try std.testing.expectEqual(Number{ .value = 227, .is_long = false }, parseNumberLiteral(.{ .slice = "9\xb9", .code_page = .windows1252 }));
 
-    try std.testing.expectEqual(Number{ .value = 237, .is_long = false }, parseNumberLiteral("10\xb9", .windows1252));
-    try std.testing.expectEqual(Number{ .value = 337, .is_long = false }, parseNumberLiteral("20\xb9", .windows1252));
+    try std.testing.expectEqual(Number{ .value = 237, .is_long = false }, parseNumberLiteral(.{ .slice = "10\xb9", .code_page = .windows1252 }));
+    try std.testing.expectEqual(Number{ .value = 337, .is_long = false }, parseNumberLiteral(.{ .slice = "20\xb9", .code_page = .windows1252 }));
 
-    try std.testing.expectEqual(Number{ .value = 1507, .is_long = false }, parseNumberLiteral("\xb9\xb9", .windows1252));
-    try std.testing.expectEqual(Number{ .value = 15131, .is_long = false }, parseNumberLiteral("\xb9\xb2\xb3", .windows1252));
+    try std.testing.expectEqual(Number{ .value = 1507, .is_long = false }, parseNumberLiteral(.{ .slice = "\xb9\xb9", .code_page = .windows1252 }));
+    try std.testing.expectEqual(Number{ .value = 15131, .is_long = false }, parseNumberLiteral(.{ .slice = "\xb9\xb2\xb3", .code_page = .windows1252 }));
 
-    try std.testing.expectEqual(Number{ .value = 15131, .is_long = false }, parseNumberLiteral("¹²³", .utf8));
+    try std.testing.expectEqual(Number{ .value = 15131, .is_long = false }, parseNumberLiteral(.{ .slice = "¹²³", .code_page = .utf8 }));
 }

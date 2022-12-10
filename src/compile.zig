@@ -20,6 +20,8 @@ const DWORD = std.os.windows.DWORD;
 const utils = @import("utils.zig");
 const NameOrOrdinal = res.NameOrOrdinal;
 const CodePage = @import("code_pages.zig").CodePage;
+const CodePageLookup = @import("ast.zig").CodePageLookup;
+const SourceBytes = @import("literals.zig").SourceBytes;
 
 pub fn compile(allocator: Allocator, source: []const u8, writer: anytype, cwd: std.fs.Dir, diagnostics: *Diagnostics) !void {
     // TODO: Take this as a parameter
@@ -39,6 +41,7 @@ pub fn compile(allocator: Allocator, source: []const u8, writer: anytype, cwd: s
         .allocator = allocator,
         .cwd = cwd,
         .diagnostics = diagnostics,
+        .code_pages = &tree.code_pages,
     };
 
     try compiler.writeRoot(tree.root(), writer);
@@ -51,6 +54,7 @@ pub const Compiler = struct {
     cwd: std.fs.Dir,
     state: State = .{},
     diagnostics: *Diagnostics,
+    code_pages: *const CodePageLookup,
 
     pub const State = struct {
         icon_id: u16 = 1,
@@ -118,7 +122,8 @@ pub const Compiler = struct {
                     .quoted_ascii_string => {
                         const slice = literal_node.token.slice(self.source);
                         const column = literal_node.token.calculateColumn(self.source, 8, null);
-                        const parsed = try parseQuotedAsciiString(self.allocator, slice, column, literal_node.code_page);
+                        const bytes = SourceBytes{ .slice = slice, .code_page = self.code_pages.getForToken(literal_node.token) };
+                        const parsed = try parseQuotedAsciiString(self.allocator, bytes, column);
                         return .{ .utf8 = parsed, .needs_free = true };
                     },
                     .quoted_wide_string => {
@@ -127,7 +132,8 @@ pub const Compiler = struct {
                         // strings directly to UTF-8.
                         const slice = literal_node.token.slice(self.source);
                         const column = literal_node.token.calculateColumn(self.source, 8, null);
-                        const parsed_string = try parseQuotedWideStringAlloc(self.allocator, slice, column, literal_node.code_page);
+                        const bytes = SourceBytes{ .slice = slice, .code_page = self.code_pages.getForToken(literal_node.token) };
+                        const parsed_string = try parseQuotedWideStringAlloc(self.allocator, bytes, column);
                         defer self.allocator.free(parsed_string);
                         const parsed_as_utf8 = try std.unicode.utf16leToUtf8Alloc(self.allocator, parsed_string);
                         return .{ .utf8 = parsed_as_utf8, .needs_free = true };
@@ -169,8 +175,16 @@ pub const Compiler = struct {
         };
         defer file.close();
 
+        const id_bytes = SourceBytes{
+            .slice = node.id.slice(self.source),
+            .code_page = self.code_pages.getForToken(node.id),
+        };
+        const type_bytes = SourceBytes{
+            .slice = node.type.slice(self.source),
+            .code_page = self.code_pages.getForToken(node.type),
+        };
         // Init header with data size zero for now, will need to fill it in later
-        var header = try ResourceHeader.init(self.allocator, node.id.slice(self.source), node.type.slice(self.source), 0, self.state.language);
+        var header = try ResourceHeader.init(self.allocator, id_bytes, type_bytes, 0, self.state.language);
         defer header.deinit(self.allocator);
 
         if (header.predefinedResourceType()) |predefined_type| {
@@ -314,23 +328,27 @@ pub const Compiler = struct {
     };
 
     /// Assumes that the node is a number or number expression
-    fn evaluateNumberExpression(expression_node: *Node, source: []const u8) Number {
+    fn evaluateNumberExpression(expression_node: *Node, source: []const u8, code_page_lookup: *const CodePageLookup) Number {
         switch (expression_node.id) {
             .literal => {
                 const literal_node = expression_node.cast(.literal).?;
                 std.debug.assert(literal_node.token.id == .number);
-                return parseNumberLiteral(literal_node.token.slice(source), literal_node.code_page);
+                const bytes = SourceBytes{
+                    .slice = literal_node.token.slice(source),
+                    .code_page = code_page_lookup.getForToken(literal_node.token),
+                };
+                return parseNumberLiteral(bytes);
             },
             .binary_expression => {
                 const binary_expression_node = expression_node.cast(.binary_expression).?;
-                const lhs = evaluateNumberExpression(binary_expression_node.left, source);
-                const rhs = evaluateNumberExpression(binary_expression_node.right, source);
+                const lhs = evaluateNumberExpression(binary_expression_node.left, source, code_page_lookup);
+                const rhs = evaluateNumberExpression(binary_expression_node.right, source, code_page_lookup);
                 const operator_char = binary_expression_node.operator.slice(source)[0];
                 return lhs.evaluateOperator(operator_char, rhs);
             },
             .grouped_expression => {
                 const grouped_expression_node = expression_node.cast(.grouped_expression).?;
-                return evaluateNumberExpression(grouped_expression_node.expression, source);
+                return evaluateNumberExpression(grouped_expression_node.expression, source, code_page_lookup);
             },
             else => unreachable,
         }
@@ -342,20 +360,26 @@ pub const Compiler = struct {
                 const literal_node = expression_node.cast(.literal).?;
                 switch (literal_node.token.id) {
                     .number => {
-                        const number = evaluateNumberExpression(expression_node, self.source);
+                        const number = evaluateNumberExpression(expression_node, self.source, self.code_pages);
                         return .{ .number = number };
                     },
                     .quoted_ascii_string => {
-                        const slice = literal_node.token.slice(self.source);
                         const column = literal_node.token.calculateColumn(self.source, 8, null);
-                        const parsed = try parseQuotedAsciiString(self.allocator, slice, column, literal_node.code_page);
+                        const bytes = SourceBytes{
+                            .slice = literal_node.token.slice(self.source),
+                            .code_page = self.code_pages.getForToken(literal_node.token),
+                        };
+                        const parsed = try parseQuotedAsciiString(self.allocator, bytes, column);
                         errdefer self.allocator.free(parsed);
                         return .{ .ascii_string = parsed };
                     },
                     .quoted_wide_string => {
-                        const slice = literal_node.token.slice(self.source);
                         const column = literal_node.token.calculateColumn(self.source, 8, null);
-                        const parsed_string = try parseQuotedWideStringAlloc(self.allocator, slice, column, literal_node.code_page);
+                        const bytes = SourceBytes{
+                            .slice = literal_node.token.slice(self.source),
+                            .code_page = self.code_pages.getForToken(literal_node.token),
+                        };
+                        const parsed_string = try parseQuotedWideStringAlloc(self.allocator, bytes, column);
                         errdefer self.allocator.free(parsed_string);
                         return .{ .wide_string = parsed_string };
                     },
@@ -371,7 +395,7 @@ pub const Compiler = struct {
                 }
             },
             .binary_expression, .grouped_expression => {
-                const result = evaluateNumberExpression(expression_node, self.source);
+                const result = evaluateNumberExpression(expression_node, self.source, self.code_pages);
                 return .{ .number = result };
             },
             else => {
@@ -399,7 +423,15 @@ pub const Compiler = struct {
     }
 
     pub fn writeResourceHeader(self: *Compiler, writer: anytype, id_token: Token, type_token: Token, data_size: u32, common_resource_attributes: []Token, language: res.Language) !void {
-        var header = try ResourceHeader.init(self.allocator, id_token.slice(self.source), type_token.slice(self.source), data_size, language);
+        const id_bytes = SourceBytes{
+            .slice = id_token.slice(self.source),
+            .code_page = self.code_pages.getForToken(id_token),
+        };
+        const type_bytes = SourceBytes{
+            .slice = type_token.slice(self.source),
+            .code_page = self.code_pages.getForToken(type_token),
+        };
+        var header = try ResourceHeader.init(self.allocator, id_bytes, type_bytes, data_size, language);
         defer header.deinit(self.allocator);
 
         header.applyMemoryFlags(common_resource_attributes, self.source);
@@ -424,7 +456,7 @@ pub const Compiler = struct {
 
     pub fn evaluateAcceleratorKeyExpression(self: *Compiler, node: *Node, is_virt: bool) !u16 {
         if (node.isNumberExpression()) {
-            return evaluateNumberExpression(node, self.source).asWord();
+            return evaluateNumberExpression(node, self.source, self.code_pages).asWord();
         } else {
             std.debug.assert(node.isStringLiteral());
             const literal = @fieldParentPtr(Node.Literal, "base", node);
@@ -434,7 +466,11 @@ pub const Compiler = struct {
                 // remove the L/l prefix
                 slice = slice[1..];
             }
-            const parsed_string = try parseQuotedAsciiString(self.allocator, slice, literal.token.calculateColumn(self.source, 8, null), literal.code_page);
+            const bytes = SourceBytes{
+                .slice = slice,
+                .code_page = self.code_pages.getForToken(literal.token),
+            };
+            const parsed_string = try parseQuotedAsciiString(self.allocator, bytes, literal.token.calculateColumn(self.source, 8, null));
             defer self.allocator.free(parsed_string);
             return res.parseAcceleratorKeyString(parsed_string, is_virt);
         }
@@ -465,7 +501,7 @@ pub const Compiler = struct {
                     .token = accelerator.event.getFirstToken(),
                 });
             };
-            const cmd_id = evaluateNumberExpression(accelerator.idvalue, self.source);
+            const cmd_id = evaluateNumberExpression(accelerator.idvalue, self.source, self.code_pages);
 
             if (i == node.accelerators.len - 1) {
                 modifiers.markLast();
@@ -479,11 +515,19 @@ pub const Compiler = struct {
         }
 
         const data_size = @intCast(u32, data_buffer.items.len);
-        var header = try ResourceHeader.init(self.allocator, node.id.slice(self.source), node.type.slice(self.source), data_size, self.state.language);
+        const id_bytes = SourceBytes{
+            .slice = node.id.slice(self.source),
+            .code_page = self.code_pages.getForToken(node.id),
+        };
+        const type_bytes = SourceBytes{
+            .slice = node.type.slice(self.source),
+            .code_page = self.code_pages.getForToken(node.type),
+        };
+        var header = try ResourceHeader.init(self.allocator, id_bytes, type_bytes, data_size, self.state.language);
         defer header.deinit(self.allocator);
 
         header.applyMemoryFlags(node.common_resource_attributes, self.source);
-        header.applyOptionalStatements(node.optional_statements, self.source);
+        header.applyOptionalStatements(node.optional_statements, self.source, self.code_pages);
 
         try header.write(writer);
 
@@ -492,14 +536,14 @@ pub const Compiler = struct {
     }
 
     pub fn writeStringTable(self: *Compiler, node: *Node.StringTable) !void {
-        const language = getLanguageFromOptionalStatements(node.optional_statements, self.source) orelse self.state.language;
+        const language = getLanguageFromOptionalStatements(node.optional_statements, self.source, self.code_pages) orelse self.state.language;
 
         for (node.strings) |string_node| {
             const string = @fieldParentPtr(Node.StringTableString, "base", string_node);
             const string_id_data = try self.evaluateDataExpression(string.id);
             const string_id = string_id_data.number.asWord();
 
-            self.state.string_tables.set(self.arena, language, string_id, string.string, string.code_page, &node.base, self.source) catch |err| switch (err) {
+            self.state.string_tables.set(self.arena, language, string_id, string.string, &node.base, self.source, self.code_pages) catch |err| switch (err) {
                 error.StringAlreadyDefined => {
                     try self.addErrorDetails(ErrorDetails{
                         .err = .string_already_defined,
@@ -511,7 +555,7 @@ pub const Compiler = struct {
                     return self.addErrorDetailsAndFail(ErrorDetails{
                         .err = .string_already_defined,
                         .type = .note,
-                        .token = existing_definition.token, // TODO: point to id instead?
+                        .token = existing_definition, // TODO: point to id instead?
                         .extra = .{ .string_and_language = .{ .id = string_id, .language = language } },
                     });
                 },
@@ -522,8 +566,8 @@ pub const Compiler = struct {
 
     /// Expects this to be a top-level LANGUAGE statement
     pub fn writeLanguageStatement(self: *Compiler, node: *Node.LanguageStatement) void {
-        const primary = Compiler.evaluateNumberExpression(node.primary_language_id, self.source);
-        const sublanguage = Compiler.evaluateNumberExpression(node.sublanguage_id, self.source);
+        const primary = Compiler.evaluateNumberExpression(node.primary_language_id, self.source, self.code_pages);
+        const sublanguage = Compiler.evaluateNumberExpression(node.sublanguage_id, self.source, self.code_pages);
         self.state.language.primary_language_id = @truncate(u10, primary.value);
         self.state.language.sublanguage_id = @truncate(u6, sublanguage.value);
     }
@@ -537,9 +581,9 @@ pub const Compiler = struct {
         version: DWORD = 0,
         characteristics: DWORD = 0,
 
-        pub fn init(allocator: Allocator, id_slice: []const u8, type_slice: []const u8, data_size: DWORD, language: res.Language) !ResourceHeader {
+        pub fn init(allocator: Allocator, id_bytes: SourceBytes, type_bytes: SourceBytes, data_size: DWORD, language: res.Language) !ResourceHeader {
             const type_value = type: {
-                const resource_type = Resource.fromString(type_slice);
+                const resource_type = Resource.fromString(type_bytes);
                 if (resource_type != .user_defined) {
                     if (res.RT.fromResource(resource_type)) |rt_constant| {
                         break :type NameOrOrdinal{ .ordinal = @enumToInt(rt_constant) };
@@ -547,12 +591,12 @@ pub const Compiler = struct {
                         @panic("TODO: unhandled resource -> RT constant conversion");
                     }
                 } else {
-                    break :type try NameOrOrdinal.fromString(allocator, type_slice, false);
+                    break :type try NameOrOrdinal.fromString(allocator, type_bytes, false);
                 }
             };
             errdefer type_value.deinit(allocator);
 
-            const name_value = try NameOrOrdinal.fromString(allocator, id_slice, true);
+            const name_value = try NameOrOrdinal.fromString(allocator, id_bytes, true);
             errdefer name_value.deinit(allocator);
 
             const predefined_resource_type = type_value.predefinedResourceType();
@@ -597,8 +641,8 @@ pub const Compiler = struct {
             applyToMemoryFlags(&self.memory_flags, tokens, source);
         }
 
-        pub fn applyOptionalStatements(self: *ResourceHeader, statements: []*Node, source: []const u8) void {
-            applyToOptionalStatements(&self.language, &self.version, &self.characteristics, statements, source);
+        pub fn applyOptionalStatements(self: *ResourceHeader, statements: []*Node, source: []const u8, code_page_lookup: *const CodePageLookup) void {
+            applyToOptionalStatements(&self.language, &self.version, &self.characteristics, statements, source, code_page_lookup);
         }
     };
 
@@ -609,15 +653,15 @@ pub const Compiler = struct {
         }
     }
 
-    fn applyToOptionalStatements(language: *res.Language, version: *u32, characteristics: *u32, statements: []*Node, source: []const u8) void {
+    fn applyToOptionalStatements(language: *res.Language, version: *u32, characteristics: *u32, statements: []*Node, source: []const u8, code_page_lookup: *const CodePageLookup) void {
         for (statements) |node| switch (node.id) {
             .language_statement => {
                 const language_statement = @fieldParentPtr(Node.LanguageStatement, "base", node);
-                language.* = languageFromLanguageStatement(language_statement, source);
+                language.* = languageFromLanguageStatement(language_statement, source, code_page_lookup);
             },
             .simple_statement => {
                 const simple_statement = @fieldParentPtr(Node.SimpleStatement, "base", node);
-                const result = Compiler.evaluateNumberExpression(simple_statement.value, source);
+                const result = Compiler.evaluateNumberExpression(simple_statement.value, source, code_page_lookup);
                 const statement_type = rc.OptionalStatements.map.get(simple_statement.identifier.slice(source)).?;
                 switch (statement_type) {
                     .version => version.* = result.value,
@@ -629,20 +673,20 @@ pub const Compiler = struct {
         };
     }
 
-    pub fn languageFromLanguageStatement(language_statement: *const Node.LanguageStatement, source: []const u8) res.Language {
-        const primary = Compiler.evaluateNumberExpression(language_statement.primary_language_id, source);
-        const sublanguage = Compiler.evaluateNumberExpression(language_statement.sublanguage_id, source);
+    pub fn languageFromLanguageStatement(language_statement: *const Node.LanguageStatement, source: []const u8, code_page_lookup: *const CodePageLookup) res.Language {
+        const primary = Compiler.evaluateNumberExpression(language_statement.primary_language_id, source, code_page_lookup);
+        const sublanguage = Compiler.evaluateNumberExpression(language_statement.sublanguage_id, source, code_page_lookup);
         return .{
             .primary_language_id = @truncate(u10, primary.value),
             .sublanguage_id = @truncate(u6, sublanguage.value),
         };
     }
 
-    pub fn getLanguageFromOptionalStatements(statements: []*Node, source: []const u8) ?res.Language {
+    pub fn getLanguageFromOptionalStatements(statements: []*Node, source: []const u8, code_page_lookup: *const CodePageLookup) ?res.Language {
         for (statements) |node| switch (node.id) {
             .language_statement => {
                 const language_statement = @fieldParentPtr(Node.LanguageStatement, "base", node);
-                return languageFromLanguageStatement(language_statement, source);
+                return languageFromLanguageStatement(language_statement, source, code_page_lookup);
             },
             else => continue,
         };
@@ -698,7 +742,7 @@ pub const FontDir = struct {
         // u16 count + [(u16 id + 150 bytes) for each font]
         const data_size = 2 + (2 + 150) * self.fonts.items.len;
         var header = Compiler.ResourceHeader{
-            .name_value = try NameOrOrdinal.nameFromString(compiler.allocator, "FONTDIR"),
+            .name_value = try NameOrOrdinal.nameFromString(compiler.allocator, .{ .slice = "FONTDIR", .code_page = .windows1252 }),
             .type_value = NameOrOrdinal{ .ordinal = @enumToInt(res.RT.FONTDIR) },
             .memory_flags = res.MemoryFlags.defaults(res.RT.FONTDIR),
             .language = compiler.state.language,
@@ -727,12 +771,12 @@ pub const StringTablesByLanguage = struct {
         self.tables.deinit(allocator);
     }
 
-    pub fn set(self: *StringTablesByLanguage, allocator: Allocator, language: res.Language, id: u16, string_token: Token, code_page: CodePage, node: *Node, source: []const u8) StringTable.SetError!void {
+    pub fn set(self: *StringTablesByLanguage, allocator: Allocator, language: res.Language, id: u16, string_token: Token, node: *Node, source: []const u8, code_page_lookup: *const CodePageLookup) StringTable.SetError!void {
         var get_or_put_result = try self.tables.getOrPut(allocator, language);
         if (!get_or_put_result.found_existing) {
             get_or_put_result.value_ptr.* = StringTable{};
         }
-        return get_or_put_result.value_ptr.set(allocator, id, string_token, code_page, node, source);
+        return get_or_put_result.value_ptr.set(allocator, id, string_token, node, source, code_page_lookup);
     }
 };
 
@@ -744,16 +788,11 @@ pub const StringTable = struct {
     blocks: std.AutoArrayHashMapUnmanaged(u16, Block) = .{},
 
     pub const Block = struct {
-        strings: std.ArrayListUnmanaged(String) = .{},
+        strings: std.ArrayListUnmanaged(Token) = .{},
         set_indexes: std.bit_set.IntegerBitSet(16) = .{ .mask = 0 },
         memory_flags: MemoryFlags = MemoryFlags.defaults(res.RT.STRING),
         characteristics: u32 = 0,
         version: u32 = 0,
-
-        pub const String = struct {
-            token: Token,
-            code_page: CodePage,
-        };
 
         /// Returns the index to insert the string into the `strings` list.
         /// Returns null if the string should be appended.
@@ -806,13 +845,13 @@ pub const StringTable = struct {
             }
         }
 
-        pub fn applyNodeAttributes(self: *Block, node: *Node, source: []const u8) void {
+        pub fn applyNodeAttributes(self: *Block, node: *Node, source: []const u8, code_page_lookup: *const CodePageLookup) void {
             switch (node.id) {
                 .string_table => {
                     const string_table = @fieldParentPtr(Node.StringTable, "base", node);
                     Compiler.applyToMemoryFlags(&self.memory_flags, string_table.common_resource_attributes, source);
                     var dummy_language: res.Language = undefined;
-                    Compiler.applyToOptionalStatements(&dummy_language, &self.version, &self.characteristics, string_table.optional_statements, source);
+                    Compiler.applyToOptionalStatements(&dummy_language, &self.version, &self.characteristics, string_table.optional_statements, source, code_page_lookup);
                 },
                 else => @panic("TODO applyNodeAttributes"),
             }
@@ -831,17 +870,20 @@ pub const StringTable = struct {
                     if (i == 15) break else continue;
                 }
 
-                const string = self.strings.items[string_i];
-                const slice = string.token.slice(compiler.source);
-                const column = string.token.calculateColumn(compiler.source, 8, null);
+                const string_token = self.strings.items[string_i];
+                const slice = string_token.slice(compiler.source);
+                const column = string_token.calculateColumn(compiler.source, 8, null);
+                const code_page = compiler.code_pages.getForToken(string_token);
+                const bytes = SourceBytes{ .slice = slice, .code_page = code_page };
                 const utf16_string = utf16: {
-                    switch (string.token.id) {
+                    switch (string_token.id) {
                         .quoted_ascii_string => {
-                            const parsed = try parseQuotedAsciiString(compiler.allocator, slice, column, string.code_page);
+                            const parsed = try parseQuotedAsciiString(compiler.allocator, bytes, column);
                             defer compiler.allocator.free(parsed);
+                            // TODO: Should this be UTF-8? parseQuotedAsciiString returns a Windows-1252 encoded string.
                             break :utf16 try std.unicode.utf8ToUtf16LeWithNull(compiler.allocator, parsed);
                         },
-                        .quoted_wide_string => break :utf16 try parseQuotedWideStringAlloc(compiler.allocator, slice, column, string.code_page),
+                        .quoted_wide_string => break :utf16 try parseQuotedWideStringAlloc(compiler.allocator, bytes, column),
                         else => unreachable,
                     }
                 };
@@ -882,14 +924,14 @@ pub const StringTable = struct {
 
     const SetError = error{StringAlreadyDefined} || Allocator.Error;
 
-    pub fn set(self: *StringTable, allocator: Allocator, id: u16, string_token: Token, code_page: CodePage, node: *Node, source: []const u8) SetError!void {
+    pub fn set(self: *StringTable, allocator: Allocator, id: u16, string_token: Token, node: *Node, source: []const u8, code_page_lookup: *const CodePageLookup) SetError!void {
         const block_id = (id / 16) + 1;
         const string_index: u8 = @intCast(u8, id & 0xF);
 
         var get_or_put_result = try self.blocks.getOrPut(allocator, block_id);
         if (!get_or_put_result.found_existing) {
             get_or_put_result.value_ptr.* = Block{};
-            get_or_put_result.value_ptr.applyNodeAttributes(node, source);
+            get_or_put_result.value_ptr.applyNodeAttributes(node, source, code_page_lookup);
         } else {
             if (get_or_put_result.value_ptr.set_indexes.isSet(string_index)) {
                 return error.StringAlreadyDefined;
@@ -898,14 +940,14 @@ pub const StringTable = struct {
 
         var block = get_or_put_result.value_ptr;
         if (block.getInsertionIndex(string_index)) |insertion_index| {
-            try block.strings.insert(allocator, insertion_index, .{ .token = string_token, .code_page = code_page });
+            try block.strings.insert(allocator, insertion_index, string_token);
         } else {
-            try block.strings.append(allocator, .{ .token = string_token, .code_page = code_page });
+            try block.strings.append(allocator, string_token);
         }
         block.set_indexes.set(string_index);
     }
 
-    pub fn get(self: *StringTable, id: u16) ?Block.String {
+    pub fn get(self: *StringTable, id: u16) ?Token {
         const block_id = (id / 16) + 1;
         const string_index = @intCast(u8, id & 0xF);
 
@@ -938,6 +980,9 @@ test "StringTable" {
     var string_table = StringTable{};
     defer string_table.deinit(allocator);
 
+    var code_page_lookup = CodePageLookup.init(allocator, .windows1252);
+    defer code_page_lookup.deinit();
+
     var dummy_node = Node.StringTable{
         .type = S.makeDummyToken(0),
         .common_resource_attributes = &.{},
@@ -962,19 +1007,19 @@ test "StringTable" {
 
     // set each one in the randomized order
     for (ids) |id| {
-        try string_table.set(allocator, id, S.makeDummyToken(id), .windows1252, &dummy_node.base, "");
+        try string_table.set(allocator, id, S.makeDummyToken(id), &dummy_node.base, "", &code_page_lookup);
     }
 
     // make sure each one exists and is the right value when gotten
     var id: u16 = 0;
     while (id < 100) : (id += 1) {
         const dummy = S.makeDummyToken(id);
-        try std.testing.expectError(error.StringAlreadyDefined, string_table.set(allocator, id, dummy, .windows1252, &dummy_node.base, ""));
-        try std.testing.expectEqual(dummy, string_table.get(id).?.token);
+        try std.testing.expectError(error.StringAlreadyDefined, string_table.set(allocator, id, dummy, &dummy_node.base, "", &code_page_lookup));
+        try std.testing.expectEqual(dummy, string_table.get(id).?);
     }
 
     // make sure non-existent string ids are not found
-    try std.testing.expectEqual(@as(?StringTable.Block.String, null), string_table.get(100));
+    try std.testing.expectEqual(@as(?Token, null), string_table.get(100));
 }
 
 fn testCompile(source: []const u8, cwd: std.fs.Dir) !void {

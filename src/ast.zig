@@ -1,10 +1,11 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Token = @import("lex.zig").Token;
-const code_pages = @import("code_pages.zig");
+const CodePage = @import("code_pages.zig").CodePage;
 
 pub const Tree = struct {
     node: *Node,
+    code_pages: CodePageLookup,
 
     /// not owned by the tree
     source: []const u8,
@@ -24,6 +25,82 @@ pub const Tree = struct {
         try self.node.dump(self, writer, 0);
     }
 };
+
+pub const CodePageLookup = struct {
+    lookup: std.ArrayListUnmanaged(CodePage) = .{},
+    allocator: Allocator,
+    default_code_page: CodePage,
+
+    pub fn init(allocator: Allocator, default_code_page: CodePage) CodePageLookup {
+        return .{
+            .allocator = allocator,
+            .default_code_page = default_code_page,
+        };
+    }
+
+    pub fn deinit(self: *CodePageLookup) void {
+        self.lookup.deinit(self.allocator);
+    }
+
+    /// line_num is 1-indexed
+    pub fn setForLineNum(self: *CodePageLookup, line_num: usize, code_page: CodePage) !void {
+        const index = line_num - 1;
+        if (index >= self.lookup.items.len) {
+            const new_size = line_num;
+            const missing_lines_start_index = self.lookup.items.len;
+            try self.lookup.resize(self.allocator, new_size);
+
+            // If there are any gaps created, we need to fill them in with the value of the
+            // last line before the gap. This can happen for e.g. string literals that
+            // span multiple lines, or if the start of a file has multiple empty lines.
+            const fill_value = if (missing_lines_start_index > 0)
+                self.lookup.items[missing_lines_start_index - 1]
+            else
+                self.default_code_page;
+            var i: usize = missing_lines_start_index;
+            while (i < new_size - 1) : (i += 1) {
+                self.lookup.items[i] = fill_value;
+            }
+        }
+        self.lookup.items[index] = code_page;
+    }
+
+    pub fn setForToken(self: *CodePageLookup, token: Token, code_page: CodePage) !void {
+        return self.setForLineNum(token.line_number, code_page);
+    }
+
+    /// line_num is 1-indexed
+    pub fn getForLineNum(self: CodePageLookup, line_num: usize) CodePage {
+        return self.lookup.items[line_num - 1];
+    }
+
+    pub fn getForToken(self: CodePageLookup, token: Token) CodePage {
+        return self.getForLineNum(token.line_number);
+    }
+};
+
+test "CodePageLookup" {
+    var lookup = CodePageLookup.init(std.testing.allocator, .windows1252);
+    defer lookup.deinit();
+
+    try lookup.setForLineNum(5, .utf8);
+    try std.testing.expectEqual(CodePage.windows1252, lookup.getForLineNum(1));
+    try std.testing.expectEqual(CodePage.windows1252, lookup.getForLineNum(2));
+    try std.testing.expectEqual(CodePage.windows1252, lookup.getForLineNum(3));
+    try std.testing.expectEqual(CodePage.windows1252, lookup.getForLineNum(4));
+    try std.testing.expectEqual(CodePage.utf8, lookup.getForLineNum(5));
+    try std.testing.expectEqual(@as(usize, 5), lookup.lookup.items.len);
+
+    try lookup.setForLineNum(7, .windows1252);
+    try std.testing.expectEqual(CodePage.windows1252, lookup.getForLineNum(1));
+    try std.testing.expectEqual(CodePage.windows1252, lookup.getForLineNum(2));
+    try std.testing.expectEqual(CodePage.windows1252, lookup.getForLineNum(3));
+    try std.testing.expectEqual(CodePage.windows1252, lookup.getForLineNum(4));
+    try std.testing.expectEqual(CodePage.utf8, lookup.getForLineNum(5));
+    try std.testing.expectEqual(CodePage.utf8, lookup.getForLineNum(6));
+    try std.testing.expectEqual(CodePage.windows1252, lookup.getForLineNum(7));
+    try std.testing.expectEqual(@as(usize, 7), lookup.lookup.items.len);
+}
 
 pub const Node = struct {
     id: Id,
@@ -93,10 +170,6 @@ pub const Node = struct {
     pub const Literal = struct {
         base: Node = .{ .id = .literal },
         token: Token,
-        // TODO: It would be nice not to have to store this for each Literal node,
-        //       and instead have some type of separate lookup (per line maybe, but
-        //       some tokens can span multiple lines); see also StringTableString.code_page
-        code_page: code_pages.CodePage,
     };
 
     pub const BinaryExpression = struct {
@@ -146,10 +219,6 @@ pub const Node = struct {
         id: *Node,
         maybe_comma: ?Token,
         string: Token,
-        // TODO: It would be nice not to have to store this for each StringTableString node,
-        //       and instead have some type of separate lookup (per line maybe, but
-        //       some tokens can span multiple lines); see also Literal.code_page
-        code_page: code_pages.CodePage,
     };
 
     pub const LanguageStatement = struct {

@@ -1,6 +1,7 @@
 const std = @import("std");
 const utils = @import("utils.zig");
 const res = @import("res.zig");
+const SourceBytes = @import("literals.zig").SourceBytes;
 
 // https://learn.microsoft.com/en-us/windows/win32/menurc/about-resource-files
 
@@ -56,13 +57,13 @@ pub const Resource = enum {
         .{ "VXD", .vxd },
     });
 
-    pub fn fromString(str: []const u8) Resource {
-        const maybe_ordinal = res.NameOrOrdinal.maybeOrdinalFromString(str, false);
+    pub fn fromString(bytes: SourceBytes) Resource {
+        const maybe_ordinal = res.NameOrOrdinal.maybeOrdinalFromString(bytes, false);
         if (maybe_ordinal) |ordinal| {
             const rt = @intToEnum(res.RT, ordinal.ordinal);
             return fromRT(rt);
         }
-        return map.get(str) orelse .user_defined;
+        return map.get(bytes.slice) orelse .user_defined;
     }
 
     // TODO: Some comptime validation that RT <-> Resource conversion is synced?
