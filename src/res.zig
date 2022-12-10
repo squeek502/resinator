@@ -6,6 +6,7 @@ const Allocator = std.mem.Allocator;
 const windows1252 = @import("windows1252.zig");
 const CodePage = @import("code_pages.zig").CodePage;
 const SourceBytes = @import("literals.zig").SourceBytes;
+const Codepoint = @import("code_pages.zig").Codepoint;
 
 /// https://learn.microsoft.com/en-us/windows/win32/menurc/resource-types
 pub const RT = enum(u8) {
@@ -168,23 +169,39 @@ pub const NameOrOrdinal = union(enum) {
     }
 
     pub fn nameFromString(allocator: Allocator, bytes: SourceBytes) !NameOrOrdinal {
-        // TODO use bytes.code_page
-        var as_utf16 = try std.unicode.utf8ToUtf16LeWithNull(allocator, bytes.slice);
         // Names have a limit of 256 UTF-16 code units + null terminator
-        // Note: This can cut-off in the middle of a UTF-16, i.e. it can make the
-        //       string end with an unpaired high surrogate
-        if (as_utf16.len > 256) {
-            var limited = allocator.shrink(as_utf16, 257);
-            limited[256] = 0;
-            as_utf16 = limited[0..256 :0];
-        }
-        // ASCII chars in names are always converted to uppercase
-        for (as_utf16) |*char| {
-            if (char.* < 128) {
-                char.* = std.ascii.toUpper(@intCast(u8, char.*));
+        var buf = try std.ArrayList(u16).initCapacity(allocator, @min(257, bytes.slice.len));
+        errdefer buf.deinit();
+
+        var i: usize = 0;
+        while (bytes.code_page.codepointAt(i, bytes.slice)) |codepoint| : (i += codepoint.byte_len) {
+            if (buf.items.len == 256) break;
+
+            const c = codepoint.value;
+            if (c == Codepoint.invalid) {
+                try buf.append(std.mem.nativeToLittle(u16, '�'));
+            } else if (c < 0x7F) {
+                // ASCII chars in names are always converted to uppercase
+                try buf.append(std.ascii.toUpper(@intCast(u8, c)));
+            } else if (c < 0x10000) {
+                const short = @intCast(u16, c);
+                try buf.append(std.mem.nativeToLittle(u16, short));
+            } else {
+                const high = @intCast(u16, (c - 0x10000) >> 10) + 0xD800;
+                try buf.append(std.mem.nativeToLittle(u16, high));
+
+                // Note: This can cut-off in the middle of a UTF-16 surrogate pair,
+                //       i.e. it can make the string end with an unpaired high surrogate
+                if (buf.items.len == 256) break;
+
+                const low = @intCast(u16, c & 0x3FF) + 0xDC00;
+                try buf.append(std.mem.nativeToLittle(u16, low));
             }
         }
-        return NameOrOrdinal{ .name = as_utf16 };
+
+        const len = buf.items.len;
+        try buf.append(0);
+        return NameOrOrdinal{ .name = buf.toOwnedSlice()[0..len :0] };
     }
 
     pub fn maybeOrdinalFromString(bytes: SourceBytes) ?NameOrOrdinal {
@@ -357,6 +374,32 @@ test "NameOrOrdinal" {
             }),
         );
     }
+}
+
+test "NameOrOrdinal code page awareness" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const allocator = arena.allocator();
+
+    try expectNameOrOrdinal(
+        NameOrOrdinal{ .name = std.unicode.utf8ToUtf16LeStringLiteral("��𐐷") },
+        try NameOrOrdinal.fromString(allocator, .{
+            .slice = "\xF0\x80\x80𐐷",
+            .code_page = .utf8,
+        }),
+    );
+    try expectNameOrOrdinal(
+        // The UTF-8 representation of 𐐷 is 0xF0 0x90 0x90 0xB7. In order to provide valid
+        // UTF-8 to utf8ToUtf16LeStringLiteral, it uses the UTF-8 representation of the codepoint
+        // <U+0x90> which is 0xC2 0x90. The code units in the expected UTF-16 string are:
+        // { 0x00F0, 0x20AC, 0x20AC, 0x00F0, 0x0090, 0x0090, 0x00B7 }
+        NameOrOrdinal{ .name = std.unicode.utf8ToUtf16LeStringLiteral("ð€€ð\xC2\x90\xC2\x90·") },
+        try NameOrOrdinal.fromString(allocator, .{
+            .slice = "\xF0\x80\x80𐐷",
+            .code_page = .windows1252,
+        }),
+    );
 }
 
 /// https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-accel#members
