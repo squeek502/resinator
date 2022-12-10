@@ -201,7 +201,10 @@ pub fn randomAlphanumExtendedBytes(allocator: Allocator, rand: std.rand.Random) 
 
     for (buf) |*c| {
         var index = rand.uintLessThanBiased(u8, dict.len);
-        c.* = dict[index];
+        var byte = dict[index];
+        // swap out e/E to avoid 'expected exponent value' errors
+        if (byte == 'e' or byte == 'E') byte += 1;
+        c.* = byte;
     }
 
     return buf;
