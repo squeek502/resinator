@@ -121,6 +121,13 @@ pub const Utf8 = struct {
             };
         }
 
+        fn isContinuationByte(byte: u8) bool {
+            return switch (byte) {
+                0x80...0xBF => true,
+                else => false,
+            };
+        }
+
         pub fn decode(bytes: []const u8) Codepoint {
             std.debug.assert(bytes.len > 0);
             var first_byte = bytes[0];
@@ -164,16 +171,14 @@ pub const Utf8 = struct {
                 };
 
                 if (!valid) {
-                    // If the current byte is a valid first byte, then don't
-                    // include it in the current invalid sequence.
                     var len = byte_index;
-                    // Note: Using utf8ByteSequenceLength here means ignoring
-                    // well-formedness, e.g. C0 is considered a valid first
-                    // byte for this even though it is disallowed in well-formed
-                    // UTF-8 byte sequences.
-                    _ = std.unicode.utf8ByteSequenceLength(byte) catch {
-                        len += 1;
-                    };
+                    // Only include the byte in the invalid sequence if it's in the range
+                    // of a continuation byte. All other values should not be included in the
+                    // invalid sequence.
+                    //
+                    // Note: This is how the Windows RC compiler handles this, this may not
+                    //       be the correct-as-according-to-the-Unicode-standard way to do it.
+                    if (isContinuationByte(byte)) len += 1;
                     return .{ .value = Codepoint.invalid, .byte_len = len };
                 }
 
@@ -245,6 +250,19 @@ test "codepointAt invalid utf8" {
             .value = Codepoint.invalid,
             .byte_len = 2,
         }, CodePage.utf8.codepointAt(0, invalid_utf8).?);
+        try std.testing.expectEqual(@as(?Codepoint, null), CodePage.windows1252.codepointAt(2, invalid_utf8));
+    }
+
+    {
+        const invalid_utf8 = "\xC5\xFF";
+        try std.testing.expectEqual(Codepoint{
+            .value = Codepoint.invalid,
+            .byte_len = 1,
+        }, CodePage.utf8.codepointAt(0, invalid_utf8).?);
+        try std.testing.expectEqual(Codepoint{
+            .value = Codepoint.invalid,
+            .byte_len = 1,
+        }, CodePage.utf8.codepointAt(1, invalid_utf8).?);
         try std.testing.expectEqual(@as(?Codepoint, null), CodePage.windows1252.codepointAt(2, invalid_utf8));
     }
 }
