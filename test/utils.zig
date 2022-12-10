@@ -185,6 +185,28 @@ pub fn randomAsciiStringLiteral(allocator: Allocator, rand: std.rand.Random) ![]
     return buf;
 }
 
+/// Alphanumeric ASCII + any bytes >= 128
+pub fn randomAlphanumExtendedBytes(allocator: Allocator, rand: std.rand.Random) ![]const u8 {
+    const extended = extended: {
+        var buf: [128]u8 = undefined;
+        for (buf) |*c, i| {
+            c.* = @intCast(u8, i) + 128;
+        }
+        break :extended buf;
+    };
+    const dict = dicts.alphanumeric ++ extended;
+    var slice_len = rand.uintAtMostBiased(u16, 256);
+    var buf = try allocator.alloc(u8, slice_len);
+    errdefer allocator.free(buf);
+
+    for (buf) |*c| {
+        var index = rand.uintLessThanBiased(u8, dict.len);
+        c.* = dict[index];
+    }
+
+    return buf;
+}
+
 /// Iterates all K-permutations of the given size `n` where k varies from (0..n).
 /// e.g. for AllKPermutationsIterator(3) the returns from `next` will be (in this order):
 /// k=0 {  }
