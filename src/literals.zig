@@ -114,8 +114,13 @@ pub fn parseQuotedString(
                 },
                 else => switch (literal_type) {
                     .ascii => {
-                        const best_fit = windows1252.bestFitFromCodepoint(c) orelse '?';
-                        try buf.append(best_fit);
+                        if (windows1252.bestFitFromCodepoint(c)) |best_fit| {
+                            try buf.append(best_fit);
+                        } else if (c < 0x10000 or c == code_pages.Codepoint.invalid) {
+                            try buf.append('?');
+                        } else {
+                            try buf.appendSlice("??");
+                        }
                     },
                     .wide => {
                         if (c == code_pages.Codepoint.invalid) {
@@ -437,6 +442,12 @@ test "parse quoted ascii string with utf8 code page" {
     try std.testing.expectEqualSlices(u8, "????", try parseQuotedAsciiString(
         arena,
         .{ .slice = "\"\xf0\xf0\x80\x80\x80\"", .code_page = .utf8 },
+        0,
+    ));
+    // Codepoints that would require a UTF-16 surrogate pair get converted to ??
+    try std.testing.expectEqualSlices(u8, "??", try parseQuotedAsciiString(
+        arena,
+        .{ .slice = "\"\xF2\xAF\xBA\xB4\"", .code_page = .utf8 },
         0,
     ));
 }
