@@ -32,6 +32,7 @@ pub fn main() !void {
             "-fuse-line-directives", // #line <num> instead of # <num>
             // TODO: could use --trace-includes to give info about what's included from where
             "-xc", // output c
+            // TODO: Turn this off, check the warnings, and convert the spaces back to NUL
             "-Werror=null-character", // error on null characters instead of converting them to spaces
             // TODO: could remove -Werror=null-character and instead parse warnings looking for 'warning: null character ignored'
             //       since the only real problem is when clang doesn't preserve null characters

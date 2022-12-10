@@ -31,7 +31,6 @@ The plan is to use fuzz testing with the `rc` tool as an oracle to ensure that `
 - In `resinator`, embedded `NUL` (`<0x00>`) characters are always illegal anywhere in a `.rc` file.
   + The Windows RC compiler behaves very strangely when embedded `NUL` characters are in a `.rc` file. For example, `1 RCDATA { "a<0x00>" }` will give the error "unexpected end of file in string literal", but `1 RCDATA { "<0x00>" }` will "successfully" compile and result in an empty `.res` file (the `RCDATA` resource won't be included at all). Even stranger, whitespace seems to matter in terms of when it will error; if you add a space to the beginning of the `1 RCDATA { "a<0x00>" }` version then it "successfully" compiles but also results in an empty `.res`.
     - TODO: This might be related to the Windows RC compiler's handling/inferring of UTF-16 encoded files, which `resinator` doesn't handle yet.
-  + This is also somewhat unavoidable as the Clang preprocessor will convert `NUL` characters outside string/char literals to space characters, which could cause the `.rc` file to parse very differently.
 - *[Not final]* In `resinator`, embedded 'End of Transmission' (`<0x04>`) characters are always illegal outside of string literals.
   + The Windows RC compiler seemingly treats `<0x04>` characters outside of string literals as a 'skip the next character' instruction when parsing, i.e. `RCDATA<0x04>x` gets parsed as if it were `RCDATA`. It's possible to emulate this behavior in `resinator`, but it seems unlikely that any real `.rc` files are intentionally using this behavior, so by making it a compile error it avoids running into strange behavior if a `<0x04>` character is ever inserted into a `.rc` file accidentally.
 - *[Not final]* In `resinator`, embedded 'Delete' (`<0x7F>`) characters are always illegal anywhere in a `.rc` file.
@@ -47,9 +46,15 @@ The plan is to use fuzz testing with the `rc` tool as an oracle to ensure that `
   + The fact that `\"` makes it possible for macro expansion to silently happen within what the RC compiler thinks are string literals is enough of a footgun that it makes sense to make it an error instead. Note also that it can lead to really bizarre edge cases/compile errors when, for example, particular control characters follow a `\""` sequence in a string literal.
 - In `resinator`, trying to use a raw data block with resource types that don't support raw data is an error, noting that if `{` or `BEGIN` is intended as a filename, it should use a quoted string literal.
   + The Windows RC compiler will instead try to interpret `{`/`BEGIN` as a filename in these cases, which is extremely likely to fail and (if it succeeds) is almost certainly not what the user intended.
+- In `resinator`, the byte order mark (`<U+FEFF>`) is always illegal anywhere in a `.rc` file except the very start.
+  + For the most part, the Windows RC compiler skips over BOMs everywhere, even within string literals, within names, etc [e.g. `RC<U+FEFF>DATA` will compile as if it were `RCDATA`]). However, there are edge cases where a BOM will cause cryptic 'compiler limit : macro definition too big' errors (e.g. `1<U+FEFF>1` as a number literal).
+    - The use-case of BOM outside of the start of the file seems extremely minimal/zero, so emulating the Windows RC behavior doesn't seem worth the added complexity.
+    - The potentially unexpected behavior of the BOM bytes missing from the compiled `.res` seems worth avoiding (e.g. a string literal with the contents `"<U+FEFF>"` would be compiled as if it were an empty string).
 
 ### Unavoidable divergences from the MSVC++ `rc` tool
 
+- `resinator` does not support UTF-16 encoded `.rc` files.
+  + The `clang` preprocessor does not handle UTF-16 encoded files (i.e. it will fail to parse `#include` directives, etc within UTF-16 encoded files). So, `resinator` would need a preprocessor that handles UTF-16 encoded files for UTF-16 support to be feasible.
 - In `resinator`, splices (`\` at the end of a line) are removed by the preprocessor before checking if any string literals are too long.
   + The Windows RC compiler includes the splice characters in the string literal length check (even though they don't show up in the string literal).
 - In `resinator`, embedded 'carriage return' characters (that are not part of a `CRLF` pair) can lead to files being parsed differently than the Windows RC compiler would parse them.

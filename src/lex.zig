@@ -111,6 +111,7 @@ pub const LexError = error{
     StringLiteralTooLong,
     IllegalByte,
     IllegalByteOutsideStringLiterals,
+    IllegalByteOrderMark,
     FoundCStyleEscapedQuote,
     CodePagePragmaMissingLeftParen,
     CodePagePragmaMissingRightParen,
@@ -176,7 +177,7 @@ pub const Lexer = struct {
         var last_line_ending_index: ?usize = null;
         while (self.current_code_page.codepointAt(self.index, self.buffer)) |codepoint| : (self.index += codepoint.byte_len) {
             const c = codepoint.value;
-            try self.checkForIllegalCodepoint(c, false);
+            try self.checkForIllegalCodepoint(codepoint, false);
             switch (state) {
                 .start => switch (c) {
                     '\r', '\n' => {
@@ -297,7 +298,7 @@ pub const Lexer = struct {
                 => true,
                 else => false,
             };
-            try self.checkForIllegalCodepoint(c, in_string_literal);
+            try self.checkForIllegalCodepoint(codepoint, in_string_literal);
             switch (state) {
                 .start => switch (c) {
                     '\r', '\n' => {
@@ -506,7 +507,7 @@ pub const Lexer = struct {
                     '\n' => {
                         // first \n expands to <space><\n>
                         if (!string_literal_collapsing_whitespace) {
-                            string_literal_length += 2; //
+                            string_literal_length += 2;
                             string_literal_collapsing_whitespace = true;
                         }
                         // the rest are collapsed into the <space><\n>
@@ -656,8 +657,8 @@ pub const Lexer = struct {
         return true;
     }
 
-    fn checkForIllegalCodepoint(self: *Self, codepoint: u21, in_string_literal: bool) LexError!void {
-        const err = switch (codepoint) {
+    fn checkForIllegalCodepoint(self: *Self, codepoint: code_pages.Codepoint, in_string_literal: bool) LexError!void {
+        const err = switch (codepoint.value) {
             // 0x00 = NUL
             // 0x1A = Substitute (treated as EOF)
             // NOTE: 0x1A gets treated as EOF by the clang preprocessor so after a .rc file
@@ -673,11 +674,20 @@ pub const Lexer = struct {
             // outside of string literals. Not exactly sure why this would be the case, though.
             // TODO: Make sure there aren't any exceptions
             '@', '`' => if (!in_string_literal) error.IllegalByteOutsideStringLiterals else return,
+            // The Byte Order Mark is mostly skipped over by the Windows RC compiler, but
+            // there are edge cases where it leads to cryptic 'compiler limit : macro definition too big'
+            // errors (e.g. a BOM within a number literal). By making this illegal we avoid having to
+            // deal with a lot of edge cases and remove the potential footgun of the bytes of a BOM
+            // being 'missing' when included in a string literal (the Windows RC compiler acts as
+            // if the codepoint was never part of the string literal).
+            '\u{FEFF}' => error.IllegalByteOrderMark,
             else => return,
         };
         self.error_context_token = .{
             .id = .invalid,
             .start = self.index,
+            // TODO: Not all codepoints are 1 byte long, e.g. the BOM, but
+            //       for display purposes pointing to one byte makes sense at the moment.
             .end = self.index + 1,
             .line_number = self.line_number,
         };
@@ -763,6 +773,7 @@ pub const Lexer = struct {
             error.StringLiteralTooLong => ErrorDetails.Error.string_literal_too_long,
             error.IllegalByte => ErrorDetails.Error.illegal_byte,
             error.IllegalByteOutsideStringLiterals => ErrorDetails.Error.illegal_byte_outside_string_literals,
+            error.IllegalByteOrderMark => ErrorDetails.Error.illegal_byte_order_mark,
             error.FoundCStyleEscapedQuote => ErrorDetails.Error.found_c_style_escaped_quote,
             error.CodePagePragmaMissingLeftParen => ErrorDetails.Error.code_page_pragma_missing_left_paren,
             error.CodePagePragmaMissingRightParen => ErrorDetails.Error.code_page_pragma_missing_right_paren,
