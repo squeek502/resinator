@@ -112,6 +112,7 @@ pub const LexError = error{
     IllegalByte,
     IllegalByteOutsideStringLiterals,
     IllegalByteOrderMark,
+    IllegalPrivateUseCharacter,
     FoundCStyleEscapedQuote,
     CodePagePragmaMissingLeftParen,
     CodePagePragmaMissingRightParen,
@@ -681,6 +682,11 @@ pub const Lexer = struct {
             // being 'missing' when included in a string literal (the Windows RC compiler acts as
             // if the codepoint was never part of the string literal).
             '\u{FEFF}' => error.IllegalByteOrderMark,
+            // Similar deal with this private use codepoint, it gets skipped/ignored by the
+            // RC compiler (but without the cryptic errors). Silently dropping bytes still seems like
+            // enough of a footgun with no real use-cases that it's still worth erroring instead of
+            // emulating the RC compiler's behavior, though.
+            '\u{E000}' => error.IllegalPrivateUseCharacter,
             else => return,
         };
         self.error_context_token = .{
@@ -774,6 +780,7 @@ pub const Lexer = struct {
             error.IllegalByte => ErrorDetails.Error.illegal_byte,
             error.IllegalByteOutsideStringLiterals => ErrorDetails.Error.illegal_byte_outside_string_literals,
             error.IllegalByteOrderMark => ErrorDetails.Error.illegal_byte_order_mark,
+            error.IllegalPrivateUseCharacter => ErrorDetails.Error.illegal_private_use_character,
             error.FoundCStyleEscapedQuote => ErrorDetails.Error.found_c_style_escaped_quote,
             error.CodePagePragmaMissingLeftParen => ErrorDetails.Error.code_page_pragma_missing_left_paren,
             error.CodePagePragmaMissingRightParen => ErrorDetails.Error.code_page_pragma_missing_right_paren,

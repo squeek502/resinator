@@ -50,6 +50,8 @@ The plan is to use fuzz testing with the `rc` tool as an oracle to ensure that `
   + For the most part, the Windows RC compiler skips over BOMs everywhere, even within string literals, within names, etc [e.g. `RC<U+FEFF>DATA` will compile as if it were `RCDATA`]). However, there are edge cases where a BOM will cause cryptic 'compiler limit : macro definition too big' errors (e.g. `1<U+FEFF>1` as a number literal).
     - The use-case of BOM outside of the start of the file seems extremely minimal/zero, so emulating the Windows RC behavior doesn't seem worth the added complexity.
     - The potentially unexpected behavior of the BOM bytes missing from the compiled `.res` seems worth avoiding (e.g. a string literal with the contents `"<U+FEFF>"` would be compiled as if it were an empty string).
+- In `resinator`, the private use character `<U+E000>` is always illegal anywhere in a `.rc` file.
+  + This behaves similarly to the byte order mark (it gets skipped/ignored wherever it is), so the same reasoning applies (although `<U+E000>` seems to avoid causing errors like the BOM does).
 
 ### Unavoidable divergences from the MSVC++ `rc` tool
 

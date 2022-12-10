@@ -55,6 +55,18 @@ pub fn toCodepoint(c: u8) u16 {
 }
 
 /// https://www.unicode.org/Public/MAPPINGS/VENDORS/MICSFT/WindowsBestFit/bestfit1252.txt
+/// Plus some mappings found empirically by iterating all codepoints:
+///  0x2007 => 0xA0, // Figure Space
+///  0x2008 => ' ', // Punctuation Space
+///  0x2009 => ' ', // Thin Space
+///  0x200A => ' ', // Hair Space
+///  0x2012 => '-', // Figure Dash
+///  0x2015 => '-', // Horizontal Bar
+///  0x201B => '\'', // Single High-reversed-9 Quotation Mark
+///  0x201F => '"', // Double High-reversed-9 Quotation Mark
+///  0x202F => 0xA0, // Narrow No-Break Space
+///  0x2033 => '"', // Double Prime
+///  0x2036 => '"', // Reversed Double Prime
 pub fn bestFitFromCodepoint(codepoint: u21) ?u8 {
     return switch (codepoint) {
         0x00...0x7F,
@@ -534,6 +546,18 @@ pub fn bestFitFromCodepoint(codepoint: u21) ?u8 {
         0xff5c => 0x7c, // Fullwidth Vertical Line
         0xff5d => 0x7d, // Fullwidth Right Curly Bracket
         0xff5e => 0x7e, // Fullwidth Tilde
+        // Not in the best fit mapping, but RC uses these mappings too
+        0x2007 => 0xA0, // Figure Space
+        0x2008 => ' ', // Punctuation Space
+        0x2009 => ' ', // Thin Space
+        0x200A => ' ', // Hair Space
+        0x2012 => '-', // Figure Dash
+        0x2015 => '-', // Horizontal Bar
+        0x201B => '\'', // Single High-reversed-9 Quotation Mark
+        0x201F => '"', // Double High-reversed-9 Quotation Mark
+        0x202F => 0xA0, // Narrow No-Break Space
+        0x2033 => '"', // Double Prime
+        0x2036 => '"', // Reversed Double Prime
         else => null,
     };
 }

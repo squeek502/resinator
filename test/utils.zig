@@ -13,8 +13,13 @@ pub fn expectSameResOutput(allocator: Allocator, source: []const u8, buffer: *st
     resinator.compile.compile(allocator, source, buffer.writer(), std.fs.cwd(), &diagnostics) catch |err| switch (err) {
         error.ParseError, error.CompileError => {
             diagnostics.renderToStdErr(std.fs.cwd(), source, null);
-            if (expected_res == null) {
+            // Allow disallowed codepoint-related errors from resinator if RC succeeds
+            const first_error_is_codepoint_related = diagnostics.errors.items[0].err == .illegal_byte_order_mark or diagnostics.errors.items[0].err == .illegal_private_use_character;
+            if (first_error_is_codepoint_related) {
                 return;
+            }
+            if (expected_res == null) {
+                return error.Blah;
             } else {
                 std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
                 return error.DidNotExpectErrorButGotOne;
@@ -195,7 +200,8 @@ pub fn randomAlphanumExtendedBytes(allocator: Allocator, rand: std.rand.Random) 
         break :extended buf;
     };
     const dict = dicts.alphanumeric ++ extended;
-    var slice_len = rand.uintAtMostBiased(u16, 256);
+    // at least 1 byte
+    var slice_len = rand.uintAtMostBiased(u16, 512) + 1;
     var buf = try allocator.alloc(u8, slice_len);
     errdefer allocator.free(buf);
 

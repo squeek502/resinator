@@ -147,6 +147,7 @@ pub const ErrorDetails = struct {
         illegal_byte,
         illegal_byte_outside_string_literals,
         illegal_byte_order_mark,
+        illegal_private_use_character,
         found_c_style_escaped_quote,
         code_page_pragma_missing_left_paren,
         code_page_pragma_missing_right_paren,
@@ -183,9 +184,6 @@ pub const ErrorDetails = struct {
             .string_literal_too_long => {
                 return writer.writeAll("string literal too long (max is 4097 characters)");
             },
-            .illegal_byte_order_mark => {
-                return writer.writeAll("byte order mark (<U+FEFF>) is not allowed");
-            },
             .illegal_byte => {
                 const byte = self.token.slice(source)[0];
                 return writer.print("character '\\x{X:0>2}' is not allowed", .{byte});
@@ -193,6 +191,12 @@ pub const ErrorDetails = struct {
             .illegal_byte_outside_string_literals => {
                 const byte = self.token.slice(source)[0];
                 return writer.print("character '\\x{X:0>2}' is not allowed outside of string literals", .{byte});
+            },
+            .illegal_byte_order_mark => {
+                return writer.writeAll("byte order mark <U+FEFF> is not allowed");
+            },
+            .illegal_private_use_character => {
+                return writer.writeAll("private use character <U+E000> is not allowed");
             },
             .found_c_style_escaped_quote => {
                 return writer.writeAll("escaping quotes with \\\" is not allowed (use \"\" instead)");
