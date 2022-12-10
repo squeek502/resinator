@@ -237,7 +237,7 @@ pub const NameOrOrdinal = union(enum) {
                     16 => break,
                     else => unreachable,
                 },
-                else => break,
+                else => if (radix == 10) return null else break,
             };
 
             if (result != 0) {
@@ -308,6 +308,23 @@ test "NameOrOrdinal" {
     try expectNameOrOrdinal(
         NameOrOrdinal{ .name = std.unicode.utf8ToUtf16LeStringLiteral("0") },
         try NameOrOrdinal.fromString(allocator, .{ .slice = "0", .code_page = .windows1252 }),
+    );
+    // any non-digit byte invalidates the number
+    try expectNameOrOrdinal(
+        NameOrOrdinal{ .name = std.unicode.utf8ToUtf16LeStringLiteral("1A") },
+        try NameOrOrdinal.fromString(allocator, .{ .slice = "1a", .code_page = .windows1252 }),
+    );
+    try expectNameOrOrdinal(
+        NameOrOrdinal{ .name = std.unicode.utf8ToUtf16LeStringLiteral("1ÿ") },
+        try NameOrOrdinal.fromString(allocator, .{ .slice = "1\xff", .code_page = .windows1252 }),
+    );
+    try expectNameOrOrdinal(
+        NameOrOrdinal{ .name = std.unicode.utf8ToUtf16LeStringLiteral("1€") },
+        try NameOrOrdinal.fromString(allocator, .{ .slice = "1€", .code_page = .utf8 }),
+    );
+    try expectNameOrOrdinal(
+        NameOrOrdinal{ .name = std.unicode.utf8ToUtf16LeStringLiteral("1�") },
+        try NameOrOrdinal.fromString(allocator, .{ .slice = "1\x80", .code_page = .utf8 }),
     );
     // same with overflow that resolves to 0
     try expectNameOrOrdinal(
