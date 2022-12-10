@@ -8,7 +8,7 @@ const Token = @import("lex.zig").Token;
 const Number = @import("literals.zig").Number;
 const parseNumberLiteral = @import("literals.zig").parseNumberLiteral;
 const parseQuotedAsciiString = @import("literals.zig").parseQuotedAsciiString;
-const parseQuotedWideStringAlloc = @import("literals.zig").parseQuotedWideStringAlloc;
+const parseQuotedWideString = @import("literals.zig").parseQuotedWideString;
 const Diagnostics = @import("errors.zig").Diagnostics;
 const ErrorDetails = @import("errors.zig").ErrorDetails;
 const MemoryFlags = @import("res.zig").MemoryFlags;
@@ -133,7 +133,7 @@ pub const Compiler = struct {
                         const slice = literal_node.token.slice(self.source);
                         const column = literal_node.token.calculateColumn(self.source, 8, null);
                         const bytes = SourceBytes{ .slice = slice, .code_page = self.code_pages.getForToken(literal_node.token) };
-                        const parsed_string = try parseQuotedWideStringAlloc(self.allocator, bytes, column);
+                        const parsed_string = try parseQuotedWideString(self.allocator, bytes, column);
                         defer self.allocator.free(parsed_string);
                         const parsed_as_utf8 = try std.unicode.utf16leToUtf8Alloc(self.allocator, parsed_string);
                         return .{ .utf8 = parsed_as_utf8, .needs_free = true };
@@ -379,7 +379,7 @@ pub const Compiler = struct {
                             .slice = literal_node.token.slice(self.source),
                             .code_page = self.code_pages.getForToken(literal_node.token),
                         };
-                        const parsed_string = try parseQuotedWideStringAlloc(self.allocator, bytes, column);
+                        const parsed_string = try parseQuotedWideString(self.allocator, bytes, column);
                         errdefer self.allocator.free(parsed_string);
                         return .{ .wide_string = parsed_string };
                     },
@@ -883,7 +883,7 @@ pub const StringTable = struct {
                             // TODO: Should this be UTF-8? parseQuotedAsciiString returns a Windows-1252 encoded string.
                             break :utf16 try std.unicode.utf8ToUtf16LeWithNull(compiler.allocator, parsed);
                         },
-                        .quoted_wide_string => break :utf16 try parseQuotedWideStringAlloc(compiler.allocator, bytes, column),
+                        .quoted_wide_string => break :utf16 try parseQuotedWideString(compiler.allocator, bytes, column),
                         else => unreachable,
                     }
                 };

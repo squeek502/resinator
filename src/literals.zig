@@ -26,9 +26,11 @@ pub const SourceBytes = struct {
 ///  \t, \T => 0x09
 ///  \\ => \
 ///  \nnn => byte with numeric value given by nnn interpreted as octal
-///          (wraps on overflow, number of digits can be 1-3)
+///          (wraps on overflow, number of digits can be 1-3 for ASCII strings
+///          and 1-7 for wide strings)
 ///  \xhh => byte with numeric value given by hh interpreted as hex
-///          (number of digits can be 0-2)
+///          (number of digits can be 0-2 for ASCII strings and 0-4 for
+///          wide strings)
 ///  \<\r+> => \
 ///  \<[\r\n\t ]+> => <nothing>
 ///
@@ -44,10 +46,22 @@ pub const SourceBytes = struct {
 ///       This parse function handles this case the same as the Windows RC compiler, but
 ///       \" within a string literal is treated as an error by the lexer, so the relevant
 ///       branches should never actually be hit during this function.
-pub fn parseQuotedAsciiString(allocator: std.mem.Allocator, bytes: SourceBytes, start_column: usize) ![]u8 {
+///
+/// This function expects the leading L of wide strings to be omitted from the `bytes.slice`,
+/// i.e. `bytes.slice` should always start and end with "
+pub fn parseQuotedString(
+    comptime literal_type: enum { ascii, wide },
+    allocator: std.mem.Allocator,
+    bytes: SourceBytes,
+    start_column: usize,
+) !(switch (literal_type) {
+    .ascii => []u8,
+    .wide => [:0]u16,
+}) {
+    const T = if (literal_type == .ascii) u8 else u16;
     std.debug.assert(bytes.slice.len >= 2); // must at least have 2 double quote chars
 
-    var buf = try std.ArrayList(u8).initCapacity(allocator, bytes.slice.len);
+    var buf = try std.ArrayList(T).initCapacity(allocator, bytes.slice.len);
     errdefer buf.deinit();
 
     var source = bytes.slice[1..(bytes.slice.len - 1)]; // remove start and end "
@@ -65,8 +79,11 @@ pub fn parseQuotedAsciiString(allocator: std.mem.Allocator, bytes: SourceBytes, 
 
     var column: usize = start_column + 1; // The starting " is included
     var state: State = .normal;
-    var string_escape_n: u8 = 0;
-    var string_escape_i: std.math.IntFittingRange(0, 3) = 0;
+    var string_escape_n: T = 0;
+    var string_escape_i: switch (literal_type) {
+        .ascii => std.math.IntFittingRange(0, 3),
+        .wide => std.math.IntFittingRange(0, 7),
+    } = 0;
     var index: usize = 0;
     while (bytes.code_page.codepointAt(index, source)) |codepoint| : (index += codepoint.byte_len) {
         const c = codepoint.value;
@@ -95,9 +112,24 @@ pub fn parseQuotedAsciiString(allocator: std.mem.Allocator, bytes: SourceBytes, 
                         try buf.append(' ');
                     }
                 },
-                else => {
-                    const best_fit = windows1252.bestFitFromCodepoint(c) orelse '?';
-                    try buf.append(best_fit);
+                else => switch (literal_type) {
+                    .ascii => {
+                        const best_fit = windows1252.bestFitFromCodepoint(c) orelse '?';
+                        try buf.append(best_fit);
+                    },
+                    .wide => {
+                        if (c == code_pages.Codepoint.invalid) {
+                            try buf.append(std.mem.nativeToLittle(u16, '�'));
+                        } else if (c < 0x10000) {
+                            const short = @intCast(u16, c);
+                            try buf.append(std.mem.nativeToLittle(u16, short));
+                        } else {
+                            const high = @intCast(u16, (c - 0x10000) >> 10) + 0xD800;
+                            try buf.append(std.mem.nativeToLittle(u16, high));
+                            const low = @intCast(u16, c & 0x3FF) + 0xDC00;
+                            try buf.append(std.mem.nativeToLittle(u16, low));
+                        }
+                    },
                 },
             },
             .quote => switch (c) {
@@ -174,7 +206,7 @@ pub fn parseQuotedAsciiString(allocator: std.mem.Allocator, bytes: SourceBytes, 
                     string_escape_n *%= 8;
                     string_escape_n +%= std.fmt.charToDigit(@intCast(u8, c), 8) catch unreachable;
                     string_escape_i += 1;
-                    if (string_escape_i == 3) {
+                    if ((literal_type == .ascii and string_escape_i == 3) or (literal_type == .wide and string_escape_i == 7)) {
                         try buf.append(string_escape_n);
                         state = .normal;
                     }
@@ -192,7 +224,7 @@ pub fn parseQuotedAsciiString(allocator: std.mem.Allocator, bytes: SourceBytes, 
                     string_escape_n *= 16;
                     string_escape_n += std.fmt.charToDigit(@intCast(u8, c), 16) catch unreachable;
                     string_escape_i += 1;
-                    if (string_escape_i == 2) {
+                    if ((literal_type == .ascii and string_escape_i == 2) or (literal_type == .wide and string_escape_i == 4)) {
                         try buf.append(string_escape_n);
                         state = .normal;
                     }
@@ -220,13 +252,22 @@ pub fn parseQuotedAsciiString(allocator: std.mem.Allocator, bytes: SourceBytes, 
         .quote => unreachable, // this is a bug in the lexer
     }
 
-    return buf.toOwnedSlice();
+    if (literal_type == .wide) {
+        const len = buf.items.len;
+        try buf.append(0);
+        return buf.toOwnedSlice()[0..len :0];
+    } else {
+        return buf.toOwnedSlice();
+    }
 }
 
-pub fn columnsUntilTabStop(column: usize, tab_columns: usize) usize {
-    // 0 => 8, 1 => 7, 2 => 6, 3 => 5, 4 => 4
-    // 5 => 3, 6 => 2, 7 => 1, 8 => 8
-    return tab_columns - (column % tab_columns);
+pub fn parseQuotedAsciiString(allocator: std.mem.Allocator, bytes: SourceBytes, start_column: usize) ![]u8 {
+    return parseQuotedString(.ascii, allocator, bytes, start_column);
+}
+
+pub fn parseQuotedWideString(allocator: std.mem.Allocator, bytes: SourceBytes, start_column: usize) ![:0]u16 {
+    std.debug.assert(bytes.slice.len >= 3); // L""
+    return parseQuotedString(.wide, allocator, .{ .slice = bytes.slice[1..], .code_page = bytes.code_page }, start_column);
 }
 
 test "parse quoted ascii string" {
@@ -400,14 +441,80 @@ test "parse quoted ascii string with utf8 code page" {
     ));
 }
 
-/// TODO: Real implemenation, probably needing to take code_page into account
-/// Notes:
-/// - Wide strings allow for 4 hex digits in escapes (e.g. \xC2AD gets parsed as 0xC2AD)
-pub fn parseQuotedWideStringAlloc(allocator: std.mem.Allocator, bytes: SourceBytes, start_column: usize) ![:0]u16 {
-    std.debug.assert(bytes.slice.len >= 3); // L""
-    const parsed = try parseQuotedAsciiString(allocator, .{ .slice = bytes.slice[1..], .code_page = bytes.code_page }, start_column);
-    defer allocator.free(parsed);
-    return try std.unicode.utf8ToUtf16LeWithNull(allocator, parsed);
+test "parse quoted wide string" {
+    var arena_allocator = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_allocator.deinit();
+    const arena = arena_allocator.allocator();
+
+    try std.testing.expectEqualSentinel(u16, 0, &[_:0]u16{ 'h', 'e', 'l', 'l', 'o' }, try parseQuotedWideString(arena, .{
+        .slice = 
+        \\L"hello"
+        ,
+        .code_page = .windows1252,
+    }, 0));
+    // hex with 0 digits
+    try std.testing.expectEqualSentinel(u16, 0, &[_:0]u16{0x0}, try parseQuotedWideString(arena, .{
+        .slice = 
+        \\L"\x"
+        ,
+        .code_page = .windows1252,
+    }, 0));
+    // hex max of 4 digits
+    try std.testing.expectEqualSentinel(u16, 0, &[_:0]u16{ 0xFFFF, 'f' }, try parseQuotedWideString(arena, .{
+        .slice = 
+        \\L"\XfFfFf"
+        ,
+        .code_page = .windows1252,
+    }, 0));
+    // octal max of 7 digits
+    try std.testing.expectEqualSentinel(u16, 0, &[_:0]u16{ 0x9493, '3', '3' }, try parseQuotedWideString(arena, .{
+        .slice = 
+        \\L"\111222333"
+        ,
+        .code_page = .windows1252,
+    }, 0));
+    // octal overflow
+    try std.testing.expectEqualSentinel(u16, 0, &[_:0]u16{0xFF01}, try parseQuotedWideString(arena, .{
+        .slice = 
+        \\L"\777401"
+        ,
+        .code_page = .windows1252,
+    }, 0));
+    // Windows-1252 conversion
+    try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16LeStringLiteral("ðð€€€"), try parseQuotedWideString(
+        arena,
+        .{ .slice = "L\"\xf0\xf0\x80\x80\x80\"", .code_page = .windows1252 },
+        0,
+    ));
+}
+
+test "parse quoted wide string with utf8 code page" {
+    var arena_allocator = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_allocator.deinit();
+    const arena = arena_allocator.allocator();
+
+    try std.testing.expectEqualSentinel(u16, 0, &[_:0]u16{}, try parseQuotedWideString(
+        arena,
+        .{ .slice = "L\"\"", .code_page = .utf8 },
+        0,
+    ));
+    try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16LeStringLiteral("кириллица"), try parseQuotedWideString(
+        arena,
+        .{ .slice = "L\"кириллица\"", .code_page = .utf8 },
+        0,
+    ));
+    // Invalid UTF-8 gets converted to � depending on well-formedness
+    try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16LeStringLiteral("����"), try parseQuotedWideString(
+        arena,
+        .{ .slice = "L\"\xf0\xf0\x80\x80\x80\"", .code_page = .utf8 },
+        0,
+    ));
+}
+
+pub fn columnsUntilTabStop(column: usize, tab_columns: usize) usize {
+    // 0 => 8, 1 => 7, 2 => 6, 3 => 5, 4 => 4
+    // 5 => 3, 6 => 2, 7 => 1, 8 => 8
+    return tab_columns - (column % tab_columns);
 }
 
 pub const Number = struct {
