@@ -131,7 +131,7 @@ pub const Utf8 = struct {
 
             var value: u21 = first_byte & 0b00011111;
             var byte_index: u8 = 1;
-            while (byte_index < expected_len) : (byte_index += 1) {
+            while (byte_index < @min(bytes.len, expected_len)) : (byte_index += 1) {
                 const byte = bytes[byte_index];
                 // See Table 3-7 of D92 in Chapter 3 of the Unicode Standard
                 const valid: bool = switch (byte_index) {
@@ -180,6 +180,9 @@ pub const Utf8 = struct {
                 value <<= 6;
                 value |= byte & 0b00111111;
             }
+            if (byte_index != expected_len) {
+                return .{ .value = Codepoint.invalid, .byte_len = byte_index };
+            }
             return .{ .value = value, .byte_len = expected_len };
         }
     };
@@ -225,6 +228,24 @@ test "codepointAt invalid utf8" {
             .byte_len = 1,
         }, CodePage.utf8.codepointAt(2, invalid_utf8).?);
         try std.testing.expectEqual(@as(?Codepoint, null), CodePage.windows1252.codepointAt(3, invalid_utf8));
+    }
+
+    {
+        const invalid_utf8 = "\xD2";
+        try std.testing.expectEqual(Codepoint{
+            .value = Codepoint.invalid,
+            .byte_len = 1,
+        }, CodePage.utf8.codepointAt(0, invalid_utf8).?);
+        try std.testing.expectEqual(@as(?Codepoint, null), CodePage.windows1252.codepointAt(1, invalid_utf8));
+    }
+
+    {
+        const invalid_utf8 = "\xE1\xA0";
+        try std.testing.expectEqual(Codepoint{
+            .value = Codepoint.invalid,
+            .byte_len = 2,
+        }, CodePage.utf8.codepointAt(0, invalid_utf8).?);
+        try std.testing.expectEqual(@as(?Codepoint, null), CodePage.windows1252.codepointAt(2, invalid_utf8));
     }
 }
 
