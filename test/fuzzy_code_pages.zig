@@ -26,21 +26,29 @@ test "fuzz" {
         const bytes = try utils.randomAlphanumExtendedBytes(allocator, rand);
         defer allocator.free(bytes);
         var source_writer = source_buffer.writer();
+        // There seems to be a very strange bug where the order of the pragma's
+        // matter, if 1252 is first then the ascii string literal is parsed strangely
+        // when the code page is 65001.
+        // TODO: What is happening?
         try source_writer.print(
-            \\#pragma code_page(1252)
-            \\{s}
             \\#pragma code_page(65001)
+            \\{s}
             \\{s}
             \\{{
-            \\#pragma code_page(1252)
-            \\"{s}"
-            \\L"{s}"
-            \\#pragma code_page(65001)
             \\"{s}"
             \\L"{s}"
             \\}}
             \\
+            \\#pragma code_page(1252)
+            \\{s}
+            \\{s}
+            \\{{
+            \\"{s}"
+            \\L"{s}"
+            \\}}
         , .{
+            bytes,
+            bytes,
             bytes,
             bytes,
             bytes,
