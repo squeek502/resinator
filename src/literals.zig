@@ -272,7 +272,14 @@ pub fn parseQuotedAsciiString(allocator: std.mem.Allocator, bytes: SourceBytes, 
 
 pub fn parseQuotedWideString(allocator: std.mem.Allocator, bytes: SourceBytes, start_column: usize) ![:0]u16 {
     std.debug.assert(bytes.slice.len >= 3); // L""
-    return parseQuotedString(.wide, allocator, .{ .slice = bytes.slice[1..], .code_page = bytes.code_page }, start_column);
+    return parseQuotedString(
+        .wide,
+        allocator,
+        // Remove L prefix
+        .{ .slice = bytes.slice[1..], .code_page = bytes.code_page },
+        // so also bump the start column
+        start_column + 1,
+    );
 }
 
 test "parse quoted ascii string" {
@@ -491,6 +498,12 @@ test "parse quoted wide string" {
         ,
         .code_page = .windows1252,
     }, 0));
+    // literal tab characters get converted to spaces (dependent on source file columns)
+    try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16LeStringLiteral("abcdefg       "), try parseQuotedWideString(
+        arena,
+        .{ .slice = "L\"abcdefg\t\"", .code_page = .windows1252 },
+        0,
+    ));
     // Windows-1252 conversion
     try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16LeStringLiteral("ðð€€€"), try parseQuotedWideString(
         arena,
