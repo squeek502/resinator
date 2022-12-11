@@ -117,6 +117,7 @@ pub const LexError = error{
     CodePagePragmaMissingLeftParen,
     CodePagePragmaMissingRightParen,
     CodePagePragmaInvalidCodePage,
+    CodePagePragmaUnsupportedCodePage,
 };
 
 pub const Lexer = struct {
@@ -765,9 +766,15 @@ pub const Lexer = struct {
             return error.CodePagePragmaInvalidCodePage;
         };
 
-        const code_page = code_pages.CodePage.getByNumber(num) catch {
-            self.error_context_token = error_context;
-            return error.CodePagePragmaInvalidCodePage;
+        const code_page = code_pages.CodePage.getByIdentifier(num) catch |err| switch (err) {
+            error.InvalidCodePage => {
+                self.error_context_token = error_context;
+                return error.CodePagePragmaInvalidCodePage;
+            },
+            error.UnsupportedCodePage => {
+                self.error_context_token = error_context;
+                return error.CodePagePragmaUnsupportedCodePage;
+            },
         };
 
         self.current_code_page = code_page;
@@ -785,6 +792,7 @@ pub const Lexer = struct {
             error.CodePagePragmaMissingLeftParen => ErrorDetails.Error.code_page_pragma_missing_left_paren,
             error.CodePagePragmaMissingRightParen => ErrorDetails.Error.code_page_pragma_missing_right_paren,
             error.CodePagePragmaInvalidCodePage => ErrorDetails.Error.code_page_pragma_invalid_code_page,
+            error.CodePagePragmaUnsupportedCodePage => ErrorDetails.Error.code_page_pragma_unsupported_code_page,
         };
         return .{
             .err = err,

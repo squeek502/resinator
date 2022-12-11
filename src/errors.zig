@@ -152,6 +152,7 @@ pub const ErrorDetails = struct {
         code_page_pragma_missing_left_paren,
         code_page_pragma_missing_right_paren,
         code_page_pragma_invalid_code_page,
+        code_page_pragma_unsupported_code_page,
 
         // Parser
         unfinished_raw_data_block,
@@ -208,7 +209,11 @@ pub const ErrorDetails = struct {
                 return writer.writeAll("expected right parenthesis after '<number>' in code_page #pragma");
             },
             .code_page_pragma_invalid_code_page => {
-                return writer.writeAll("invalid code page in code_page #pragma");
+                return writer.writeAll("invalid or unknown code page in code_page #pragma");
+            },
+            .code_page_pragma_unsupported_code_page => {
+                // TODO add info about which code page is unsupported
+                return writer.writeAll("unsupported code page in code_page #pragma");
             },
             .unfinished_raw_data_block => {
                 return writer.print("unfinished raw data block at '{s}', expected closing '}}' or 'END'", .{self.token.nameForErrorDisplay(source)});
