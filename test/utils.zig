@@ -19,7 +19,7 @@ pub fn expectSameResOutput(allocator: Allocator, source: []const u8, buffer: *st
                 return;
             }
             if (expected_res == null) {
-                return error.Blah;
+                return;
             } else {
                 std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
                 return error.DidNotExpectErrorButGotOne;
