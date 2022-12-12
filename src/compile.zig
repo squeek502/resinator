@@ -465,11 +465,7 @@ pub const Compiler = struct {
                 .code_page = self.code_pages.getForToken(literal.token),
             };
             const column = literal.token.calculateColumn(self.source, 8, null);
-            return switch (literal.token.id) {
-                .quoted_ascii_string => res.parseAcceleratorKeyString(.ascii, bytes, is_virt, column),
-                .quoted_wide_string => res.parseAcceleratorKeyString(.wide, bytes, is_virt, column),
-                else => unreachable,
-            };
+            return res.parseAcceleratorKeyString(bytes, is_virt, column);
         }
     }
 

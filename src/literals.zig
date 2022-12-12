@@ -2,6 +2,8 @@ const std = @import("std");
 const code_pages = @import("code_pages.zig");
 const CodePage = code_pages.CodePage;
 const windows1252 = @import("windows1252.zig");
+const Diagnostics = @import("errors.zig").Diagnostics;
+const Token = @import("lex.zig").Token;
 
 /// rc is maximally liberal in terms of what it accepts as a number literal
 /// for data values. As long as it starts with a number or - or ~, that's good enough.
@@ -49,6 +51,289 @@ pub const SourceBytes = struct {
 ///
 /// This function expects the leading L of wide strings to be omitted from the `bytes.slice`,
 /// i.e. `bytes.slice` should always start and end with "
+pub const IterativeStringParser = struct {
+    source: []const u8,
+    code_page: CodePage,
+    string_type: StringType,
+    pending_codepoint: ?u21 = null,
+    num_pending_spaces: u8 = 0,
+    index: usize = 0,
+    column: usize = 0,
+    diagnostics: ?*Diagnostics = null,
+    /// For context when adding errors/warnings/etc to Diagnostics
+    string_token: ?Token = null,
+
+    pub const StringType = enum { ascii, wide };
+
+    const State = enum {
+        normal,
+        quote,
+        newline,
+        escaped,
+        escaped_cr,
+        escaped_newlines,
+        escaped_octal,
+        escaped_hex,
+    };
+
+    pub const Options = struct {
+        start_column: usize = 0,
+        string_token: ?Token = null,
+        diagnostics: ?*Diagnostics = null,
+    };
+
+    pub fn init(bytes: SourceBytes, options: Options) IterativeStringParser {
+        const string_type: StringType = switch (bytes.slice[0]) {
+            'L', 'l' => .wide,
+            else => .ascii,
+        };
+        const source = switch (string_type) {
+            .ascii => bytes.slice[1 .. bytes.slice.len - 1], // remove ""
+            .wide => bytes.slice[2 .. bytes.slice.len - 1], // remove L""
+        };
+        const column = switch (string_type) {
+            .ascii => options.start_column + 1, // for the removed "
+            .wide => options.start_column + 2, // for the removed L"
+        };
+        return .{
+            .source = source,
+            .code_page = bytes.code_page,
+            .string_type = string_type,
+            .column = column,
+            .diagnostics = options.diagnostics,
+            .string_token = options.string_token,
+        };
+    }
+
+    pub const ParsedCodepoint = struct {
+        codepoint: u21,
+        from_escaped_integer: bool = false,
+    };
+
+    pub fn next(self: *IterativeStringParser) ?ParsedCodepoint {
+        if (self.num_pending_spaces > 0) {
+            // Ensure that we don't get into this predicament so we can ensure that
+            // the order of processing any pending stuff doesn't matter
+            std.debug.assert(self.pending_codepoint == null);
+            self.num_pending_spaces -= 1;
+            return .{ .codepoint = ' ' };
+        }
+        if (self.pending_codepoint) |pending_codepoint| {
+            self.pending_codepoint = null;
+            return .{ .codepoint = pending_codepoint };
+        }
+        if (self.index >= self.source.len) return null;
+
+        var state: State = .normal;
+        var string_escape_n: u16 = 0;
+        var string_escape_i: u8 = 0;
+        const max_octal_escape_digits: u8 = switch (self.string_type) {
+            .ascii => 3,
+            .wide => 7,
+        };
+        const max_hex_escape_digits: u8 = switch (self.string_type) {
+            .ascii => 2,
+            .wide => 4,
+        };
+
+        while (self.code_page.codepointAt(self.index, self.source)) |codepoint| : (self.index += codepoint.byte_len) {
+            const c = codepoint.value;
+            var backtrack = false;
+            defer {
+                if (backtrack) {
+                    self.index -= codepoint.byte_len;
+                } else {
+                    if (c == '\t') {
+                        self.column += columnsUntilTabStop(self.column, 8);
+                    } else {
+                        self.column += 1;
+                    }
+                }
+            }
+            switch (state) {
+                .normal => switch (c) {
+                    '\\' => state = .escaped,
+                    '"' => state = .quote,
+                    '\r' => {},
+                    '\n' => state = .newline,
+                    '\t' => {
+                        const cols = columnsUntilTabStop(self.column, 8);
+                        self.num_pending_spaces = @intCast(u8, cols - 1);
+                        self.index += codepoint.byte_len;
+                        return .{ .codepoint = ' ' };
+                    },
+                    else => {
+                        self.index += codepoint.byte_len;
+                        return .{ .codepoint = c };
+                    },
+                },
+                .quote => switch (c) {
+                    '"' => {
+                        // "" => "
+                        self.index += codepoint.byte_len;
+                        return .{ .codepoint = '"' };
+                    },
+                    else => unreachable, // this is a bug in the lexer
+                },
+                .newline => switch (c) {
+                    '\r', ' ', '\t', '\n', '\x0b', '\x0c', '\xa0' => {},
+                    else => {
+                        // backtrack so that we handle the current char properly
+                        backtrack = true;
+                        // <space><newline>
+                        self.index += codepoint.byte_len;
+                        self.pending_codepoint = '\n';
+                        return .{ .codepoint = ' ' };
+                    },
+                },
+                .escaped => switch (c) {
+                    '\r' => state = .escaped_cr,
+                    '\n' => state = .escaped_newlines,
+                    '0'...'7' => {
+                        string_escape_n = std.fmt.charToDigit(@intCast(u8, c), 8) catch unreachable;
+                        string_escape_i = 1;
+                        state = .escaped_octal;
+                    },
+                    'x', 'X' => {
+                        string_escape_n = 0;
+                        string_escape_i = 0;
+                        state = .escaped_hex;
+                    },
+                    else => {
+                        switch (c) {
+                            'a', 'A' => {
+                                self.index += codepoint.byte_len;
+                                return .{ .codepoint = '\x08' };
+                            }, // might be a bug in RC, but matches its behavior
+                            'n' => {
+                                self.index += codepoint.byte_len;
+                                return .{ .codepoint = '\n' };
+                            },
+                            'r' => {
+                                self.index += codepoint.byte_len;
+                                return .{ .codepoint = '\r' };
+                            },
+                            't', 'T' => {
+                                self.index += codepoint.byte_len;
+                                return .{ .codepoint = '\t' };
+                            },
+                            '\\' => {
+                                self.index += codepoint.byte_len;
+                                return .{ .codepoint = '\\' };
+                            },
+                            '"' => {
+                                // \" is a special case that doesn't get the \ included,
+                                backtrack = true;
+                            },
+                            else => switch (self.string_type) {
+                                .wide => {}, // invalid escape sequences are skipped in wide strings
+                                .ascii => {
+                                    // backtrack so that we handle the current char properly
+                                    backtrack = true;
+                                    self.index += codepoint.byte_len;
+                                    return .{ .codepoint = '\\' };
+                                },
+                            },
+                        }
+                        state = .normal;
+                    },
+                },
+                .escaped_cr => switch (c) {
+                    '\r' => {},
+                    '\n' => state = .escaped_newlines,
+                    else => {
+                        // backtrack so that we handle the current char properly
+                        backtrack = true;
+                        self.index += codepoint.byte_len;
+                        return .{ .codepoint = '\\' };
+                    },
+                },
+                .escaped_newlines => switch (c) {
+                    '\r', '\n', '\t', ' ', '\x0b', '\x0c', '\xa0' => {},
+                    else => {
+                        // backtrack so that we handle the current char properly
+                        backtrack = true;
+                        state = .normal;
+                    },
+                },
+                .escaped_octal => switch (c) {
+                    '0'...'7' => {
+                        string_escape_n *%= 8;
+                        string_escape_n +%= std.fmt.charToDigit(@intCast(u8, c), 8) catch unreachable;
+                        string_escape_i += 1;
+                        if (string_escape_i == max_octal_escape_digits) {
+                            const escaped_value = switch (self.string_type) {
+                                .ascii => @truncate(u8, string_escape_n),
+                                .wide => string_escape_n,
+                            };
+                            self.index += codepoint.byte_len;
+                            return .{ .codepoint = escaped_value, .from_escaped_integer = true };
+                        }
+                    },
+                    else => {
+                        // backtrack so that we handle the current char properly
+                        backtrack = true;
+                        // write out whatever byte we have parsed so far
+                        const escaped_value = switch (self.string_type) {
+                            .ascii => @truncate(u8, string_escape_n),
+                            .wide => string_escape_n,
+                        };
+                        self.index += codepoint.byte_len;
+                        return .{ .codepoint = escaped_value, .from_escaped_integer = true };
+                    },
+                },
+                .escaped_hex => switch (c) {
+                    '0'...'9', 'a'...'f', 'A'...'F' => {
+                        string_escape_n *= 16;
+                        string_escape_n += std.fmt.charToDigit(@intCast(u8, c), 16) catch unreachable;
+                        string_escape_i += 1;
+                        if (string_escape_i == max_hex_escape_digits) {
+                            const escaped_value = switch (self.string_type) {
+                                .ascii => @truncate(u8, string_escape_n),
+                                .wide => string_escape_n,
+                            };
+                            self.index += codepoint.byte_len;
+                            return .{ .codepoint = escaped_value, .from_escaped_integer = true };
+                        }
+                    },
+                    else => {
+                        // backtrack so that we handle the current char properly
+                        backtrack = true;
+                        // write out whatever byte we have parsed so far
+                        // (even with 0 actual digits, \x alone parses to 0)
+                        const escaped_value = switch (self.string_type) {
+                            .ascii => @truncate(u8, string_escape_n),
+                            .wide => string_escape_n,
+                        };
+                        self.index += codepoint.byte_len;
+                        return .{ .codepoint = escaped_value, .from_escaped_integer = true };
+                    },
+                },
+            }
+        }
+
+        switch (state) {
+            .normal, .escaped_newlines => {},
+            .newline => {
+                // <space><newline>
+                self.pending_codepoint = '\n';
+                return .{ .codepoint = ' ' };
+            },
+            .escaped, .escaped_cr => return .{ .codepoint = '\\' },
+            .escaped_octal, .escaped_hex => {
+                const escaped_value = switch (self.string_type) {
+                    .ascii => @truncate(u8, string_escape_n),
+                    .wide => string_escape_n,
+                };
+                return .{ .codepoint = escaped_value, .from_escaped_integer = true };
+            },
+            .quote => unreachable, // this is a bug in the lexer
+        }
+
+        return null;
+    }
+};
+
 pub fn parseQuotedString(
     comptime literal_type: enum { ascii, wide },
     allocator: std.mem.Allocator,
@@ -64,200 +349,38 @@ pub fn parseQuotedString(
     var buf = try std.ArrayList(T).initCapacity(allocator, bytes.slice.len);
     errdefer buf.deinit();
 
-    var source = bytes.slice[1..(bytes.slice.len - 1)]; // remove start and end "
+    var iterative_parser = IterativeStringParser.init(bytes, .{ .start_column = start_column });
 
-    const State = enum {
-        normal,
-        quote,
-        newline,
-        escaped,
-        escaped_cr,
-        escaped_newlines,
-        escaped_octal,
-        escaped_hex,
-    };
-
-    var column: usize = start_column + 1; // The starting " is included
-    var state: State = .normal;
-    var string_escape_n: T = 0;
-    var string_escape_i: switch (literal_type) {
-        .ascii => std.math.IntFittingRange(0, 3),
-        .wide => std.math.IntFittingRange(0, 7),
-    } = 0;
-    var index: usize = 0;
-    while (bytes.code_page.codepointAt(index, source)) |codepoint| : (index += codepoint.byte_len) {
-        const c = codepoint.value;
-        var backtrack = false;
-        defer {
-            if (backtrack) {
-                index -= codepoint.byte_len;
-            } else {
-                if (c == '\t') {
-                    column += columnsUntilTabStop(column, 8);
-                } else {
-                    column += 1;
-                }
+    while (iterative_parser.next()) |parsed| {
+        const c = parsed.codepoint;
+        if (parsed.from_escaped_integer) {
+            try buf.append(@intCast(T, c));
+        } else {
+            switch (literal_type) {
+                .ascii => {
+                    if (windows1252.bestFitFromCodepoint(c)) |best_fit| {
+                        try buf.append(best_fit);
+                    } else if (c < 0x10000 or c == code_pages.Codepoint.invalid) {
+                        try buf.append('?');
+                    } else {
+                        try buf.appendSlice("??");
+                    }
+                },
+                .wide => {
+                    if (c == code_pages.Codepoint.invalid) {
+                        try buf.append(std.mem.nativeToLittle(u16, '�'));
+                    } else if (c < 0x10000) {
+                        const short = @intCast(u16, c);
+                        try buf.append(std.mem.nativeToLittle(u16, short));
+                    } else {
+                        const high = @intCast(u16, (c - 0x10000) >> 10) + 0xD800;
+                        try buf.append(std.mem.nativeToLittle(u16, high));
+                        const low = @intCast(u16, c & 0x3FF) + 0xDC00;
+                        try buf.append(std.mem.nativeToLittle(u16, low));
+                    }
+                },
             }
         }
-        switch (state) {
-            .normal => switch (c) {
-                '\\' => state = .escaped,
-                '"' => state = .quote,
-                '\r' => {},
-                '\n' => state = .newline,
-                '\t' => {
-                    var space_i: usize = 0;
-                    const cols = columnsUntilTabStop(column, 8);
-                    while (space_i < cols) : (space_i += 1) {
-                        try buf.append(' ');
-                    }
-                },
-                else => switch (literal_type) {
-                    .ascii => {
-                        if (windows1252.bestFitFromCodepoint(c)) |best_fit| {
-                            try buf.append(best_fit);
-                        } else if (c < 0x10000 or c == code_pages.Codepoint.invalid) {
-                            try buf.append('?');
-                        } else {
-                            try buf.appendSlice("??");
-                        }
-                    },
-                    .wide => {
-                        if (c == code_pages.Codepoint.invalid) {
-                            try buf.append(std.mem.nativeToLittle(u16, '�'));
-                        } else if (c < 0x10000) {
-                            const short = @intCast(u16, c);
-                            try buf.append(std.mem.nativeToLittle(u16, short));
-                        } else {
-                            const high = @intCast(u16, (c - 0x10000) >> 10) + 0xD800;
-                            try buf.append(std.mem.nativeToLittle(u16, high));
-                            const low = @intCast(u16, c & 0x3FF) + 0xDC00;
-                            try buf.append(std.mem.nativeToLittle(u16, low));
-                        }
-                    },
-                },
-            },
-            .quote => switch (c) {
-                '"' => {
-                    // "" => "
-                    try buf.append('"');
-                    state = .normal;
-                },
-                else => unreachable, // this is a bug in the lexer
-            },
-            .newline => switch (c) {
-                '\r', ' ', '\t', '\n', '\x0b', '\x0c', '\xa0' => {},
-                else => {
-                    try buf.append(' ');
-                    try buf.append('\n');
-                    // backtrack so that we handle the current char properly
-                    backtrack = true;
-                    state = .normal;
-                },
-            },
-            .escaped => switch (c) {
-                '\r' => state = .escaped_cr,
-                '\n' => state = .escaped_newlines,
-                '0'...'7' => {
-                    string_escape_n = std.fmt.charToDigit(@intCast(u8, c), 8) catch unreachable;
-                    string_escape_i = 1;
-                    state = .escaped_octal;
-                },
-                'x', 'X' => {
-                    string_escape_n = 0;
-                    string_escape_i = 0;
-                    state = .escaped_hex;
-                },
-                else => {
-                    switch (c) {
-                        'a', 'A' => try buf.append('\x08'), // might be a bug in RC, but matches its behavior
-                        'n' => try buf.append('\n'),
-                        'r' => try buf.append('\r'),
-                        't', 'T' => try buf.append('\t'),
-                        '\\' => try buf.append('\\'),
-                        '"' => {
-                            // \" is a special case that doesn't get the \ included,
-                            backtrack = true;
-                        },
-                        else => switch (literal_type) {
-                            .wide => {}, // invalid escape sequences are skipped in wide strings
-                            .ascii => {
-                                try buf.append('\\');
-                                // backtrack so that we handle the current char properly
-                                backtrack = true;
-                            },
-                        },
-                    }
-                    state = .normal;
-                },
-            },
-            .escaped_cr => switch (c) {
-                '\r' => {},
-                '\n' => state = .escaped_newlines,
-                else => {
-                    try buf.append('\\');
-                    // backtrack so that we handle the current char properly
-                    backtrack = true;
-                    state = .normal;
-                },
-            },
-            .escaped_newlines => switch (c) {
-                '\r', '\n', '\t', ' ', '\x0b', '\x0c', '\xa0' => {},
-                else => {
-                    // backtrack so that we handle the current char properly
-                    backtrack = true;
-                    state = .normal;
-                },
-            },
-            .escaped_octal => switch (c) {
-                '0'...'7' => {
-                    string_escape_n *%= 8;
-                    string_escape_n +%= std.fmt.charToDigit(@intCast(u8, c), 8) catch unreachable;
-                    string_escape_i += 1;
-                    if ((literal_type == .ascii and string_escape_i == 3) or (literal_type == .wide and string_escape_i == 7)) {
-                        try buf.append(string_escape_n);
-                        state = .normal;
-                    }
-                },
-                else => {
-                    // write out whatever byte we have parsed so far
-                    try buf.append(string_escape_n);
-                    // backtrack so that we handle the current char properly
-                    backtrack = true;
-                    state = .normal;
-                },
-            },
-            .escaped_hex => switch (c) {
-                '0'...'9', 'a'...'f', 'A'...'F' => {
-                    string_escape_n *= 16;
-                    string_escape_n += std.fmt.charToDigit(@intCast(u8, c), 16) catch unreachable;
-                    string_escape_i += 1;
-                    if ((literal_type == .ascii and string_escape_i == 2) or (literal_type == .wide and string_escape_i == 4)) {
-                        try buf.append(string_escape_n);
-                        state = .normal;
-                    }
-                },
-                else => {
-                    // write out whatever byte we have parsed so far
-                    // (even with 0 actual digits, \x alone parses to 0)
-                    try buf.append(string_escape_n);
-                    // backtrack so that we handle the current char properly
-                    backtrack = true;
-                    state = .normal;
-                },
-            },
-        }
-    }
-
-    switch (state) {
-        .normal, .escaped_newlines => {},
-        .newline => {
-            try buf.append(' ');
-            try buf.append('\n');
-        },
-        .escaped, .escaped_cr => try buf.append('\\'),
-        .escaped_octal, .escaped_hex => try buf.append(string_escape_n),
-        .quote => unreachable, // this is a bug in the lexer
     }
 
     if (literal_type == .wide) {
@@ -270,19 +393,13 @@ pub fn parseQuotedString(
 }
 
 pub fn parseQuotedAsciiString(allocator: std.mem.Allocator, bytes: SourceBytes, start_column: usize) ![]u8 {
+    std.debug.assert(bytes.slice.len >= 2); // ""
     return parseQuotedString(.ascii, allocator, bytes, start_column);
 }
 
 pub fn parseQuotedWideString(allocator: std.mem.Allocator, bytes: SourceBytes, start_column: usize) ![:0]u16 {
     std.debug.assert(bytes.slice.len >= 3); // L""
-    return parseQuotedString(
-        .wide,
-        allocator,
-        // Remove L prefix
-        .{ .slice = bytes.slice[1..], .code_page = bytes.code_page },
-        // so also bump the start column
-        start_column + 1,
-    );
+    return parseQuotedString(.wide, allocator, bytes, start_column);
 }
 
 test "parse quoted ascii string" {
