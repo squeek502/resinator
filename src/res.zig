@@ -474,20 +474,20 @@ const AcceleratorKeyCodepointTranslator = struct {
 };
 
 /// Expects bytes to be the full bytes of a string literal token (e.g. including the "" or L"").
-pub fn parseAcceleratorKeyString(bytes: SourceBytes, is_virt: bool, start_column: usize) !u16 {
+pub fn parseAcceleratorKeyString(bytes: SourceBytes, is_virt: bool, options: literals.StringParseOptions) !u16 {
     if (bytes.slice.len == 0) {
         return error.InvalidAccelerator;
     }
 
-    var parser = literals.IterativeStringParser.init(bytes, .{ .start_column = start_column });
+    var parser = literals.IterativeStringParser.init(bytes, options);
     var translator = AcceleratorKeyCodepointTranslator{ .string_type = parser.string_type };
 
-    const first_codepoint = translator.translate(parser.next()) orelse return error.InvalidAccelerator;
+    const first_codepoint = translator.translate(try parser.next()) orelse return error.InvalidAccelerator;
     // 0 is treated as a terminator, so this is equivalent to an empty string
     if (first_codepoint == 0) return error.InvalidAccelerator;
 
     if (first_codepoint == '^') {
-        const c = translator.translate(parser.next()) orelse return error.InvalidControlCharacter;
+        const c = translator.translate(try parser.next()) orelse return error.InvalidControlCharacter;
         switch (c) {
             '^' => return '^', // special case
             'a'...'z', 'A'...'Z' => return std.ascii.toUpper(@intCast(u8, c)) - 0x40,
@@ -505,7 +505,7 @@ pub fn parseAcceleratorKeyString(bytes: SourceBytes, is_virt: bool, start_column
         @compileError("this should be unreachable");
     }
 
-    const second_codepoint = translator.translate(parser.next());
+    const second_codepoint = translator.translate(try parser.next());
 
     var result: u32 = initial_value: {
         if (first_codepoint >= 0x10000) {
@@ -522,7 +522,7 @@ pub fn parseAcceleratorKeyString(bytes: SourceBytes, is_virt: bool, start_column
     // 0 is treated as a terminator
     if (second_codepoint != null and second_codepoint.? == 0) return @truncate(u16, result);
 
-    const third_codepoint = translator.translate(parser.next());
+    const third_codepoint = translator.translate(try parser.next());
     // 0 is treated as a terminator, so a 0 in the third position is fine but
     // anything else is too many codepoints for an accelerator
     if (third_codepoint != null and third_codepoint.? != 0) return error.InvalidAccelerator;
@@ -544,44 +544,44 @@ test "accelerator keys" {
     try std.testing.expectEqual(@as(u16, 1), try parseAcceleratorKeyString(
         .{ .slice = "\"^a\"", .code_page = .windows1252 },
         false,
-        0,
+        .{},
     ));
     try std.testing.expectEqual(@as(u16, 1), try parseAcceleratorKeyString(
         .{ .slice = "\"^A\"", .code_page = .windows1252 },
         false,
-        0,
+        .{},
     ));
     try std.testing.expectEqual(@as(u16, 26), try parseAcceleratorKeyString(
         .{ .slice = "\"^Z\"", .code_page = .windows1252 },
         false,
-        0,
+        .{},
     ));
     try std.testing.expectEqual(@as(u16, '^'), try parseAcceleratorKeyString(
         .{ .slice = "\"^^\"", .code_page = .windows1252 },
         false,
-        0,
+        .{},
     ));
 
     try std.testing.expectEqual(@as(u16, 'a'), try parseAcceleratorKeyString(
         .{ .slice = "\"a\"", .code_page = .windows1252 },
         false,
-        0,
+        .{},
     ));
     try std.testing.expectEqual(@as(u16, 0x6162), try parseAcceleratorKeyString(
         .{ .slice = "\"ab\"", .code_page = .windows1252 },
         false,
-        0,
+        .{},
     ));
 
     try std.testing.expectEqual(@as(u16, 'C'), try parseAcceleratorKeyString(
         .{ .slice = "\"c\"", .code_page = .windows1252 },
         true,
-        0,
+        .{},
     ));
     try std.testing.expectEqual(@as(u16, 0x6363), try parseAcceleratorKeyString(
         .{ .slice = "\"cc\"", .code_page = .windows1252 },
         true,
-        0,
+        .{},
     ));
 
     // \x00 or any escape that evaluates to zero acts as a terminator, everything past it
@@ -589,93 +589,93 @@ test "accelerator keys" {
     try std.testing.expectEqual(@as(u16, 'a'), try parseAcceleratorKeyString(
         .{ .slice = "\"a\\0bcdef\"", .code_page = .windows1252 },
         false,
-        0,
+        .{},
     ));
 
     // \x80 is € in Windows-1252, which is Unicode codepoint 20AC
     try std.testing.expectEqual(@as(u16, 0x20AC), try parseAcceleratorKeyString(
         .{ .slice = "\"\x80\"", .code_page = .windows1252 },
         false,
-        0,
+        .{},
     ));
     // This depends on the code page, though, with codepage 65001, \x80
     // on its own is invalid UTF-8 so it gets converted to the replacement character
     try std.testing.expectEqual(@as(u16, 0xFFFD), try parseAcceleratorKeyString(
         .{ .slice = "\"\x80\"", .code_page = .utf8 },
         false,
-        0,
+        .{},
     ));
     try std.testing.expectEqual(@as(u16, 0xCCAC), try parseAcceleratorKeyString(
         .{ .slice = "\"\x80\x80\"", .code_page = .windows1252 },
         false,
-        0,
+        .{},
     ));
     // This also behaves the same with escaped characters
     try std.testing.expectEqual(@as(u16, 0x20AC), try parseAcceleratorKeyString(
         .{ .slice = "\"\\x80\"", .code_page = .windows1252 },
         false,
-        0,
+        .{},
     ));
     // Even with utf8 code page
     try std.testing.expectEqual(@as(u16, 0x20AC), try parseAcceleratorKeyString(
         .{ .slice = "\"\\x80\"", .code_page = .utf8 },
         false,
-        0,
+        .{},
     ));
     try std.testing.expectEqual(@as(u16, 0xCCAC), try parseAcceleratorKeyString(
         .{ .slice = "\"\\x80\\x80\"", .code_page = .windows1252 },
         false,
-        0,
+        .{},
     ));
     // Wide string with the actual characters behaves like the ASCII string version
     try std.testing.expectEqual(@as(u16, 0xCCAC), try parseAcceleratorKeyString(
         .{ .slice = "L\"\x80\x80\"", .code_page = .windows1252 },
         false,
-        0,
+        .{},
     ));
     // But wide string with escapes behaves differently
     try std.testing.expectEqual(@as(u16, 0x8080), try parseAcceleratorKeyString(
         .{ .slice = "L\"\\x80\\x80\"", .code_page = .windows1252 },
         false,
-        0,
+        .{},
     ));
     // and invalid escapes within wide strings get skipped
     try std.testing.expectEqual(@as(u16, 'z'), try parseAcceleratorKeyString(
         .{ .slice = "L\"\\Hz\"", .code_page = .windows1252 },
         false,
-        0,
+        .{},
     ));
 
     // any non-A-Z codepoints are illegal
     try std.testing.expectError(error.ControlCharacterOutOfRange, parseAcceleratorKeyString(
         .{ .slice = "\"^\x83\"", .code_page = .windows1252 },
         false,
-        0,
+        .{},
     ));
     try std.testing.expectError(error.ControlCharacterOutOfRange, parseAcceleratorKeyString(
         .{ .slice = "\"^1\"", .code_page = .windows1252 },
         false,
-        0,
+        .{},
     ));
     try std.testing.expectError(error.InvalidControlCharacter, parseAcceleratorKeyString(
         .{ .slice = "\"^\"", .code_page = .windows1252 },
         false,
-        0,
+        .{},
     ));
     try std.testing.expectError(error.InvalidAccelerator, parseAcceleratorKeyString(
         .{ .slice = "\"\"", .code_page = .windows1252 },
         false,
-        0,
+        .{},
     ));
     try std.testing.expectError(error.InvalidAccelerator, parseAcceleratorKeyString(
         .{ .slice = "\"hello\"", .code_page = .windows1252 },
         false,
-        0,
+        .{},
     ));
     try std.testing.expectError(error.ControlCharacterOutOfRange, parseAcceleratorKeyString(
         .{ .slice = "\"^\x80\"", .code_page = .windows1252 },
         false,
-        0,
+        .{},
     ));
 
     // Invalid UTF-8 gets converted to 0xFFFD, multiple invalids get shifted and added together
@@ -683,39 +683,39 @@ test "accelerator keys" {
     try std.testing.expectEqual(@as(u16, 0xFCFD), try parseAcceleratorKeyString(
         .{ .slice = "\"\x80\x80\"", .code_page = .utf8 },
         false,
-        0,
+        .{},
     ));
     try std.testing.expectEqual(@as(u16, 0xFCFD), try parseAcceleratorKeyString(
         .{ .slice = "L\"\x80\x80\"", .code_page = .utf8 },
         false,
-        0,
+        .{},
     ));
 
     // Codepoints >= 0x10000
     try std.testing.expectEqual(@as(u16, 0xDD00), try parseAcceleratorKeyString(
         .{ .slice = "\"\xF0\x90\x84\x80\"", .code_page = .utf8 },
         false,
-        0,
+        .{},
     ));
     try std.testing.expectEqual(@as(u16, 0xDD00), try parseAcceleratorKeyString(
         .{ .slice = "L\"\xF0\x90\x84\x80\"", .code_page = .utf8 },
         false,
-        0,
+        .{},
     ));
     try std.testing.expectEqual(@as(u16, 0x9C01), try parseAcceleratorKeyString(
         .{ .slice = "\"\xF4\x80\x80\x81\"", .code_page = .utf8 },
         false,
-        0,
+        .{},
     ));
     // anything before or after a codepoint >= 0x10000 causes an error
     try std.testing.expectError(error.InvalidAccelerator, parseAcceleratorKeyString(
         .{ .slice = "\"a\xF0\x90\x80\x80\"", .code_page = .utf8 },
         false,
-        0,
+        .{},
     ));
     try std.testing.expectError(error.InvalidAccelerator, parseAcceleratorKeyString(
         .{ .slice = "\"\xF0\x90\x80\x80a\"", .code_page = .utf8 },
         false,
-        0,
+        .{},
     ));
 }

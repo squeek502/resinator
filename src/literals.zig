@@ -2,7 +2,8 @@ const std = @import("std");
 const code_pages = @import("code_pages.zig");
 const CodePage = code_pages.CodePage;
 const windows1252 = @import("windows1252.zig");
-const Diagnostics = @import("errors.zig").Diagnostics;
+const ErrorDetails = @import("errors.zig").ErrorDetails;
+const DiagnosticsContext = @import("errors.zig").DiagnosticsContext;
 const Token = @import("lex.zig").Token;
 
 /// rc is maximally liberal in terms of what it accepts as a number literal
@@ -59,9 +60,7 @@ pub const IterativeStringParser = struct {
     num_pending_spaces: u8 = 0,
     index: usize = 0,
     column: usize = 0,
-    diagnostics: ?*Diagnostics = null,
-    /// For context when adding errors/warnings/etc to Diagnostics
-    string_token: ?Token = null,
+    diagnostics: ?DiagnosticsContext = null,
 
     pub const StringType = enum { ascii, wide };
 
@@ -76,13 +75,7 @@ pub const IterativeStringParser = struct {
         escaped_hex,
     };
 
-    pub const Options = struct {
-        start_column: usize = 0,
-        string_token: ?Token = null,
-        diagnostics: ?*Diagnostics = null,
-    };
-
-    pub fn init(bytes: SourceBytes, options: Options) IterativeStringParser {
+    pub fn init(bytes: SourceBytes, options: StringParseOptions) IterativeStringParser {
         const string_type: StringType = switch (bytes.slice[0]) {
             'L', 'l' => .wide,
             else => .ascii,
@@ -101,7 +94,6 @@ pub const IterativeStringParser = struct {
             .string_type = string_type,
             .column = column,
             .diagnostics = options.diagnostics,
-            .string_token = options.string_token,
         };
     }
 
@@ -110,7 +102,36 @@ pub const IterativeStringParser = struct {
         from_escaped_integer: bool = false,
     };
 
-    pub fn next(self: *IterativeStringParser) ?ParsedCodepoint {
+    pub fn next(self: *IterativeStringParser) !?ParsedCodepoint {
+        const result = self.nextUnchecked();
+        if (self.diagnostics != null and result != null and !result.?.from_escaped_integer) {
+            switch (result.?.codepoint) {
+                0x900, 0xA00, 0xA0D, 0x2000, 0xFFFE, 0xD00 => {
+                    const err: ErrorDetails.Error = if (result.?.codepoint == 0xD00)
+                        .rc_would_miscompile_codepoint_skip
+                    else
+                        .rc_would_miscompile_codepoint_byte_swap;
+                    try self.diagnostics.?.diagnostics.append(ErrorDetails{
+                        .err = err,
+                        .type = .warning,
+                        .token = self.diagnostics.?.token,
+                        .extra = .{ .number = result.?.codepoint },
+                    });
+                    try self.diagnostics.?.diagnostics.append(ErrorDetails{
+                        .err = err,
+                        .type = .note,
+                        .token = self.diagnostics.?.token,
+                        .print_source_line = false,
+                        .extra = .{ .number = result.?.codepoint },
+                    });
+                },
+                else => {},
+            }
+        }
+        return result;
+    }
+
+    pub fn nextUnchecked(self: *IterativeStringParser) ?ParsedCodepoint {
         if (self.num_pending_spaces > 0) {
             // Ensure that we don't get into this predicament so we can ensure that
             // the order of processing any pending stuff doesn't matter
@@ -334,11 +355,16 @@ pub const IterativeStringParser = struct {
     }
 };
 
+pub const StringParseOptions = struct {
+    start_column: usize = 0,
+    diagnostics: ?DiagnosticsContext = null,
+};
+
 pub fn parseQuotedString(
     comptime literal_type: enum { ascii, wide },
     allocator: std.mem.Allocator,
     bytes: SourceBytes,
-    start_column: usize,
+    options: StringParseOptions,
 ) !(switch (literal_type) {
     .ascii => []u8,
     .wide => [:0]u16,
@@ -349,9 +375,9 @@ pub fn parseQuotedString(
     var buf = try std.ArrayList(T).initCapacity(allocator, bytes.slice.len);
     errdefer buf.deinit();
 
-    var iterative_parser = IterativeStringParser.init(bytes, .{ .start_column = start_column });
+    var iterative_parser = IterativeStringParser.init(bytes, options);
 
-    while (iterative_parser.next()) |parsed| {
+    while (try iterative_parser.next()) |parsed| {
         const c = parsed.codepoint;
         if (parsed.from_escaped_integer) {
             try buf.append(@intCast(T, c));
@@ -392,14 +418,14 @@ pub fn parseQuotedString(
     }
 }
 
-pub fn parseQuotedAsciiString(allocator: std.mem.Allocator, bytes: SourceBytes, start_column: usize) ![]u8 {
+pub fn parseQuotedAsciiString(allocator: std.mem.Allocator, bytes: SourceBytes, options: StringParseOptions) ![]u8 {
     std.debug.assert(bytes.slice.len >= 2); // ""
-    return parseQuotedString(.ascii, allocator, bytes, start_column);
+    return parseQuotedString(.ascii, allocator, bytes, options);
 }
 
-pub fn parseQuotedWideString(allocator: std.mem.Allocator, bytes: SourceBytes, start_column: usize) ![:0]u16 {
+pub fn parseQuotedWideString(allocator: std.mem.Allocator, bytes: SourceBytes, options: StringParseOptions) ![:0]u16 {
     std.debug.assert(bytes.slice.len >= 3); // L""
-    return parseQuotedString(.wide, allocator, bytes, start_column);
+    return parseQuotedString(.wide, allocator, bytes, options);
 }
 
 test "parse quoted ascii string" {
@@ -412,133 +438,133 @@ test "parse quoted ascii string" {
         \\"hello"
         ,
         .code_page = .windows1252,
-    }, 0));
+    }, .{}));
     // hex with 0 digits
     try std.testing.expectEqualSlices(u8, "\x00", try parseQuotedAsciiString(arena, .{
         .slice = 
         \\"\x"
         ,
         .code_page = .windows1252,
-    }, 0));
+    }, .{}));
     // hex max of 2 digits
     try std.testing.expectEqualSlices(u8, "\xFFf", try parseQuotedAsciiString(arena, .{
         .slice = 
         \\"\XfFf"
         ,
         .code_page = .windows1252,
-    }, 0));
+    }, .{}));
     // octal with invalid octal digit
     try std.testing.expectEqualSlices(u8, "\x019", try parseQuotedAsciiString(arena, .{
         .slice = 
         \\"\19"
         ,
         .code_page = .windows1252,
-    }, 0));
+    }, .{}));
     // escaped quotes
     try std.testing.expectEqualSlices(u8, " \" ", try parseQuotedAsciiString(arena, .{
         .slice = 
         \\" "" "
         ,
         .code_page = .windows1252,
-    }, 0));
+    }, .{}));
     // backslash right before escaped quotes
     try std.testing.expectEqualSlices(u8, "\"", try parseQuotedAsciiString(arena, .{
         .slice = 
         \\"\"""
         ,
         .code_page = .windows1252,
-    }, 0));
+    }, .{}));
     // octal overflow
     try std.testing.expectEqualSlices(u8, "\x01", try parseQuotedAsciiString(arena, .{
         .slice = 
         \\"\401"
         ,
         .code_page = .windows1252,
-    }, 0));
+    }, .{}));
     // escapes
     try std.testing.expectEqualSlices(u8, "\x08\n\r\t\\", try parseQuotedAsciiString(arena, .{
         .slice = 
         \\"\a\n\r\t\\"
         ,
         .code_page = .windows1252,
-    }, 0));
+    }, .{}));
     // uppercase escapes
     try std.testing.expectEqualSlices(u8, "\x08\\N\\R\t\\", try parseQuotedAsciiString(arena, .{
         .slice = 
         \\"\A\N\R\T\\"
         ,
         .code_page = .windows1252,
-    }, 0));
+    }, .{}));
     // backslash on its own
     try std.testing.expectEqualSlices(u8, "\\", try parseQuotedAsciiString(arena, .{
         .slice = 
         \\"\"
         ,
         .code_page = .windows1252,
-    }, 0));
+    }, .{}));
     // unrecognized escapes
     try std.testing.expectEqualSlices(u8, "\\b", try parseQuotedAsciiString(arena, .{
         .slice = 
         \\"\b"
         ,
         .code_page = .windows1252,
-    }, 0));
+    }, .{}));
     // escaped carriage returns
     try std.testing.expectEqualSlices(u8, "\\", try parseQuotedAsciiString(
         arena,
         .{ .slice = "\"\\\r\r\r\r\r\"", .code_page = .windows1252 },
-        0,
+        .{},
     ));
     // escaped newlines
     try std.testing.expectEqualSlices(u8, "", try parseQuotedAsciiString(
         arena,
         .{ .slice = "\"\\\n\n\n\n\n\"", .code_page = .windows1252 },
-        0,
+        .{},
     ));
     // escaped CRLF pairs
     try std.testing.expectEqualSlices(u8, "", try parseQuotedAsciiString(
         arena,
         .{ .slice = "\"\\\r\n\r\n\r\n\r\n\r\n\"", .code_page = .windows1252 },
-        0,
+        .{},
     ));
     // escaped newlines with other whitespace
     try std.testing.expectEqualSlices(u8, "", try parseQuotedAsciiString(
         arena,
         .{ .slice = "\"\\\n    \t\r\n \r\t\n  \t\"", .code_page = .windows1252 },
-        0,
+        .{},
     ));
     // literal tab characters get converted to spaces (dependent on source file columns)
     try std.testing.expectEqualSlices(u8, "       ", try parseQuotedAsciiString(
         arena,
         .{ .slice = "\"\t\"", .code_page = .windows1252 },
-        0,
+        .{},
     ));
     try std.testing.expectEqualSlices(u8, "abc    ", try parseQuotedAsciiString(
         arena,
         .{ .slice = "\"abc\t\"", .code_page = .windows1252 },
-        0,
+        .{},
     ));
     try std.testing.expectEqualSlices(u8, "abcdefg        ", try parseQuotedAsciiString(
         arena,
         .{ .slice = "\"abcdefg\t\"", .code_page = .windows1252 },
-        0,
+        .{},
     ));
     try std.testing.expectEqualSlices(u8, "\\      ", try parseQuotedAsciiString(
         arena,
         .{ .slice = "\"\\\t\"", .code_page = .windows1252 },
-        0,
+        .{},
     ));
     // literal CR's get dropped
     try std.testing.expectEqualSlices(u8, "", try parseQuotedAsciiString(
         arena,
         .{ .slice = "\"\r\r\r\r\r\"", .code_page = .windows1252 },
-        0,
+        .{},
     ));
     // contiguous newlines and whitespace get collapsed to <space><newline>
     try std.testing.expectEqualSlices(u8, " \n", try parseQuotedAsciiString(
         arena,
         .{ .slice = "\"\n\r\r  \r\n \t  \"", .code_page = .windows1252 },
-        0,
+        .{},
     ));
 }
 
@@ -550,32 +576,32 @@ test "parse quoted ascii string with utf8 code page" {
     try std.testing.expectEqualSlices(u8, "", try parseQuotedAsciiString(
         arena,
         .{ .slice = "\"\"", .code_page = .utf8 },
-        0,
+        .{},
     ));
     // Codepoints that don't have a Windows-1252 representation get converted to ?
     try std.testing.expectEqualSlices(u8, "?????????", try parseQuotedAsciiString(
         arena,
         .{ .slice = "\"кириллица\"", .code_page = .utf8 },
-        0,
+        .{},
     ));
     // Codepoints that have a best fit mapping get converted accordingly,
     // these are box drawing codepoints
     try std.testing.expectEqualSlices(u8, "\x2b\x2d\x2b", try parseQuotedAsciiString(
         arena,
         .{ .slice = "\"┌─┐\"", .code_page = .utf8 },
-        0,
+        .{},
     ));
     // Invalid UTF-8 gets converted to ? depending on well-formedness
     try std.testing.expectEqualSlices(u8, "????", try parseQuotedAsciiString(
         arena,
         .{ .slice = "\"\xf0\xf0\x80\x80\x80\"", .code_page = .utf8 },
-        0,
+        .{},
     ));
     // Codepoints that would require a UTF-16 surrogate pair get converted to ??
     try std.testing.expectEqualSlices(u8, "??", try parseQuotedAsciiString(
         arena,
         .{ .slice = "\"\xF2\xAF\xBA\xB4\"", .code_page = .utf8 },
-        0,
+        .{},
     ));
 }
 
@@ -589,52 +615,52 @@ test "parse quoted wide string" {
         \\L"hello"
         ,
         .code_page = .windows1252,
-    }, 0));
+    }, .{}));
     // hex with 0 digits
     try std.testing.expectEqualSentinel(u16, 0, &[_:0]u16{0x0}, try parseQuotedWideString(arena, .{
         .slice = 
         \\L"\x"
         ,
         .code_page = .windows1252,
-    }, 0));
+    }, .{}));
     // hex max of 4 digits
     try std.testing.expectEqualSentinel(u16, 0, &[_:0]u16{ 0xFFFF, 'f' }, try parseQuotedWideString(arena, .{
         .slice = 
         \\L"\XfFfFf"
         ,
         .code_page = .windows1252,
-    }, 0));
+    }, .{}));
     // octal max of 7 digits
     try std.testing.expectEqualSentinel(u16, 0, &[_:0]u16{ 0x9493, '3', '3' }, try parseQuotedWideString(arena, .{
         .slice = 
         \\L"\111222333"
         ,
         .code_page = .windows1252,
-    }, 0));
+    }, .{}));
     // octal overflow
     try std.testing.expectEqualSentinel(u16, 0, &[_:0]u16{0xFF01}, try parseQuotedWideString(arena, .{
         .slice = 
         \\L"\777401"
         ,
         .code_page = .windows1252,
-    }, 0));
+    }, .{}));
     // literal tab characters get converted to spaces (dependent on source file columns)
     try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16LeStringLiteral("abcdefg       "), try parseQuotedWideString(
         arena,
         .{ .slice = "L\"abcdefg\t\"", .code_page = .windows1252 },
-        0,
+        .{},
     ));
     // Windows-1252 conversion
     try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16LeStringLiteral("ðð€€€"), try parseQuotedWideString(
         arena,
         .{ .slice = "L\"\xf0\xf0\x80\x80\x80\"", .code_page = .windows1252 },
-        0,
+        .{},
     ));
     // Invalid escape sequences are skipped
     try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16LeStringLiteral(""), try parseQuotedWideString(
         arena,
         .{ .slice = "L\"\\H\"", .code_page = .windows1252 },
-        0,
+        .{},
     ));
 }
 
@@ -646,18 +672,18 @@ test "parse quoted wide string with utf8 code page" {
     try std.testing.expectEqualSentinel(u16, 0, &[_:0]u16{}, try parseQuotedWideString(
         arena,
         .{ .slice = "L\"\"", .code_page = .utf8 },
-        0,
+        .{},
     ));
     try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16LeStringLiteral("кириллица"), try parseQuotedWideString(
         arena,
         .{ .slice = "L\"кириллица\"", .code_page = .utf8 },
-        0,
+        .{},
     ));
     // Invalid UTF-8 gets converted to � depending on well-formedness
     try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16LeStringLiteral("����"), try parseQuotedWideString(
         arena,
         .{ .slice = "L\"\xf0\xf0\x80\x80\x80\"", .code_page = .utf8 },
-        0,
+        .{},
     ));
 }
 

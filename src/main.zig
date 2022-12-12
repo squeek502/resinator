@@ -5,7 +5,7 @@ const compile = @import("compile.zig").compile;
 const Diagnostics = @import("errors.zig").Diagnostics;
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.GeneralPurposeAllocator(.{ .stack_trace_frames = 8 }){};
     defer std.debug.assert(gpa.deinit() == false);
     const allocator = gpa.allocator();
 

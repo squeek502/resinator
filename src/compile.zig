@@ -123,7 +123,10 @@ pub const Compiler = struct {
                         const slice = literal_node.token.slice(self.source);
                         const column = literal_node.token.calculateColumn(self.source, 8, null);
                         const bytes = SourceBytes{ .slice = slice, .code_page = self.code_pages.getForToken(literal_node.token) };
-                        const parsed = try parseQuotedAsciiString(self.allocator, bytes, column);
+                        const parsed = try parseQuotedAsciiString(self.allocator, bytes, .{
+                            .start_column = column,
+                            .diagnostics = .{ .diagnostics = self.diagnostics, .token = literal_node.token },
+                        });
                         return .{ .utf8 = parsed, .needs_free = true };
                     },
                     .quoted_wide_string => {
@@ -133,7 +136,10 @@ pub const Compiler = struct {
                         const slice = literal_node.token.slice(self.source);
                         const column = literal_node.token.calculateColumn(self.source, 8, null);
                         const bytes = SourceBytes{ .slice = slice, .code_page = self.code_pages.getForToken(literal_node.token) };
-                        const parsed_string = try parseQuotedWideString(self.allocator, bytes, column);
+                        const parsed_string = try parseQuotedWideString(self.allocator, bytes, .{
+                            .start_column = column,
+                            .diagnostics = .{ .diagnostics = self.diagnostics, .token = literal_node.token },
+                        });
                         defer self.allocator.free(parsed_string);
                         const parsed_as_utf8 = try std.unicode.utf16leToUtf8Alloc(self.allocator, parsed_string);
                         return .{ .utf8 = parsed_as_utf8, .needs_free = true };
@@ -369,7 +375,10 @@ pub const Compiler = struct {
                             .slice = literal_node.token.slice(self.source),
                             .code_page = self.code_pages.getForToken(literal_node.token),
                         };
-                        const parsed = try parseQuotedAsciiString(self.allocator, bytes, column);
+                        const parsed = try parseQuotedAsciiString(self.allocator, bytes, .{
+                            .start_column = column,
+                            .diagnostics = .{ .diagnostics = self.diagnostics, .token = literal_node.token },
+                        });
                         errdefer self.allocator.free(parsed);
                         return .{ .ascii_string = parsed };
                     },
@@ -379,7 +388,10 @@ pub const Compiler = struct {
                             .slice = literal_node.token.slice(self.source),
                             .code_page = self.code_pages.getForToken(literal_node.token),
                         };
-                        const parsed_string = try parseQuotedWideString(self.allocator, bytes, column);
+                        const parsed_string = try parseQuotedWideString(self.allocator, bytes, .{
+                            .start_column = column,
+                            .diagnostics = .{ .diagnostics = self.diagnostics, .token = literal_node.token },
+                        });
                         errdefer self.allocator.free(parsed_string);
                         return .{ .wide_string = parsed_string };
                     },
@@ -465,7 +477,10 @@ pub const Compiler = struct {
                 .code_page = self.code_pages.getForToken(literal.token),
             };
             const column = literal.token.calculateColumn(self.source, 8, null);
-            return res.parseAcceleratorKeyString(bytes, is_virt, column);
+            return res.parseAcceleratorKeyString(bytes, is_virt, .{
+                .start_column = column,
+                .diagnostics = .{ .diagnostics = self.diagnostics, .token = literal.token },
+            });
         }
     }
 
@@ -487,12 +502,15 @@ pub const Compiler = struct {
                     .token = accelerator.event.getFirstToken(),
                 });
             }
-            const key = self.evaluateAcceleratorKeyExpression(accelerator.event, modifiers.isSet(.virtkey)) catch {
-                // TODO: better error with more context from the caught error
-                return self.addErrorDetailsAndFail(.{
-                    .err = .invalid_accelerator_key,
-                    .token = accelerator.event.getFirstToken(),
-                });
+            const key = self.evaluateAcceleratorKeyExpression(accelerator.event, modifiers.isSet(.virtkey)) catch |err| switch (err) {
+                error.OutOfMemory => |e| return e,
+                else => {
+                    // TODO: better error with more context from the caught error
+                    return self.addErrorDetailsAndFail(.{
+                        .err = .invalid_accelerator_key,
+                        .token = accelerator.event.getFirstToken(),
+                    });
+                },
             };
             const cmd_id = evaluateNumberExpression(accelerator.idvalue, self.source, self.code_pages);
 
@@ -871,12 +889,18 @@ pub const StringTable = struct {
                 const utf16_string = utf16: {
                     switch (string_token.id) {
                         .quoted_ascii_string => {
-                            const parsed = try parseQuotedAsciiString(compiler.allocator, bytes, column);
+                            const parsed = try parseQuotedAsciiString(compiler.allocator, bytes, .{
+                                .start_column = column,
+                                .diagnostics = .{ .diagnostics = compiler.diagnostics, .token = string_token },
+                            });
                             defer compiler.allocator.free(parsed);
                             // TODO: Should this be UTF-8? parseQuotedAsciiString returns a Windows-1252 encoded string.
                             break :utf16 try std.unicode.utf8ToUtf16LeWithNull(compiler.allocator, parsed);
                         },
-                        .quoted_wide_string => break :utf16 try parseQuotedWideString(compiler.allocator, bytes, column),
+                        .quoted_wide_string => break :utf16 try parseQuotedWideString(compiler.allocator, bytes, .{
+                            .start_column = column,
+                            .diagnostics = .{ .diagnostics = compiler.diagnostics, .token = string_token },
+                        }),
                         else => unreachable,
                     }
                 };

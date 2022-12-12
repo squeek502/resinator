@@ -688,6 +688,12 @@ pub const Lexer = struct {
             // enough of a footgun with no real use-cases that it's still worth erroring instead of
             // emulating the RC compiler's behavior, though.
             '\u{E000}' => error.IllegalPrivateUseCharacter,
+            // These codepoints lead to strange errors when used outside of string literals,
+            // and miscompilations when used within string literals. We avoid the miscompilation
+            // within string literals and emit a warning, but outside of string literals it makes
+            // more sense to just disallow these codepoints.
+            // TODO: Error message that can handle codepoints instead of single bytes
+            0x900, 0xA00, 0xA0D, 0x2000, 0xFFFE, 0xD00 => if (!in_string_literal) error.IllegalByteOutsideStringLiterals else return,
             else => return,
         };
         self.error_context_token = .{

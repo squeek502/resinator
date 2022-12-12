@@ -193,7 +193,7 @@ pub fn handleLineCommand(allocator: Allocator, line_command: []const u8, current
     const filename = try parseQuotedAsciiString(allocator, .{
         .slice = filename_literal,
         .code_page = .windows1252,
-    }, 0);
+    }, .{});
     defer allocator.free(filename);
 
     current_mapping.line_num = linenum;

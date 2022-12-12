@@ -56,6 +56,12 @@ pub const Diagnostics = struct {
     }
 };
 
+/// Contains enough context to append errors/warnings/notes etc
+pub const DiagnosticsContext = struct {
+    diagnostics: *Diagnostics,
+    token: Token,
+};
+
 pub const ErrorDetails = struct {
     err: Error,
     token: Token,
@@ -175,6 +181,12 @@ pub const ErrorDetails = struct {
         file_open_error,
         invalid_accelerator_key,
         accelerator_type_required,
+
+        // Literals
+        /// `number` is populated
+        rc_would_miscompile_codepoint_byte_swap,
+        /// `number` is populated
+        rc_would_miscompile_codepoint_skip,
     };
 
     pub fn render(self: ErrorDetails, writer: anytype, source: []const u8, strings: []const []const u8) !void {
@@ -258,6 +270,14 @@ pub const ErrorDetails = struct {
             },
             .accelerator_type_required => {
                 try writer.print("accelerator type [ASCII or VIRTKEY] required when key is an integer", .{});
+            },
+            .rc_would_miscompile_codepoint_byte_swap => switch (self.type) {
+                .err, .warning => return writer.print("codepoint U+{X} within a string literal would be miscompiled by the Win32 RC compiler (the bytes of the UTF-16 code unit would be swapped)", .{self.extra.number}),
+                .note => return writer.print("to avoid the potential miscompilation, an integer escape sequence in a wide string literal could be used instead: L\"\\x{X}\"", .{self.extra.number}),
+            },
+            .rc_would_miscompile_codepoint_skip => switch (self.type) {
+                .err, .warning => return writer.print("codepoint U+{X} within a string literal would be miscompiled by the Win32 RC compiler (the codepoint would be missing from the compiled resource)", .{self.extra.number}),
+                .note => return writer.print("to avoid the potential miscompilation, an integer escape sequence in a wide string literal could be used instead: L\"\\x{X}\"", .{self.extra.number}),
             },
         }
     }
