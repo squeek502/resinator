@@ -297,7 +297,7 @@ pub const Compiler = struct {
     pub const Data = union(DataType) {
         number: Number,
         ascii_string: []const u8,
-        wide_string: []const u16,
+        wide_string: [:0]const u16,
 
         pub fn deinit(self: Data, allocator: Allocator) void {
             switch (self) {
