@@ -146,7 +146,7 @@ pub fn parseQuotedString(
                 else => unreachable, // this is a bug in the lexer
             },
             .newline => switch (c) {
-                '\r', ' ', '\t', '\n' => {},
+                '\r', ' ', '\t', '\n', '\x0b', '\x0c', '\xa0' => {},
                 else => {
                     try buf.append(' ');
                     try buf.append('\n');
@@ -179,10 +179,13 @@ pub fn parseQuotedString(
                             // \" is a special case that doesn't get the \ included,
                             backtrack = true;
                         },
-                        else => {
-                            try buf.append('\\');
-                            // backtrack so that we handle the current char properly
-                            backtrack = true;
+                        else => switch (literal_type) {
+                            .wide => {}, // invalid escape sequences are skipped in wide strings
+                            .ascii => {
+                                try buf.append('\\');
+                                // backtrack so that we handle the current char properly
+                                backtrack = true;
+                            },
                         },
                     }
                     state = .normal;
@@ -199,7 +202,7 @@ pub fn parseQuotedString(
                 },
             },
             .escaped_newlines => switch (c) {
-                '\r', '\n', '\t', ' ' => {},
+                '\r', '\n', '\t', ' ', '\x0b', '\x0c', '\xa0' => {},
                 else => {
                     // backtrack so that we handle the current char properly
                     backtrack = true;
@@ -508,6 +511,12 @@ test "parse quoted wide string" {
     try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16LeStringLiteral("ðð€€€"), try parseQuotedWideString(
         arena,
         .{ .slice = "L\"\xf0\xf0\x80\x80\x80\"", .code_page = .windows1252 },
+        0,
+    ));
+    // Invalid escape sequences are skipped
+    try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16LeStringLiteral(""), try parseQuotedWideString(
+        arena,
+        .{ .slice = "L\"\\H\"", .code_page = .windows1252 },
         0,
     ));
 }

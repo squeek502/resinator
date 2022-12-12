@@ -460,19 +460,16 @@ pub const Compiler = struct {
         } else {
             std.debug.assert(node.isStringLiteral());
             const literal = @fieldParentPtr(Node.Literal, "base", node);
-            var slice = literal.token.slice(self.source);
-            // TODO: Is this okay?
-            if (literal.token.id == .quoted_wide_string) {
-                // remove the L/l prefix
-                slice = slice[1..];
-            }
             const bytes = SourceBytes{
-                .slice = slice,
+                .slice = literal.token.slice(self.source),
                 .code_page = self.code_pages.getForToken(literal.token),
             };
-            const parsed_string = try parseQuotedAsciiString(self.allocator, bytes, literal.token.calculateColumn(self.source, 8, null));
-            defer self.allocator.free(parsed_string);
-            return res.parseAcceleratorKeyString(parsed_string, is_virt);
+            const column = literal.token.calculateColumn(self.source, 8, null);
+            return switch (literal.token.id) {
+                .quoted_ascii_string => res.parseAcceleratorKeyString(.ascii, bytes, is_virt, column),
+                .quoted_wide_string => res.parseAcceleratorKeyString(.wide, bytes, is_virt, column),
+                else => unreachable,
+            };
         }
     }
 

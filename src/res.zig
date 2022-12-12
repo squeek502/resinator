@@ -5,7 +5,8 @@ const CommonResourceAttributes = rc.CommonResourceAttributes;
 const Allocator = std.mem.Allocator;
 const windows1252 = @import("windows1252.zig");
 const CodePage = @import("code_pages.zig").CodePage;
-const SourceBytes = @import("literals.zig").SourceBytes;
+const literals = @import("literals.zig");
+const SourceBytes = literals.SourceBytes;
 const Codepoint = @import("code_pages.zig").Codepoint;
 
 /// https://learn.microsoft.com/en-us/windows/win32/menurc/resource-types
@@ -459,67 +460,517 @@ pub const AcceleratorModifiers = packed struct(u8) {
     }
 };
 
-/// Expects the input to be a parsed string literal
-/// TODO: Codepage-aware handling of certain characters
-pub fn parseAcceleratorKeyString(str: []const u8, is_virt: bool) !u16 {
-    if (str.len == 0 or str.len > 2) {
+const AcceleratorKeyCodepoints = struct {
+    buf: [2]u21 = undefined,
+    codepoints: []u21 = &[_]u21{},
+
+    const Self = @This();
+
+    pub fn append(self: *Self, codepoint: u21) !void {
+        if (self.codepoints.len == self.buf.len) return error.InvalidAccelerator;
+        const index = self.codepoints.len;
+        self.codepoints = self.buf[0 .. index + 1];
+        self.codepoints[index] = codepoint;
+    }
+
+    pub fn appendFromEscape(self: *Self, comptime T: type, value: T) !void {
+        switch (T) {
+            u8 => try self.append(windows1252.toCodepoint(value)),
+            u16 => try self.append(value),
+            else => unreachable,
+        }
+    }
+};
+
+/// Expects bytes to be the full bytes of a string literal token (e.g. including the "" or L"").
+/// Works similarly to parseQuotedString but not similarly enough to be implemented in terms of parseQuotedString.
+/// TODO: Is this actually true? ^
+pub fn parseAcceleratorKeyString(comptime literal_type: enum { ascii, wide }, bytes: SourceBytes, is_virt: bool, start_column: usize) !u16 {
+    if (bytes.slice.len == 0) {
         return error.InvalidAccelerator;
     }
 
-    if (str[0] == '^') {
-        if (str.len == 1) return error.InvalidControlCharacter;
-        // TODO: This should be handled differently if the code page is not 1252
-        const c = str[1];
-        const codepoint = windows1252.toCodepoint(c);
-        switch (codepoint) {
+    var buf = AcceleratorKeyCodepoints{};
+
+    const T = if (literal_type == .ascii) u8 else u16;
+    std.debug.assert(bytes.slice.len >= 2); // must at least have 2 double quote chars
+
+    var source = bytes.slice;
+    if (literal_type == .wide) source = source[1..]; // remove L prefix
+    source = source[1..(source.len - 1)]; // remove start and end "
+
+    const State = enum {
+        normal,
+        quote,
+        newline,
+        escaped,
+        escaped_cr,
+        escaped_newlines,
+        escaped_octal,
+        escaped_hex,
+    };
+
+    var column: usize = start_column + (if (literal_type == .wide) 2 else 1); // The starting " or L" is included
+    var state: State = .normal;
+    var string_escape_n: T = 0;
+    var string_escape_i: switch (literal_type) {
+        .ascii => std.math.IntFittingRange(0, 3),
+        .wide => std.math.IntFittingRange(0, 7),
+    } = 0;
+    var index: usize = 0;
+    while (bytes.code_page.codepointAt(index, source)) |codepoint| : (index += codepoint.byte_len) {
+        const c = codepoint.value;
+        var backtrack = false;
+        defer {
+            if (backtrack) {
+                index -= codepoint.byte_len;
+            } else {
+                if (c == '\t') {
+                    column += literals.columnsUntilTabStop(column, 8);
+                } else {
+                    column += 1;
+                }
+            }
+        }
+        switch (state) {
+            .normal => switch (c) {
+                '\\' => state = .escaped,
+                '"' => state = .quote,
+                '\r' => {},
+                '\n' => state = .newline,
+                '\t' => {
+                    var space_i: usize = 0;
+                    const cols = literals.columnsUntilTabStop(column, 8);
+                    while (space_i < cols) : (space_i += 1) {
+                        try buf.append(' ');
+                    }
+                },
+                else => switch (literal_type) {
+                    .ascii => {
+                        if (c == Codepoint.invalid) {
+                            try buf.append(0xFFFD);
+                        } else {
+                            try buf.append(c);
+                        }
+                    },
+                    .wide => {
+                        if (c == Codepoint.invalid) {
+                            try buf.append(0xFFFD);
+                        } else {
+                            try buf.append(c);
+                        }
+                        // if (c == Codepoint.invalid) {
+                        //     try buf.append('�');
+                        // } else if (c < 0x10000) {
+                        //     try buf.append(@intCast(u16, c));
+                        // } else {
+                        //     const high = @intCast(u16, (c - 0x10000) >> 10) + 0xD800;
+                        //     try buf.append(high);
+                        //     const low = @intCast(u16, c & 0x3FF) + 0xDC00;
+                        //     try buf.append(low);
+                        // }
+                    },
+                },
+            },
+            .quote => switch (c) {
+                '"' => {
+                    // "" => "
+                    try buf.append('"');
+                    state = .normal;
+                },
+                else => unreachable, // this is a bug in the lexer
+            },
+            .newline => switch (c) {
+                '\r', ' ', '\t', '\n', '\x0b', '\x0c', '\xa0' => {},
+                else => {
+                    try buf.append(' ');
+                    try buf.append('\n');
+                    // backtrack so that we handle the current char properly
+                    backtrack = true;
+                    state = .normal;
+                },
+            },
+            .escaped => switch (c) {
+                '\r' => state = .escaped_cr,
+                '\n' => state = .escaped_newlines,
+                '0'...'7' => {
+                    string_escape_n = std.fmt.charToDigit(@intCast(u8, c), 8) catch unreachable;
+                    string_escape_i = 1;
+                    state = .escaped_octal;
+                },
+                'x', 'X' => {
+                    string_escape_n = 0;
+                    string_escape_i = 0;
+                    state = .escaped_hex;
+                },
+                else => {
+                    switch (c) {
+                        'a', 'A' => try buf.append('\x08'), // might be a bug in RC, but matches its behavior
+                        'n' => try buf.append('\n'),
+                        'r' => try buf.append('\r'),
+                        't', 'T' => try buf.append('\t'),
+                        '\\' => try buf.append('\\'),
+                        '"' => {
+                            // \" is a special case that doesn't get the \ included,
+                            backtrack = true;
+                        },
+                        else => switch (literal_type) {
+                            .wide => {}, // invalid escape sequences are skipped in wide strings
+                            .ascii => {
+                                try buf.append('\\');
+                                // backtrack so that we handle the current char properly
+                                backtrack = true;
+                            },
+                        },
+                    }
+                    state = .normal;
+                },
+            },
+            .escaped_cr => switch (c) {
+                '\r' => {},
+                '\n' => state = .escaped_newlines,
+                else => {
+                    try buf.append('\\');
+                    // backtrack so that we handle the current char properly
+                    backtrack = true;
+                    state = .normal;
+                },
+            },
+            .escaped_newlines => switch (c) {
+                '\r', '\n', '\t', ' ', '\x0b', '\x0c', '\xa0' => {},
+                else => {
+                    // backtrack so that we handle the current char properly
+                    backtrack = true;
+                    state = .normal;
+                },
+            },
+            .escaped_octal => switch (c) {
+                '0'...'7' => {
+                    string_escape_n *%= 8;
+                    string_escape_n +%= std.fmt.charToDigit(@intCast(u8, c), 8) catch unreachable;
+                    string_escape_i += 1;
+                    if ((literal_type == .ascii and string_escape_i == 3) or (literal_type == .wide and string_escape_i == 7)) {
+                        // 0 acts as a terminator essentially
+                        if (string_escape_n == 0) {
+                            state = .normal;
+                            break;
+                        }
+                        try buf.appendFromEscape(T, string_escape_n);
+                        state = .normal;
+                    }
+                },
+                else => {
+                    // 0 acts as a terminator essentially
+                    if (string_escape_n == 0) {
+                        state = .normal;
+                        break;
+                    }
+                    // write out whatever byte we have parsed so far
+                    try buf.appendFromEscape(T, string_escape_n);
+                    // backtrack so that we handle the current char properly
+                    backtrack = true;
+                    state = .normal;
+                },
+            },
+            .escaped_hex => switch (c) {
+                '0'...'9', 'a'...'f', 'A'...'F' => {
+                    string_escape_n *= 16;
+                    string_escape_n += std.fmt.charToDigit(@intCast(u8, c), 16) catch unreachable;
+                    string_escape_i += 1;
+                    if ((literal_type == .ascii and string_escape_i == 2) or (literal_type == .wide and string_escape_i == 4)) {
+                        // 0 acts as a terminator essentially
+                        if (string_escape_n == 0) {
+                            state = .normal;
+                            break;
+                        }
+                        try buf.appendFromEscape(T, string_escape_n);
+                        state = .normal;
+                    }
+                },
+                else => {
+                    // 0 acts as a terminator essentially
+                    if (string_escape_n == 0) {
+                        state = .normal;
+                        break;
+                    }
+                    // write out whatever byte we have parsed so far
+                    // (even with 0 actual digits, \x alone parses to 0)
+                    try buf.appendFromEscape(T, string_escape_n);
+                    // backtrack so that we handle the current char properly
+                    backtrack = true;
+                    state = .normal;
+                },
+            },
+        }
+    }
+
+    switch (state) {
+        .normal, .escaped_newlines => {},
+        .newline => {
+            try buf.append(' ');
+            try buf.append('\n');
+        },
+        .escaped, .escaped_cr => try buf.append('\\'),
+        .escaped_octal, .escaped_hex => if (string_escape_n != 0) try buf.append(string_escape_n),
+        .quote => unreachable, // this is a bug in the lexer
+    }
+
+    if (buf.codepoints.len == 0) return error.InvalidAccelerator;
+
+    const first_codepoint = buf.codepoints[0];
+    if (first_codepoint == '^') {
+        if (buf.codepoints.len == 1) return error.InvalidControlCharacter;
+        const c = buf.codepoints[1];
+        if (c >= 0x10000) return error.ControlCharacterOutOfRange;
+        switch (c) {
             '^' => return '^', // special case
-            'a'...'z', 'A'...'Z' => return std.ascii.toLower(c) - 'a' + 1,
-            // For some reason the Windows-1252 characters that have codepoints less
-            // than 0x0200 but greater than 0xFF get converted like so when used in a
-            // ^<char> sequence.
-            // TODO: Understand this better?
-            'ƒ', 'Š', 'Œ', 'Ž', 'š', 'œ', 'ž', 'Ÿ' => return codepoint - 0x40,
+            'a'...'z', 'A'...'Z' => return std.ascii.toUpper(@intCast(u8, c)) - 0x40,
+            // Note: The Windows RC compiler allows more than just A-Z, but what it allows
+            //       seems to be tied to some sort of Unicode-aware 'is character' function or something.
+            //       The full list of codepoints that trigger an out-of-range error can be found here:
+            //       https://gist.github.com/squeek502/2e9d0a4728a83eed074ad9785a209fd0
+            //       For codepoints >= 0x80 that don't trigger the error, the Windows RC compiler takes the
+            //       codepoint and does the `- 0x40` transformation as if it were A-Z which couldn't lead
+            //       to anything useable, so there's no point in emulating that behavior--erroring for
+            //       all non-[a-zA-Z] makes much more sense and is what was probably intended by the
+            //       Windows RC compiler.
             else => return error.ControlCharacterOutOfRange,
         }
     }
 
-    // TODO: This should be handled differently if the code page is not 1252 (see test case)
-    var result: u16 = windows1252.toCodepoint(str[0]);
-    if (str.len == 2) {
+    var result: u32 = initial_value: {
+        if (first_codepoint >= 0x10000) {
+            if (buf.codepoints.len > 1) return error.InvalidAccelerator;
+            // No idea why it works this way, but this seems to match the Windows RC
+            // behavior for codepoints >= 0x10000
+            const low = @intCast(u16, first_codepoint & 0x3FF) + 0xDC00;
+            const extra = (first_codepoint - 0x10000) / 0x400;
+            break :initial_value low + extra * 0x100;
+        } else {
+            break :initial_value first_codepoint;
+        }
+    };
+    const second_codepoint: ?u21 = if (buf.codepoints.len == 2) buf.codepoints[1] else null;
+    if (second_codepoint != null) {
+        if (second_codepoint.? >= 0x10000) return error.InvalidAccelerator;
         result <<= 8;
-        result += windows1252.toCodepoint(str[1]);
+        result += second_codepoint.?;
     } else if (is_virt) {
         switch (result) {
             'a'...'z' => result -= 0x20, // toUpper
             else => {},
         }
     }
-    return result;
+    return @truncate(u16, result);
 }
 
 test "accelerator keys" {
-    try std.testing.expectEqual(@as(u16, 1), try parseAcceleratorKeyString("^a", false));
-    try std.testing.expectEqual(@as(u16, 1), try parseAcceleratorKeyString("^A", false));
-    try std.testing.expectEqual(@as(u16, 26), try parseAcceleratorKeyString("^Z", false));
-    try std.testing.expectEqual(@as(u16, '^'), try parseAcceleratorKeyString("^^", false));
+    try std.testing.expectEqual(@as(u16, 1), try parseAcceleratorKeyString(
+        .ascii,
+        .{ .slice = "\"^a\"", .code_page = .windows1252 },
+        false,
+        0,
+    ));
+    try std.testing.expectEqual(@as(u16, 1), try parseAcceleratorKeyString(
+        .ascii,
+        .{ .slice = "\"^A\"", .code_page = .windows1252 },
+        false,
+        0,
+    ));
+    try std.testing.expectEqual(@as(u16, 26), try parseAcceleratorKeyString(
+        .ascii,
+        .{ .slice = "\"^Z\"", .code_page = .windows1252 },
+        false,
+        0,
+    ));
+    try std.testing.expectEqual(@as(u16, '^'), try parseAcceleratorKeyString(
+        .ascii,
+        .{ .slice = "\"^^\"", .code_page = .windows1252 },
+        false,
+        0,
+    ));
 
-    try std.testing.expectEqual(@as(u16, 'a'), try parseAcceleratorKeyString("a", false));
-    try std.testing.expectEqual(@as(u16, 0x6162), try parseAcceleratorKeyString("ab", false));
+    try std.testing.expectEqual(@as(u16, 'a'), try parseAcceleratorKeyString(
+        .ascii,
+        .{ .slice = "\"a\"", .code_page = .windows1252 },
+        false,
+        0,
+    ));
+    try std.testing.expectEqual(@as(u16, 0x6162), try parseAcceleratorKeyString(
+        .ascii,
+        .{ .slice = "\"ab\"", .code_page = .windows1252 },
+        false,
+        0,
+    ));
 
-    try std.testing.expectEqual(@as(u16, 'C'), try parseAcceleratorKeyString("c", true));
-    try std.testing.expectEqual(@as(u16, 0x6363), try parseAcceleratorKeyString("cc", true));
+    try std.testing.expectEqual(@as(u16, 'C'), try parseAcceleratorKeyString(
+        .ascii,
+        .{ .slice = "\"c\"", .code_page = .windows1252 },
+        true,
+        0,
+    ));
+    try std.testing.expectEqual(@as(u16, 0x6363), try parseAcceleratorKeyString(
+        .ascii,
+        .{ .slice = "\"cc\"", .code_page = .windows1252 },
+        true,
+        0,
+    ));
+
+    // \x00 or any escape that evaluates to zero acts as a terminator, everything past it
+    // is ignored
+    try std.testing.expectEqual(@as(u16, 'a'), try parseAcceleratorKeyString(
+        .ascii,
+        .{ .slice = "\"a\\0bcdef\"", .code_page = .windows1252 },
+        false,
+        0,
+    ));
 
     // \x80 is € in Windows-1252, which is Unicode codepoint 20AC
-    // This depends on the code page, though, with codepage 65001, \x80 is parsed as 0x80
-    try std.testing.expectEqual(@as(u16, 0x20AC), try parseAcceleratorKeyString("\x80", false));
-    try std.testing.expectEqual(@as(u16, 0xCCAC), try parseAcceleratorKeyString("\x80\x80", false));
+    try std.testing.expectEqual(@as(u16, 0x20AC), try parseAcceleratorKeyString(
+        .ascii,
+        .{ .slice = "\"\x80\"", .code_page = .windows1252 },
+        false,
+        0,
+    ));
+    // This depends on the code page, though, with codepage 65001, \x80
+    // on its own is invalid UTF-8 so it gets converted to the replacement character
+    try std.testing.expectEqual(@as(u16, 0xFFFD), try parseAcceleratorKeyString(
+        .ascii,
+        .{ .slice = "\"\x80\"", .code_page = .utf8 },
+        false,
+        0,
+    ));
+    try std.testing.expectEqual(@as(u16, 0xCCAC), try parseAcceleratorKeyString(
+        .ascii,
+        .{ .slice = "\"\x80\x80\"", .code_page = .windows1252 },
+        false,
+        0,
+    ));
+    // This also behaves the same with escaped characters
+    try std.testing.expectEqual(@as(u16, 0x20AC), try parseAcceleratorKeyString(
+        .ascii,
+        .{ .slice = "\"\\x80\"", .code_page = .windows1252 },
+        false,
+        0,
+    ));
+    // Even with utf8 code page
+    try std.testing.expectEqual(@as(u16, 0x20AC), try parseAcceleratorKeyString(
+        .ascii,
+        .{ .slice = "\"\\x80\"", .code_page = .utf8 },
+        false,
+        0,
+    ));
+    try std.testing.expectEqual(@as(u16, 0xCCAC), try parseAcceleratorKeyString(
+        .ascii,
+        .{ .slice = "\"\\x80\\x80\"", .code_page = .windows1252 },
+        false,
+        0,
+    ));
+    // Wide string with the actual characters behaves like the ASCII string version
+    try std.testing.expectEqual(@as(u16, 0xCCAC), try parseAcceleratorKeyString(
+        .wide,
+        .{ .slice = "L\"\x80\x80\"", .code_page = .windows1252 },
+        false,
+        0,
+    ));
+    // But wide string with escapes behaves differently
+    try std.testing.expectEqual(@as(u16, 0x8080), try parseAcceleratorKeyString(
+        .wide,
+        .{ .slice = "L\"\\x80\\x80\"", .code_page = .windows1252 },
+        false,
+        0,
+    ));
+    // and invalid escapes within wide strings get skipped
+    try std.testing.expectEqual(@as(u16, 'z'), try parseAcceleratorKeyString(
+        .wide,
+        .{ .slice = "L\"\\Hz\"", .code_page = .windows1252 },
+        false,
+        0,
+    ));
 
-    // \x83 is ƒ in Windows-1252, which is Unicode codepoint 0192; 0x0192 - 0x40 = 0x0152
-    try std.testing.expectEqual(@as(u16, 0x0152), try parseAcceleratorKeyString("^\x83", false));
+    // any non-A-Z codepoints are illegal
+    try std.testing.expectError(error.ControlCharacterOutOfRange, parseAcceleratorKeyString(
+        .ascii,
+        .{ .slice = "\"^\x83\"", .code_page = .windows1252 },
+        false,
+        0,
+    ));
+    try std.testing.expectError(error.ControlCharacterOutOfRange, parseAcceleratorKeyString(
+        .ascii,
+        .{ .slice = "\"^1\"", .code_page = .windows1252 },
+        false,
+        0,
+    ));
+    try std.testing.expectError(error.InvalidControlCharacter, parseAcceleratorKeyString(
+        .ascii,
+        .{ .slice = "\"^\"", .code_page = .windows1252 },
+        false,
+        0,
+    ));
+    try std.testing.expectError(error.InvalidAccelerator, parseAcceleratorKeyString(
+        .ascii,
+        .{ .slice = "\"\"", .code_page = .windows1252 },
+        false,
+        0,
+    ));
+    try std.testing.expectError(error.InvalidAccelerator, parseAcceleratorKeyString(
+        .ascii,
+        .{ .slice = "\"hello\"", .code_page = .windows1252 },
+        false,
+        0,
+    ));
+    try std.testing.expectError(error.ControlCharacterOutOfRange, parseAcceleratorKeyString(
+        .ascii,
+        .{ .slice = "\"^\x80\"", .code_page = .windows1252 },
+        false,
+        0,
+    ));
 
-    try std.testing.expectError(error.ControlCharacterOutOfRange, parseAcceleratorKeyString("^1", false));
-    try std.testing.expectError(error.InvalidControlCharacter, parseAcceleratorKeyString("^", false));
-    try std.testing.expectError(error.InvalidAccelerator, parseAcceleratorKeyString("", false));
-    try std.testing.expectError(error.InvalidAccelerator, parseAcceleratorKeyString("hello", false));
-    try std.testing.expectError(error.ControlCharacterOutOfRange, parseAcceleratorKeyString("^\x80", false));
+    // Invalid UTF-8 gets converted to 0xFFFD, multiple invalids get shifted and added together
+    // The behavior is the same for ascii and wide strings
+    try std.testing.expectEqual(@as(u16, 0xFCFD), try parseAcceleratorKeyString(
+        .ascii,
+        .{ .slice = "\"\x80\x80\"", .code_page = .utf8 },
+        false,
+        0,
+    ));
+    try std.testing.expectEqual(@as(u16, 0xFCFD), try parseAcceleratorKeyString(
+        .wide,
+        .{ .slice = "L\"\x80\x80\"", .code_page = .utf8 },
+        false,
+        0,
+    ));
+
+    // Codepoints >= 0x10000
+    try std.testing.expectEqual(@as(u16, 0xDD00), try parseAcceleratorKeyString(
+        .ascii,
+        .{ .slice = "\"\xF0\x90\x84\x80\"", .code_page = .utf8 },
+        false,
+        0,
+    ));
+    try std.testing.expectEqual(@as(u16, 0xDD00), try parseAcceleratorKeyString(
+        .wide,
+        .{ .slice = "L\"\xF0\x90\x84\x80\"", .code_page = .utf8 },
+        false,
+        0,
+    ));
+    try std.testing.expectEqual(@as(u16, 0x9C01), try parseAcceleratorKeyString(
+        .ascii,
+        .{ .slice = "\"\xF4\x80\x80\x81\"", .code_page = .utf8 },
+        false,
+        0,
+    ));
+    // anything before or after a codepoint >= 0x10000 causes an error
+    try std.testing.expectError(error.InvalidAccelerator, parseAcceleratorKeyString(
+        .ascii,
+        .{ .slice = "\"a\xF0\x90\x80\x80\"", .code_page = .utf8 },
+        false,
+        0,
+    ));
+    try std.testing.expectError(error.InvalidAccelerator, parseAcceleratorKeyString(
+        .ascii,
+        .{ .slice = "\"\xF0\x90\x80\x80a\"", .code_page = .utf8 },
+        false,
+        0,
+    ));
 }

@@ -41,9 +41,8 @@ test "windows-1252 mappings" {
         _ = std.unicode.utf8Encode(codepoint, source_buffer.items[start_index..]) catch unreachable;
         try source_writer.writeAll("\"}\n");
 
-        // With 9 common resource attributes, the total number of K-permutations is 986,410, so by
-        // batching large amounts of permutations together we hugely reduce the amount of time it takes this
-        // test to run, since the bottleneck is the creation of each `.rc` and `.res` file.
+        // 0x10FFFF is a lot of codepoints, so breaking them into large batches helps
+        // reduce the amount of time this test takes.
         if (i % 10000 == 0 or i == max_codepoint) {
             std.debug.print("{}\n", .{i});
             const source = source_buffer.items;

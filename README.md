@@ -52,6 +52,8 @@ The plan is to use fuzz testing with the `rc` tool as an oracle to ensure that `
     - The potentially unexpected behavior of the BOM bytes missing from the compiled `.res` seems worth avoiding (e.g. a string literal with the contents `"<U+FEFF>"` would be compiled as if it were an empty string).
 - In `resinator`, the private use character `<U+E000>` is always illegal anywhere in a `.rc` file.
   + This behaves similarly to the byte order mark (it gets skipped/ignored wherever it is), so the same reasoning applies (although `<U+E000>` seems to avoid causing errors like the BOM does).
+- In `resinator`, control characters specified as a quoted string with a `^` in an `ACCELERATORS` resource (e.g. `"^C"`) must be in the range of `A-Z` (case insensitive).
+  + The Windows RC compiler's error hints that this is the intended behavior (`control character out of range [^A - ^Z]`), but it actually allows for a large number of codepoints >= 0x80 to be used. Of those allowed, it treats them as if they were `A-Z` and subtracts `0x40` from the codepoint to convert it to a 'control character', but for arbitrary non-ASCII codepoints that just leads to garbage. The codepoints that are allowed may be based on some sort of Unicode-aware 'is character' function or something, but I couldn't really find a pattern to it. The full list of codepoints that trigger the error can be found [here](https://gist.github.com/squeek502/2e9d0a4728a83eed074ad9785a209fd0).
 
 ### Unavoidable divergences from the MSVC++ `rc` tool
 
