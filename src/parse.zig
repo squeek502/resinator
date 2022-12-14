@@ -389,6 +389,95 @@ pub const Parser = struct {
                 };
                 return &node.base;
             },
+            .dialog, .dialogex => {
+                // common resource attributes must all be contiguous and come before optional-statements
+                const common_resource_attributes = try self.parseCommonResourceAttributesLookahead();
+
+                const x = try self.parseExpression(false);
+                if (!x.isNumberExpression()) {
+                    return self.addErrorDetailsAndFail(.{
+                        .err = .expected_something_else,
+                        .token = self.state.token,
+                        .extra = .{ .expected_types = .{
+                            .number = true,
+                            .number_expression = true,
+                        } },
+                    });
+                }
+                try self.nextToken(.normal);
+                try self.check(.comma);
+
+                const y = try self.parseExpression(false);
+                if (!y.isNumberExpression()) {
+                    return self.addErrorDetailsAndFail(.{
+                        .err = .expected_something_else,
+                        .token = self.state.token,
+                        .extra = .{ .expected_types = .{
+                            .number = true,
+                            .number_expression = true,
+                        } },
+                    });
+                }
+                try self.nextToken(.normal);
+                try self.check(.comma);
+
+                const width = try self.parseExpression(false);
+                if (!width.isNumberExpression()) {
+                    return self.addErrorDetailsAndFail(.{
+                        .err = .expected_something_else,
+                        .token = self.state.token,
+                        .extra = .{ .expected_types = .{
+                            .number = true,
+                            .number_expression = true,
+                        } },
+                    });
+                }
+                try self.nextToken(.normal);
+                try self.check(.comma);
+
+                const height = try self.parseExpression(false);
+                if (!height.isNumberExpression()) {
+                    return self.addErrorDetailsAndFail(.{
+                        .err = .expected_something_else,
+                        .token = self.state.token,
+                        .extra = .{ .expected_types = .{
+                            .number = true,
+                            .number_expression = true,
+                        } },
+                    });
+                }
+                try self.nextToken(.normal);
+
+                // TODO: optional help id if DIALOGEX
+
+                const optional_statements = try self.parseOptionalStatements();
+
+                const begin_token = self.state.token;
+                try self.check(.begin);
+
+                // TODO: controls
+                try self.nextToken(.normal);
+
+                const end_token = self.state.token;
+                try self.check(.end);
+
+                const node = try self.state.arena.create(Node.Dialog);
+                node.* = .{
+                    .id = id_token,
+                    .type = type_token,
+                    .common_resource_attributes = common_resource_attributes,
+                    .x = x,
+                    .y = y,
+                    .width = width,
+                    .height = height,
+                    .help_id = null,
+                    .optional_statements = optional_statements,
+                    .begin_token = begin_token,
+                    .controls = &[_]*Node{},
+                    .end_token = end_token,
+                };
+                return &node.base;
+            },
             .stringtable => unreachable,
             // Just try everything as a 'generic' resource (raw data or external file)
             // TODO: More fine-grained switch cases as necessary
@@ -1028,6 +1117,32 @@ test "accelerators" {
         \\   binary_expression +
         \\    literal -1
         \\    literal 1
+        \\ }
+        \\
+    );
+}
+
+test "dialogs" {
+    try testParse("1 DIALOG FIXED 1, 2, 3, (3 - 1) LANGUAGE 1, 2 {}",
+        \\root
+        \\ dialog 1 DIALOG [1 common_resource_attributes]
+        \\  x:
+        \\   literal 1
+        \\  y:
+        \\   literal 2
+        \\  width:
+        \\   literal 3
+        \\  height:
+        \\   grouped_expression
+        \\   (
+        \\    binary_expression -
+        \\     literal 3
+        \\     literal 1
+        \\   )
+        \\  language_statement LANGUAGE
+        \\   literal 1
+        \\   literal 2
+        \\ {
         \\ }
         \\
     );

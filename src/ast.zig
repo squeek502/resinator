@@ -114,6 +114,7 @@ pub const Node = struct {
         grouped_expression,
         accelerators,
         accelerator,
+        dialog,
         string_table,
         string_table_string,
         language_statement,
@@ -130,6 +131,7 @@ pub const Node = struct {
                 .grouped_expression => GroupedExpression,
                 .accelerators => Accelerators,
                 .accelerator => Accelerator,
+                .dialog => Dialog,
                 .string_table => StringTable,
                 .string_table_string => StringTableString,
                 .language_statement => LanguageStatement,
@@ -202,6 +204,22 @@ pub const Node = struct {
         event: *Node,
         idvalue: *Node,
         type_and_options: []Token,
+    };
+
+    pub const Dialog = struct {
+        base: Node = .{ .id = .dialog },
+        id: Token,
+        type: Token,
+        common_resource_attributes: []Token,
+        x: *Node,
+        y: *Node,
+        width: *Node,
+        height: *Node,
+        help_id: ?*Node,
+        optional_statements: []*Node,
+        begin_token: Token,
+        controls: []*Node,
+        end_token: Token,
     };
 
     pub const StringTable = struct {
@@ -316,6 +334,10 @@ pub const Node = struct {
                 const casted = @fieldParentPtr(Node.Accelerator, "base", node);
                 return casted.event.getFirstToken();
             },
+            .dialog => {
+                const casted = @fieldParentPtr(Node.Dialog, "base", node);
+                return casted.id;
+            },
             .string_table => {
                 const casted = @fieldParentPtr(Node.StringTable, "base", node);
                 return casted.type;
@@ -415,6 +437,27 @@ pub const Node = struct {
                 try writer.writeAll("\n");
                 try accelerator.event.dump(tree, writer, indent + 1);
                 try accelerator.idvalue.dump(tree, writer, indent + 1);
+            },
+            .dialog => {
+                const dialog = @fieldParentPtr(Node.Dialog, "base", node);
+                try writer.print(" {s} {s} [{d} common_resource_attributes]\n", .{ dialog.id.slice(tree.source), dialog.type.slice(tree.source), dialog.common_resource_attributes.len });
+                inline for (.{ "x", "y", "width", "height" }) |arg| {
+                    try writer.writeByteNTimes(' ', indent + 1);
+                    try writer.writeAll(arg ++ ":\n");
+                    try @field(dialog, arg).dump(tree, writer, indent + 2);
+                }
+                for (dialog.optional_statements) |statement| {
+                    try statement.dump(tree, writer, indent + 1);
+                }
+                try writer.writeByteNTimes(' ', indent);
+                try writer.writeAll(dialog.begin_token.slice(tree.source));
+                try writer.writeAll("\n");
+                for (dialog.controls) |control| {
+                    try control.dump(tree, writer, indent + 1);
+                }
+                try writer.writeByteNTimes(' ', indent);
+                try writer.writeAll(dialog.end_token.slice(tree.source));
+                try writer.writeAll("\n");
             },
             .string_table => {
                 const string_table = @fieldParentPtr(Node.StringTable, "base", node);
