@@ -448,7 +448,24 @@ pub const Parser = struct {
                 }
                 try self.nextToken(.normal);
 
-                // TODO: optional help id if DIALOGEX
+                const help_id: ?*Node = help_id: {
+                    if (resource == .dialogex and self.state.token.id == .comma) {
+                        const expression = try self.parseExpression(false);
+                        if (!expression.isNumberExpression()) {
+                            return self.addErrorDetailsAndFail(.{
+                                .err = .expected_something_else,
+                                .token = self.state.token,
+                                .extra = .{ .expected_types = .{
+                                    .number = true,
+                                    .number_expression = true,
+                                } },
+                            });
+                        }
+                        try self.nextToken(.normal);
+                        break :help_id expression;
+                    }
+                    break :help_id null;
+                };
 
                 const optional_statements = try self.parseOptionalStatements();
 
@@ -470,7 +487,7 @@ pub const Parser = struct {
                     .y = y,
                     .width = width,
                     .height = height,
-                    .help_id = null,
+                    .help_id = help_id,
                     .optional_statements = optional_statements,
                     .begin_token = begin_token,
                     .controls = &[_]*Node{},
@@ -1142,6 +1159,23 @@ test "dialogs" {
         \\  language_statement LANGUAGE
         \\   literal 1
         \\   literal 2
+        \\ {
+        \\ }
+        \\
+    );
+    try testParse("1 DIALOGEX 1, 2, 3, 4, 5 {}",
+        \\root
+        \\ dialog 1 DIALOGEX [0 common_resource_attributes]
+        \\  x:
+        \\   literal 1
+        \\  y:
+        \\   literal 2
+        \\  width:
+        \\   literal 3
+        \\  height:
+        \\   literal 4
+        \\  help_id:
+        \\   literal 5
         \\ {
         \\ }
         \\

@@ -446,6 +446,11 @@ pub const Node = struct {
                     try writer.writeAll(arg ++ ":\n");
                     try @field(dialog, arg).dump(tree, writer, indent + 2);
                 }
+                if (dialog.help_id) |help_id| {
+                    try writer.writeByteNTimes(' ', indent + 1);
+                    try writer.writeAll("help_id:\n");
+                    try help_id.dump(tree, writer, indent + 2);
+                }
                 for (dialog.optional_statements) |statement| {
                     try statement.dump(tree, writer, indent + 1);
                 }
