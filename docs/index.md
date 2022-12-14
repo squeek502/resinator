@@ -83,3 +83,36 @@ At the end of the .res, a single `RT_FONTDIR` resource with the name `FONTDIR` i
   + `"^^"` -> `^`
   + `"ab"` -> `ba`
   + `"aba"` (any > 2 char long string) -> invalid accelerator
+
+## `DIALOG` and `DIALOGEX` resources
+
+- [The Old New Thing: `DIALOG`](https://devblogs.microsoft.com/oldnewthing/20040621-00/?p=38793)
+- [The Old New Thing: `DIALOGEX`](https://devblogs.microsoft.com/oldnewthing/20040623-00/?p=38753)
+
+### `DIALOGEX`
+
+| Size/Type | Description |
+|-----------|--------|
+| `u16` | Dialog version (1 for `DIALOGEX`) |
+| `u16` | `0xFFFF` for `DIALOGEX` |
+| `u32` | Help ID |
+| `u32` | Extended style |
+| `u32` | Style |
+| `u16` | Number of controls |
+| `u16` | X |
+| `u16` | Y |
+| `u16` | Width |
+| `u16` | Height |
+| `NameOrOrdinal` | Menu |
+| `NameOrOrdinal` | Dialog class |
+| Null-teriminated UTF-16 String | Title |
+
+- Multiple of each optional statement is allowed, and the last one specified takes precedence.
+  + There is a miscompilation or weird intermixing when an optional statement that can be a stirng or ordinal (e.g. `CLASS`, `MENU`) is specified first as an ordinal and then as a string. The `.res` will write it as an ordinal but somehow intermix something about the string version into the value. If the ordinal version is last, then there is no miscompilation.
+
+#### `FONT`
+
+- If a `FONT` optional statement is present, `DS_SETFONT` (`0x40`) is implied
+- `italic` setting of a `FONT` statement is a number evaluated as a `u16` and then interpretted as a boolean (so `65536` overflows to 0 which is interpretted as `FALSE`, and so is `65536L` [but `65537` overflows to 1 which is `TRUE`]).
+- `charset` setting of a `FONT` statement is truncated to a `u8`.
+- The comma between `point_size` and `typeface` parameters of `FONT` is optional (and can also be > 1), e.g. `FONT 1 "name"` is valid and so is `FONT 1,, ,, "name"`. The commas between the rest of the parameters are required and there can only be exactly 1 between those parameters.

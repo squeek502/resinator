@@ -104,6 +104,10 @@ pub const Token = struct {
 
         return source[line_start..line_end];
     }
+
+    pub fn isStringLiteral(token: Token) bool {
+        return token.id == .quoted_ascii_string or token.id == .quoted_wide_string;
+    }
 };
 
 pub const LexError = error{

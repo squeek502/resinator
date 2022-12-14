@@ -125,27 +125,73 @@ pub const Parser = struct {
     /// Expects the current token to be a possible optional statement keyword.
     /// After return, the current token will be the first token after all optional statements.
     /// The returned slice is allocated by the parser's arena
-    fn parseOptionalStatements(self: *Self) ![]*Node {
+    fn parseOptionalStatements(self: *Self, resource: Resource) ![]*Node {
         var optional_statements = std.ArrayListUnmanaged(*Node){};
         while (self.state.token.id == .literal) {
             const slice = self.state.token.slice(self.lexer.buffer);
-            const optional_statement_type = rc.OptionalStatements.map.get(slice) orelse break;
+            const optional_statement_type = rc.OptionalStatements.map.get(slice) orelse switch (resource) {
+                .dialog, .dialogex => rc.OptionalStatements.dialog_map.get(slice) orelse break,
+                else => break,
+            };
             switch (optional_statement_type) {
                 .language => {
                     const language = try self.parseLanguageStatement();
                     try optional_statements.append(self.state.arena, language);
                     try self.nextToken(.normal);
                 },
-                .version, .characteristics => {
+                // Number only
+                .version, .characteristics, .style, .exstyle => {
                     const identifier = self.state.token;
                     const value = try self.parseExpression(false);
-                    if (!value.isNumberExpression()) {
+                    try self.checkNumberExpression(value);
+                    const node = try self.state.arena.create(Node.SimpleStatement);
+                    node.* = .{
+                        .identifier = identifier,
+                        .value = value,
+                    };
+                    try optional_statements.append(self.state.arena, &node.base);
+                    try self.nextToken(.normal);
+                },
+                // String only
+                .caption => {
+                    const identifier = self.state.token;
+                    try self.nextToken(.normal);
+                    const value = self.state.token;
+                    if (!value.isStringLiteral()) {
+                        return self.addErrorDetailsAndFail(ErrorDetails{
+                            .err = .expected_something_else,
+                            .token = value,
+                            .extra = .{ .expected_types = .{
+                                .string_literal = true,
+                            } },
+                        });
+                    }
+                    // TODO: Wrapping this in a Node.Literal is superfluous but necessary
+                    //       to put it in a SimpleStatement
+                    const value_node = try self.state.arena.create(Node.Literal);
+                    value_node.* = .{
+                        .token = value,
+                    };
+                    const node = try self.state.arena.create(Node.SimpleStatement);
+                    node.* = .{
+                        .identifier = identifier,
+                        .value = &value_node.base,
+                    };
+                    try optional_statements.append(self.state.arena, &node.base);
+                    try self.nextToken(.normal);
+                },
+                // String or number
+                .class, .menu => {
+                    const identifier = self.state.token;
+                    const value = try self.parseExpression(false);
+                    if (!value.isNumberExpression() and !value.isStringLiteral()) {
                         return self.addErrorDetailsAndFail(ErrorDetails{
                             .err = .expected_something_else,
                             .token = value.getFirstToken(),
                             .extra = .{ .expected_types = .{
                                 .number = true,
                                 .number_expression = true,
+                                .string_literal = true,
                             } },
                         });
                     }
@@ -153,6 +199,82 @@ pub const Parser = struct {
                     node.* = .{
                         .identifier = identifier,
                         .value = value,
+                    };
+                    try optional_statements.append(self.state.arena, &node.base);
+                    try self.nextToken(.normal);
+                },
+                .font => {
+                    const identifier = self.state.token;
+                    const point_size = try self.parseExpression(false);
+                    try self.checkNumberExpression(point_size);
+
+                    // The comma between point_size and typeface is both optional and
+                    // there can be any number of them
+                    while (true) {
+                        const maybe_comma = try self.lookaheadToken(.normal);
+                        if (maybe_comma.id != .comma) break;
+                        self.nextToken(.normal) catch unreachable;
+                    }
+
+                    try self.nextToken(.normal);
+                    const typeface = self.state.token;
+                    if (!typeface.isStringLiteral()) {
+                        return self.addErrorDetailsAndFail(ErrorDetails{
+                            .err = .expected_something_else,
+                            .token = typeface,
+                            .extra = .{ .expected_types = .{
+                                .string_literal = true,
+                            } },
+                        });
+                    }
+
+                    const ExSpecificValues = struct {
+                        weight: ?*Node = null,
+                        italic: ?*Node = null,
+                        char_set: ?*Node = null,
+                    };
+                    var ex_specific = ExSpecificValues{};
+                    ex_specific: {
+                        switch (resource) {
+                            .dialogex => {
+                                {
+                                    const maybe_comma = try self.lookaheadToken(.normal);
+                                    if (maybe_comma.id != .comma) break :ex_specific;
+                                    try self.nextToken(.normal);
+
+                                    ex_specific.weight = try self.parseExpression(false);
+                                    try self.checkNumberExpression(ex_specific.weight.?);
+                                }
+                                {
+                                    const maybe_comma = try self.lookaheadToken(.normal);
+                                    if (maybe_comma.id != .comma) break :ex_specific;
+                                    try self.nextToken(.normal);
+
+                                    ex_specific.italic = try self.parseExpression(false);
+                                    try self.checkNumberExpression(ex_specific.italic.?);
+                                }
+                                {
+                                    const maybe_comma = try self.lookaheadToken(.normal);
+                                    if (maybe_comma.id != .comma) break :ex_specific;
+                                    try self.nextToken(.normal);
+
+                                    ex_specific.char_set = try self.parseExpression(false);
+                                    try self.checkNumberExpression(ex_specific.char_set.?);
+                                }
+                            },
+                            .dialog => {},
+                            else => @panic("TODO non-DIALOG resource with FONT optional statement"),
+                        }
+                    }
+
+                    const node = try self.state.arena.create(Node.FontStatement);
+                    node.* = .{
+                        .identifier = identifier,
+                        .point_size = point_size,
+                        .typeface = typeface,
+                        .weight = ex_specific.weight,
+                        .italic = ex_specific.italic,
+                        .char_set = ex_specific.char_set,
                     };
                     try optional_statements.append(self.state.arena, &node.base);
                     try self.nextToken(.normal);
@@ -177,7 +299,7 @@ pub const Parser = struct {
                 try self.nextToken(.normal);
                 // common resource attributes must all be contiguous and come before optional-statements
                 const common_resource_attributes = try self.parseCommonResourceAttributes();
-                const optional_statements = try self.parseOptionalStatements();
+                const optional_statements = try self.parseOptionalStatements(.stringtable);
 
                 const begin_token = self.state.token;
                 try self.check(.begin);
@@ -302,7 +424,7 @@ pub const Parser = struct {
                 try self.nextToken(.normal);
                 // common resource attributes must all be contiguous and come before optional-statements
                 const common_resource_attributes = try self.parseCommonResourceAttributes();
-                const optional_statements = try self.parseOptionalStatements();
+                const optional_statements = try self.parseOptionalStatements(resource);
 
                 const begin_token = self.state.token;
                 try self.check(.begin);
@@ -394,80 +516,35 @@ pub const Parser = struct {
                 const common_resource_attributes = try self.parseCommonResourceAttributesLookahead();
 
                 const x = try self.parseExpression(false);
-                if (!x.isNumberExpression()) {
-                    return self.addErrorDetailsAndFail(.{
-                        .err = .expected_something_else,
-                        .token = self.state.token,
-                        .extra = .{ .expected_types = .{
-                            .number = true,
-                            .number_expression = true,
-                        } },
-                    });
-                }
+                try self.checkNumberExpression(x);
                 try self.nextToken(.normal);
                 try self.check(.comma);
 
                 const y = try self.parseExpression(false);
-                if (!y.isNumberExpression()) {
-                    return self.addErrorDetailsAndFail(.{
-                        .err = .expected_something_else,
-                        .token = self.state.token,
-                        .extra = .{ .expected_types = .{
-                            .number = true,
-                            .number_expression = true,
-                        } },
-                    });
-                }
+                try self.checkNumberExpression(y);
                 try self.nextToken(.normal);
                 try self.check(.comma);
 
                 const width = try self.parseExpression(false);
-                if (!width.isNumberExpression()) {
-                    return self.addErrorDetailsAndFail(.{
-                        .err = .expected_something_else,
-                        .token = self.state.token,
-                        .extra = .{ .expected_types = .{
-                            .number = true,
-                            .number_expression = true,
-                        } },
-                    });
-                }
+                try self.checkNumberExpression(width);
                 try self.nextToken(.normal);
                 try self.check(.comma);
 
                 const height = try self.parseExpression(false);
-                if (!height.isNumberExpression()) {
-                    return self.addErrorDetailsAndFail(.{
-                        .err = .expected_something_else,
-                        .token = self.state.token,
-                        .extra = .{ .expected_types = .{
-                            .number = true,
-                            .number_expression = true,
-                        } },
-                    });
-                }
+                try self.checkNumberExpression(height);
                 try self.nextToken(.normal);
 
                 const help_id: ?*Node = help_id: {
                     if (resource == .dialogex and self.state.token.id == .comma) {
                         const expression = try self.parseExpression(false);
-                        if (!expression.isNumberExpression()) {
-                            return self.addErrorDetailsAndFail(.{
-                                .err = .expected_something_else,
-                                .token = self.state.token,
-                                .extra = .{ .expected_types = .{
-                                    .number = true,
-                                    .number_expression = true,
-                                } },
-                            });
-                        }
+                        try self.checkNumberExpression(expression);
                         try self.nextToken(.normal);
                         break :help_id expression;
                     }
                     break :help_id null;
                 };
 
-                const optional_statements = try self.parseOptionalStatements();
+                const optional_statements = try self.parseOptionalStatements(resource);
 
                 const begin_token = self.state.token;
                 try self.check(.begin);
@@ -814,6 +891,19 @@ pub const Parser = struct {
                     .extra = .{ .expected = .literal },
                 });
             },
+        }
+    }
+
+    fn checkNumberExpression(self: *Self, expression: *Node) !void {
+        if (!expression.isNumberExpression()) {
+            return self.addErrorDetailsAndFail(ErrorDetails{
+                .err = .expected_something_else,
+                .token = expression.getFirstToken(),
+                .extra = .{ .expected_types = .{
+                    .number = true,
+                    .number_expression = true,
+                } },
+            });
         }
     }
 };
@@ -1176,6 +1266,87 @@ test "dialogs" {
         \\   literal 4
         \\  help_id:
         \\   literal 5
+        \\ {
+        \\ }
+        \\
+    );
+    try testParse("1 DIALOG 1, 2, 3, 4 FONT 1 \"hello\" {}",
+        \\root
+        \\ dialog 1 DIALOG [0 common_resource_attributes]
+        \\  x:
+        \\   literal 1
+        \\  y:
+        \\   literal 2
+        \\  width:
+        \\   literal 3
+        \\  height:
+        \\   literal 4
+        \\  font_statement FONT typeface: "hello"
+        \\   point_size:
+        \\    literal 1
+        \\ {
+        \\ }
+        \\
+    );
+    try testParse(
+        \\1 DIALOGEX FIXED DISCARDABLE 1, 2, 3, 4
+        \\STYLE 0x80000000L | 0x00800000L
+        \\CAPTION "Error!"
+        \\EXSTYLE 1
+        \\CLASS "hello1"
+        \\CLASS 2
+        \\MENU 2
+        \\MENU "1"
+        \\FONT 12 "first", 1001-1, 65537L, 257-2
+        \\FONT 8+2,, ,, "second", 0
+        \\{}
+    ,
+        \\root
+        \\ dialog 1 DIALOGEX [2 common_resource_attributes]
+        \\  x:
+        \\   literal 1
+        \\  y:
+        \\   literal 2
+        \\  width:
+        \\   literal 3
+        \\  height:
+        \\   literal 4
+        \\  simple_statement STYLE
+        \\   binary_expression |
+        \\    literal 0x80000000L
+        \\    literal 0x00800000L
+        \\  simple_statement CAPTION
+        \\   literal "Error!"
+        \\  simple_statement EXSTYLE
+        \\   literal 1
+        \\  simple_statement CLASS
+        \\   literal "hello1"
+        \\  simple_statement CLASS
+        \\   literal 2
+        \\  simple_statement MENU
+        \\   literal 2
+        \\  simple_statement MENU
+        \\   literal "1"
+        \\  font_statement FONT typeface: "first"
+        \\   point_size:
+        \\    literal 12
+        \\   weight:
+        \\    binary_expression -
+        \\     literal 1001
+        \\     literal 1
+        \\   italic:
+        \\    literal 65537L
+        \\   char_set:
+        \\    binary_expression -
+        \\     literal 257
+        \\     literal 2
+        \\  font_statement FONT typeface: "second"
+        \\   point_size:
+        \\    binary_expression +
+        \\     literal 8
+        \\     literal 2
+        \\   weight:
+        \\    literal 0
         \\ {
         \\ }
         \\

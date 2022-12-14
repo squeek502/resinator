@@ -118,6 +118,7 @@ pub const Node = struct {
         string_table,
         string_table_string,
         language_statement,
+        font_statement,
         simple_statement,
         invalid,
 
@@ -135,6 +136,7 @@ pub const Node = struct {
                 .string_table => StringTable,
                 .string_table_string => StringTableString,
                 .language_statement => LanguageStatement,
+                .font_statement => FontStatement,
                 .simple_statement => SimpleStatement,
                 .invalid => Invalid,
             };
@@ -247,6 +249,17 @@ pub const Node = struct {
         sublanguage_id: *Node,
     };
 
+    pub const FontStatement = struct {
+        base: Node = .{ .id = .font_statement },
+        /// The FONT token itself
+        identifier: Token,
+        point_size: *Node,
+        typeface: Token,
+        weight: ?*Node,
+        italic: ?*Node,
+        char_set: ?*Node,
+    };
+
     /// A statement with one value associated with it.
     /// Used for CAPTION, CHARACTERISTICS, CLASS, EXSTYLE, MENU, STYLE, VERSION
     pub const SimpleStatement = struct {
@@ -349,6 +362,10 @@ pub const Node = struct {
             .language_statement => {
                 const casted = @fieldParentPtr(Node.LanguageStatement, "base", node);
                 return casted.language_token;
+            },
+            .font_statement => {
+                const casted = @fieldParentPtr(Node.FontStatement, "base", node);
+                return casted.identifier;
             },
             .simple_statement => {
                 const casted = @fieldParentPtr(Node.SimpleStatement, "base", node);
@@ -492,6 +509,20 @@ pub const Node = struct {
                 try writer.print(" {s}\n", .{language.language_token.slice(tree.source)});
                 try language.primary_language_id.dump(tree, writer, indent + 1);
                 try language.sublanguage_id.dump(tree, writer, indent + 1);
+            },
+            .font_statement => {
+                const font = @fieldParentPtr(Node.FontStatement, "base", node);
+                try writer.print(" {s} typeface: {s}\n", .{ font.identifier.slice(tree.source), font.typeface.slice(tree.source) });
+                try writer.writeByteNTimes(' ', indent + 1);
+                try writer.writeAll("point_size:\n");
+                try font.point_size.dump(tree, writer, indent + 2);
+                inline for (.{ "weight", "italic", "char_set" }) |arg| {
+                    if (@field(font, arg)) |arg_node| {
+                        try writer.writeByteNTimes(' ', indent + 1);
+                        try writer.writeAll(arg ++ ":\n");
+                        try arg_node.dump(tree, writer, indent + 2);
+                    }
+                }
             },
             .simple_statement => {
                 const statement = @fieldParentPtr(Node.SimpleStatement, "base", node);

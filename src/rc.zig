@@ -109,15 +109,34 @@ pub const Resource = enum {
 };
 
 /// https://learn.microsoft.com/en-us/windows/win32/menurc/stringtable-resource#parameters
+/// https://learn.microsoft.com/en-us/windows/win32/menurc/dialog-resource#parameters
+/// https://learn.microsoft.com/en-us/windows/win32/menurc/dialogex-resource#parameters
 pub const OptionalStatements = enum {
     characteristics,
     language,
     version,
 
+    // DIALOG
+    caption,
+    class,
+    exstyle,
+    font,
+    menu,
+    style,
+
     pub const map = utils.ComptimeCaseInsensitiveStringMap(OptionalStatements, .{
         .{ "CHARACTERISTICS", .characteristics },
         .{ "LANGUAGE", .language },
         .{ "VERSION", .version },
+    });
+
+    pub const dialog_map = utils.ComptimeCaseInsensitiveStringMap(OptionalStatements, .{
+        .{ "CAPTION", .caption },
+        .{ "CLASS", .class },
+        .{ "EXSTYLE", .exstyle },
+        .{ "FONT", .font },
+        .{ "MENU", .menu },
+        .{ "STYLE", .style },
     });
 };
 
