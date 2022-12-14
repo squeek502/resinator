@@ -216,7 +216,8 @@ pub fn randomAlphanumExtendedBytes(allocator: Allocator, rand: std.rand.Random) 
     return buf;
 }
 
-/// Iterates all K-permutations of the given size `n` where k varies from (0..n).
+/// Iterates all K-permutations of the given size `n` where k varies from (0..n),
+/// or (0..max_k) if specified via `initMax`.
 /// e.g. for AllKPermutationsIterator(3) the returns from `next` will be (in this order):
 /// k=0 {  }
 /// k=1 { 0 } { 1 } { 2 }
@@ -227,14 +228,20 @@ pub fn AllKPermutationsIterator(comptime n: usize) type {
         buf: [n]usize,
         iterator: KPermutationsIterator,
         k: usize,
+        max_k: usize,
 
         const Self = @This();
 
         pub fn init() Self {
+            return initMax(n);
+        }
+
+        pub fn initMax(max_k: usize) Self {
             var self = Self{
                 .buf = undefined,
                 .iterator = undefined,
                 .k = 0,
+                .max_k = max_k,
             };
             self.resetBuf();
             return self;
@@ -262,7 +269,7 @@ pub fn AllKPermutationsIterator(comptime n: usize) type {
             if (self.iterator.next()) |perm| {
                 return perm;
             } else {
-                if (self.k == n) {
+                if (self.k == self.max_k) {
                     return null;
                 }
                 self.nextK();
@@ -365,6 +372,10 @@ fn swap(elements: []usize, a: usize, b: usize) void {
 }
 
 pub fn numAllKPermutations(n: usize) usize {
+    return numAllKPermutationsMax(n, n);
+}
+
+pub fn numAllKPermutationsMax(n: usize, max_k: usize) usize {
     // P(n, 0) = n!/(n-0)! = 1
     // P(n, 1) = n!/(n-1)! = choices
     // P(n, 2) = n!/(n-2)!
@@ -372,14 +383,23 @@ pub fn numAllKPermutations(n: usize) usize {
     // P(n, n) = n!
     var k: usize = 0;
     var num: usize = 0;
-    while (k <= n) : (k += 1) {
+    while (k <= max_k) : (k += 1) {
         num += numKPermutationsWithoutRepetition(n, k);
     }
     return num;
 }
 
 fn numKPermutationsWithoutRepetition(n: usize, k: usize) usize {
-    return factorial(n) / factorial(n - k);
+    if (n == k) return factorial(n);
+    if (k == 0) return 1;
+    // n! / (n - k)! can overflow if n! overflows, this avoids overflow
+    // by only calculating n*(n-1)*(n-2)*...*(n-k+1)
+    var result = n;
+    var i: usize = n - 1;
+    while (i > n - k) : (i -= 1) {
+        result *= i;
+    }
+    return result;
 }
 
 fn factorial(n: usize) usize {
