@@ -181,7 +181,7 @@ pub const Parser = struct {
                     try self.nextToken(.normal);
                 },
                 // String or number
-                .class, .menu => {
+                .class => {
                     const identifier = self.state.token;
                     const value = try self.parseExpression(false);
                     if (!value.isNumberExpression() and !value.isStringLiteral()) {
@@ -199,6 +199,25 @@ pub const Parser = struct {
                     node.* = .{
                         .identifier = identifier,
                         .value = value,
+                    };
+                    try optional_statements.append(self.state.arena, &node.base);
+                    try self.nextToken(.normal);
+                },
+                // Special case
+                .menu => {
+                    const identifier = self.state.token;
+                    try self.nextToken(.whitespace_delimiter_only);
+                    try self.check(.literal);
+                    // TODO: Wrapping this in a Node.Literal is superfluous but necessary
+                    //       to put it in a SimpleStatement
+                    const value_node = try self.state.arena.create(Node.Literal);
+                    value_node.* = .{
+                        .token = self.state.token,
+                    };
+                    const node = try self.state.arena.create(Node.SimpleStatement);
+                    node.* = .{
+                        .identifier = identifier,
+                        .value = &value_node.base,
                     };
                     try optional_statements.append(self.state.arena, &node.base);
                     try self.nextToken(.normal);
@@ -1295,7 +1314,7 @@ test "dialogs" {
         \\EXSTYLE 1
         \\CLASS "hello1"
         \\CLASS 2
-        \\MENU 2
+        \\MENU 2+"4"
         \\MENU "1"
         \\FONT 12 "first", 1001-1, 65537L, 257-2
         \\FONT 8+2,, ,, "second", 0
@@ -1324,7 +1343,7 @@ test "dialogs" {
         \\  simple_statement CLASS
         \\   literal 2
         \\  simple_statement MENU
-        \\   literal 2
+        \\   literal 2+"4"
         \\  simple_statement MENU
         \\   literal "1"
         \\  font_statement FONT typeface: "first"

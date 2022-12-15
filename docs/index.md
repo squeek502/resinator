@@ -107,8 +107,25 @@ At the end of the .res, a single `RT_FONTDIR` resource with the name `FONTDIR` i
 | `NameOrOrdinal` | Dialog class |
 | Null-teriminated UTF-16 String | Title |
 
-- Multiple of each optional statement is allowed, and the last one specified takes precedence.
-  + There is a miscompilation or weird intermixing when an optional statement that can be a stirng or ordinal (e.g. `CLASS`, `MENU`) is specified first as an ordinal and then as a string. The `.res` will write it as an ordinal but somehow intermix something about the string version into the value. If the ordinal version is last, then there is no miscompilation.
+- Multiple of each optional statement is allowed, and the last one specified takes precedence, with the exception of `CLASS` and `MENU` (see below).
+
+#### `CLASS` and `MENU` quirks
+
+- `MENU` is a proper `NameOrOrdinal`, in that it can be unquoted, contain " within it, etc.
+  + However, it is parsed differently than a `NameOrOrdinal` used for resource id/types. Whenever the first character is a number, it is treated as a number. Anything after that is treated as a digit with the value `<character's ascii value> - '0'` (where `'0'` is `0x30`, and using wrapping underflow for ascii values < 0x30). Some examples:
+    - `3200` -> `3200` (ordinal)
+    - `1+1` -> `51` (ordinal)
+    - `1|2` -> `862` (ordinal)
+    - `1a2` -> `592` (ordinal)
+    - `1a` -> `59` (ordinal)
+    - `1A` -> `27` (ordinal)
+    - `1!` -> `65531` (ordinal)
+    - `1PleaseDon'tInterpretThisAsANumber` -> `28404` (ordinal)
+    - `3200-1600` -> `24848` (ordinal)
+    - `3200-1600+1` -> `59919` (ordinal)
+    - `(3200-1600)` -> `(3200-1600)` (string)
+- If `CLASS` or `MENU` is specified first as an ordinal with in a resource, then any more `CLASS` or `MENU` optional statements will also be treated as an ordinal, e.g. `1 DIALOGEX 1,2,3,4 CLASS 1 CLASS "this would normally be a string" {}` will result in a resource with a class of `47959` as an ordinal.
+- `CLASS` must be either a number, number expression, or a quoted string literal. If a quoted string is to be interpretted as a number due to the quirk in the previous point, then it is parsed first and then uses the same evaluation as `MENU` outlined above. Unsure about how non-ASCII codepoints are dealt with.
 
 #### `FONT`
 
