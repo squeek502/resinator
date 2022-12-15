@@ -9,6 +9,7 @@ const Number = @import("literals.zig").Number;
 const parseNumberLiteral = @import("literals.zig").parseNumberLiteral;
 const parseQuotedAsciiString = @import("literals.zig").parseQuotedAsciiString;
 const parseQuotedWideString = @import("literals.zig").parseQuotedWideString;
+const parseQuotedStringAsWideString = @import("literals.zig").parseQuotedStringAsWideString;
 const Diagnostics = @import("errors.zig").Diagnostics;
 const ErrorDetails = @import("errors.zig").ErrorDetails;
 const MemoryFlags = @import("res.zig").MemoryFlags;
@@ -92,7 +93,7 @@ pub const Compiler = struct {
             .invalid => @panic("TODO"),
             .accelerators => try self.writeAccelerators(@fieldParentPtr(Node.Accelerators, "base", node), writer),
             .accelerator => unreachable, // handled by writeAccelerators
-            .dialog => @panic("TODO"),
+            .dialog => try self.writeDialog(@fieldParentPtr(Node.Dialog, "base", node), writer),
             .string_table => try self.writeStringTable(@fieldParentPtr(Node.StringTable, "base", node)),
             .string_table_string => unreachable, // handled by writeStringTable
             .language_statement => self.writeLanguageStatement(@fieldParentPtr(Node.LanguageStatement, "base", node)),
@@ -548,6 +549,261 @@ pub const Compiler = struct {
         try writeResourceData(writer, data_fbs.reader(), data_size);
     }
 
+    pub fn writeDialog(self: *Compiler, node: *Node.Dialog, writer: anytype) !void {
+        var data_buffer = std.ArrayList(u8).init(self.allocator);
+        defer data_buffer.deinit();
+        const data_writer = data_buffer.writer();
+
+        const resource = Resource.fromString(.{
+            .slice = node.type.slice(self.source),
+            .code_page = self.code_pages.getForToken(node.type),
+        });
+        std.debug.assert(resource == .dialog or resource == .dialogex);
+
+        const OptionalStatementValues = struct {
+            style: u32 = 0x80880000, // WS_SYSMENU | WS_BORDER | WS_POPUP
+            exstyle: u32 = 0,
+            class: ?NameOrOrdinal = null,
+            menu: ?NameOrOrdinal = null,
+            font: ?FontStatementValues = null,
+            caption: ?Token = null,
+        };
+        var optional_statement_values: OptionalStatementValues = .{};
+        defer {
+            if (optional_statement_values.class) |class| {
+                std.debug.print("freeing a class in defer", .{});
+                class.deinit(self.allocator);
+            }
+            if (optional_statement_values.menu) |menu| {
+                menu.deinit(self.allocator);
+            }
+        }
+        for (node.optional_statements) |optional_statement| {
+            switch (optional_statement.id) {
+                .simple_statement => {
+                    const simple_statement = @fieldParentPtr(Node.SimpleStatement, "base", optional_statement);
+                    const statement_identifier = simple_statement.identifier;
+                    const statement_type = rc.OptionalStatements.dialog_map.get(statement_identifier.slice(self.source)) orelse continue;
+                    switch (statement_type) {
+                        .style, .exstyle => {
+                            const style = evaluateNumberExpression(simple_statement.value, self.source, self.code_pages);
+                            // STYLE and EXSTYLE are both implicitly long
+                            if (statement_type == .style) {
+                                optional_statement_values.style = style.value;
+                            } else {
+                                optional_statement_values.exstyle = style.value;
+                            }
+                        },
+                        .caption => {
+                            std.debug.assert(simple_statement.value.id == .literal);
+                            const literal_node = @fieldParentPtr(Node.Literal, "base", simple_statement.value);
+                            optional_statement_values.caption = literal_node.token;
+                        },
+                        .class => {
+                            const forced_ordinal = optional_statement_values.class != null and optional_statement_values.class.? == .ordinal;
+                            // clear out the old one if it exists
+                            if (optional_statement_values.class) |prev| {
+                                prev.deinit(self.allocator);
+                                optional_statement_values.class = null;
+                            }
+
+                            if (simple_statement.value.isNumberExpression()) {
+                                const class_ordinal = evaluateNumberExpression(simple_statement.value, self.source, self.code_pages);
+                                optional_statement_values.class = NameOrOrdinal{ .ordinal = class_ordinal.asWord() };
+                            } else {
+                                std.debug.assert(simple_statement.value.isStringLiteral());
+                                const literal_node = @fieldParentPtr(Node.Literal, "base", simple_statement.value);
+                                const bytes = SourceBytes{
+                                    .slice = literal_node.token.slice(self.source),
+                                    .code_page = self.code_pages.getForToken(literal_node.token),
+                                };
+                                const column = literal_node.token.calculateColumn(self.source, 8, null);
+                                const parsed = try parseQuotedStringAsWideString(self.allocator, bytes, .{
+                                    .start_column = column,
+                                    .diagnostics = .{ .diagnostics = self.diagnostics, .token = literal_node.token },
+                                });
+                                if (forced_ordinal) {
+                                    defer self.allocator.free(parsed);
+                                    @panic("TODO parse CLASS string as number");
+                                } else {
+                                    optional_statement_values.class = NameOrOrdinal{ .name = parsed };
+                                }
+                            }
+                        },
+                        .menu => {
+                            const forced_ordinal = optional_statement_values.menu != null and optional_statement_values.menu.? == .ordinal;
+                            // clear out the old one if it exists
+                            if (optional_statement_values.menu) |prev| {
+                                prev.deinit(self.allocator);
+                                optional_statement_values.menu = null;
+                            }
+
+                            std.debug.assert(simple_statement.value.id == .literal);
+                            const literal_node = @fieldParentPtr(Node.Literal, "base", simple_statement.value);
+
+                            const token_slice = literal_node.token.slice(self.source);
+                            if (forced_ordinal or std.ascii.isDigit(token_slice[0])) {
+                                @panic("TODO parse MENU token as number");
+                            } else {
+                                optional_statement_values.menu = try NameOrOrdinal.nameFromString(self.allocator, .{
+                                    .slice = token_slice,
+                                    .code_page = self.code_pages.getForToken(literal_node.token),
+                                });
+                            }
+                        },
+                        else => {},
+                    }
+                },
+                .font_statement => {
+                    const font = @fieldParentPtr(Node.FontStatement, "base", optional_statement);
+                    if (optional_statement_values.font != null) {
+                        optional_statement_values.font.?.node = font;
+                    } else {
+                        optional_statement_values.font = FontStatementValues{ .node = font };
+                    }
+                    if (font.weight) |weight| {
+                        const value = evaluateNumberExpression(weight, self.source, self.code_pages);
+                        optional_statement_values.font.?.weight = value.asWord();
+                    }
+                    if (font.italic) |italic| {
+                        const value = evaluateNumberExpression(italic, self.source, self.code_pages);
+                        optional_statement_values.font.?.italic = value.asWord() != 0;
+                    }
+                },
+                else => {},
+            }
+        }
+        const x = evaluateNumberExpression(node.x, self.source, self.code_pages);
+        const y = evaluateNumberExpression(node.y, self.source, self.code_pages);
+        const width = evaluateNumberExpression(node.width, self.source, self.code_pages);
+        const height = evaluateNumberExpression(node.height, self.source, self.code_pages);
+
+        // FONT statement implies DS_SETFONT which is 0x40
+        if (optional_statement_values.font) |_| {
+            optional_statement_values.style |= 0x40;
+        }
+        // CAPTION statement implies DS_CAPTION which is 0x00C00000
+        if (optional_statement_values.caption) |_| {
+            optional_statement_values.style |= 0x00C00000;
+        }
+
+        // Header
+        if (resource == .dialogex) {
+            const help_id: u32 = help_id: {
+                if (node.help_id == null) break :help_id 0;
+                break :help_id evaluateNumberExpression(node.help_id.?, self.source, self.code_pages).value;
+            };
+            try data_writer.writeIntLittle(u16, 1); // version number, always 1
+            try data_writer.writeIntLittle(u16, 0xFFFF); // signature, always 0xFFFF
+            try data_writer.writeIntLittle(u32, help_id);
+            try data_writer.writeIntLittle(u32, optional_statement_values.exstyle);
+            try data_writer.writeIntLittle(u32, optional_statement_values.style);
+        } else {
+            try data_writer.writeIntLittle(u32, optional_statement_values.style);
+            try data_writer.writeIntLittle(u32, optional_statement_values.exstyle);
+        }
+        // TODO: Enforce this limit in the parser?
+        try data_writer.writeIntLittle(u16, @intCast(u16, node.controls.len));
+        try data_writer.writeIntLittle(u16, x.asWord());
+        try data_writer.writeIntLittle(u16, y.asWord());
+        try data_writer.writeIntLittle(u16, width.asWord());
+        try data_writer.writeIntLittle(u16, height.asWord());
+
+        // Menu
+        if (optional_statement_values.menu) |menu| {
+            try menu.write(data_writer);
+        } else {
+            try data_writer.writeIntLittle(u16, 0);
+        }
+        // Class
+        if (optional_statement_values.class) |class| {
+            try class.write(data_writer);
+        } else {
+            try data_writer.writeIntLittle(u16, 0);
+        }
+        // Caption
+        if (optional_statement_values.caption) |caption| {
+            const bytes = SourceBytes{
+                .slice = caption.slice(self.source),
+                .code_page = self.code_pages.getForToken(caption),
+            };
+            const column = caption.calculateColumn(self.source, 8, null);
+            const parsed = try parseQuotedStringAsWideString(self.allocator, bytes, .{
+                .start_column = column,
+                .diagnostics = .{ .diagnostics = self.diagnostics, .token = caption },
+            });
+            defer self.allocator.free(parsed);
+            try data_writer.writeAll(std.mem.sliceAsBytes(parsed[0 .. parsed.len + 1]));
+        } else {
+            try data_writer.writeIntLittle(u16, 0);
+        }
+        // Font
+        if (optional_statement_values.font) |font| {
+            try self.writeDialogFont(resource, font, data_writer);
+        }
+
+        const data_size = @intCast(u32, data_buffer.items.len);
+        const id_bytes = SourceBytes{
+            .slice = node.id.slice(self.source),
+            .code_page = self.code_pages.getForToken(node.id),
+        };
+        const type_bytes = SourceBytes{
+            .slice = node.type.slice(self.source),
+            .code_page = self.code_pages.getForToken(node.type),
+        };
+        var header = try ResourceHeader.init(self.allocator, id_bytes, type_bytes, data_size, self.state.language);
+        defer header.deinit(self.allocator);
+
+        header.applyMemoryFlags(node.common_resource_attributes, self.source);
+        header.applyOptionalStatements(node.optional_statements, self.source, self.code_pages);
+
+        try header.write(writer);
+
+        var data_fbs = std.io.fixedBufferStream(data_buffer.items);
+        try writeResourceData(writer, data_fbs.reader(), data_size);
+    }
+
+    /// Weight and italic carry over from previous FONT statements within a single resource,
+    /// so they need to be parsed ahead-of-time and stored
+    const FontStatementValues = struct {
+        weight: u16 = 0,
+        italic: bool = false,
+        node: *Node.FontStatement,
+    };
+
+    pub fn writeDialogFont(self: *Compiler, resource: Resource, values: FontStatementValues, writer: anytype) !void {
+        const node = values.node;
+        const point_size = evaluateNumberExpression(node.point_size, self.source, self.code_pages);
+        try writer.writeIntLittle(u16, point_size.asWord());
+
+        if (resource == .dialogex) {
+            try writer.writeIntLittle(u16, values.weight);
+        }
+
+        if (resource == .dialogex) {
+            try writer.writeIntLittle(u8, @boolToInt(values.italic));
+        }
+
+        if (node.char_set) |char_set| {
+            const value = evaluateNumberExpression(char_set, self.source, self.code_pages);
+            try writer.writeIntLittle(u8, @truncate(u8, value.value));
+        } else if (resource == .dialogex) {
+            try writer.writeIntLittle(u8, 1); // DEFAULT_CHARSET
+        }
+
+        const typeface_bytes = SourceBytes{
+            .slice = node.typeface.slice(self.source),
+            .code_page = self.code_pages.getForToken(node.typeface),
+        };
+        const column = node.typeface.calculateColumn(self.source, 8, null);
+        const typeface = try parseQuotedStringAsWideString(self.allocator, typeface_bytes, .{
+            .start_column = column,
+            .diagnostics = .{ .diagnostics = self.diagnostics, .token = node.typeface },
+        });
+        defer self.allocator.free(typeface);
+        try writer.writeAll(std.mem.sliceAsBytes(typeface[0 .. typeface.len + 1]));
+    }
+
     pub fn writeStringTable(self: *Compiler, node: *Node.StringTable) !void {
         const language = getLanguageFromOptionalStatements(node.optional_statements, self.source, self.code_pages) orelse self.state.language;
 
@@ -601,6 +857,7 @@ pub const Compiler = struct {
                     if (res.RT.fromResource(resource_type)) |rt_constant| {
                         break :type NameOrOrdinal{ .ordinal = @enumToInt(rt_constant) };
                     } else {
+                        std.debug.print("{}\n", .{resource_type});
                         @panic("TODO: unhandled resource -> RT constant conversion");
                     }
                 } else {
@@ -666,6 +923,7 @@ pub const Compiler = struct {
         }
     }
 
+    /// Only handles the 'base' optional statements that are shared between resource types.
     fn applyToOptionalStatements(language: *res.Language, version: *u32, characteristics: *u32, statements: []*Node, source: []const u8, code_page_lookup: *const CodePageLookup) void {
         for (statements) |node| switch (node.id) {
             .language_statement => {
@@ -674,15 +932,15 @@ pub const Compiler = struct {
             },
             .simple_statement => {
                 const simple_statement = @fieldParentPtr(Node.SimpleStatement, "base", node);
+                const statement_type = rc.OptionalStatements.map.get(simple_statement.identifier.slice(source)) orelse continue;
                 const result = Compiler.evaluateNumberExpression(simple_statement.value, source, code_page_lookup);
-                const statement_type = rc.OptionalStatements.map.get(simple_statement.identifier.slice(source)).?;
                 switch (statement_type) {
                     .version => version.* = result.value,
                     .characteristics => characteristics.* = result.value,
                     else => unreachable, // only VERSION and CHARACTERISTICS should be in an optional statements list
                 }
             },
-            else => unreachable, // no other node types should be in an optional statements list
+            else => {},
         };
     }
 
@@ -1463,6 +1721,24 @@ test "accelerators resource" {
         \\1 ACCELERATORS { "c", 65537, VIRTKEY, CONTROL, ALT, SHIFT }
     ,
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x08\x00\x00\x00 \x00\x00\x00\xff\xff\t\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x9d\x00C\x00\x01\x00\x00\x00",
+        std.fs.cwd(),
+    );
+}
+
+test "dialog, dialogex resource" {
+    try testCompileWithOutput(
+        \\1 DIALOGEX FIXED DISCARDABLE 1, 2, 3, 4
+        \\STYLE 0x80000000 | 0x00800000
+        \\CAPTION "Error!"
+        \\EXSTYLE 1
+        \\CLASS "hello1"
+        \\CLASS 2
+        \\MENU "1"
+        \\FONT 12 "first", 1001-1, 65537L, 257-2
+        \\FONT 8+2,, ,, "second", 0
+        \\{}
+    ,
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00H\x00\x00\x00 \x00\x00\x00\xff\xff\x05\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\xff\xff\x00\x00\x00\x00\x01\x00\x00\x00@\x00\xc0\x80\x00\x00\x01\x00\x02\x00\x03\x00\x04\x00\"\x001\x00\"\x00\x00\x00\xff\xff\x02\x00E\x00r\x00r\x00o\x00r\x00!\x00\x00\x00\n\x00\x00\x00\x01\x01s\x00e\x00c\x00o\x00n\x00d\x00\x00\x00",
         std.fs.cwd(),
     );
 }

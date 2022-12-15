@@ -428,7 +428,7 @@ pub fn parseQuotedWideString(allocator: std.mem.Allocator, bytes: SourceBytes, o
     return parseQuotedString(.wide, allocator, bytes, options);
 }
 
-pub fn parseQuotedAsciiStringAsWideString(allocator: std.mem.Allocator, bytes: SourceBytes, options: StringParseOptions) ![:0]u16 {
+pub fn parseQuotedStringAsWideString(allocator: std.mem.Allocator, bytes: SourceBytes, options: StringParseOptions) ![:0]u16 {
     std.debug.assert(bytes.slice.len >= 2); // ""
     return parseQuotedString(.wide, allocator, bytes, options);
 }
@@ -697,7 +697,7 @@ test "parse quoted ascii string as wide string" {
     defer arena_allocator.deinit();
     const arena = arena_allocator.allocator();
 
-    try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16LeStringLiteral("кириллица"), try parseQuotedAsciiStringAsWideString(
+    try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16LeStringLiteral("кириллица"), try parseQuotedStringAsWideString(
         arena,
         .{ .slice = "\"кириллица\"", .code_page = .utf8 },
         .{},

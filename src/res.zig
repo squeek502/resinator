@@ -41,7 +41,7 @@ pub const RT = enum(u8) {
             .bitmap => .BITMAP,
             .cursor => .GROUP_CURSOR,
             .dialog => .DIALOG,
-            .dialogex => null, // TODO: ?
+            .dialogex => .DIALOG,
             .font => .FONT,
             .html => .HTML,
             .icon => .GROUP_ICON,
@@ -91,7 +91,7 @@ pub const MemoryFlags = packed struct(u16) {
         } else {
             return switch (predefined_resource_type.?) {
                 .RCDATA, .BITMAP, .HTML, .MANIFEST, .ACCELERATOR => MemoryFlags{ .value = MOVEABLE | SHARED },
-                .GROUP_ICON, .GROUP_CURSOR, .STRING, .FONT => MemoryFlags{ .value = MOVEABLE | SHARED | DISCARDABLE },
+                .GROUP_ICON, .GROUP_CURSOR, .STRING, .FONT, .DIALOG => MemoryFlags{ .value = MOVEABLE | SHARED | DISCARDABLE },
                 .ICON, .CURSOR => MemoryFlags{ .value = MOVEABLE | DISCARDABLE },
                 .FONTDIR => MemoryFlags{ .value = MOVEABLE | PRELOAD },
                 else => {
