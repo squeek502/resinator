@@ -21,6 +21,8 @@ pub const SourceBytes = struct {
     code_page: CodePage,
 };
 
+pub const StringType = enum { ascii, wide };
+
 /// Valid escapes:
 ///  "" -> "
 ///  \a, \A => 0x08 (not 0x07 like in C)
@@ -62,8 +64,6 @@ pub const IterativeStringParser = struct {
     column: usize = 0,
     diagnostics: ?DiagnosticsContext = null,
 
-    pub const StringType = enum { ascii, wide };
-
     const State = enum {
         normal,
         quote,
@@ -80,14 +80,16 @@ pub const IterativeStringParser = struct {
             'L', 'l' => .wide,
             else => .ascii,
         };
-        const source = switch (string_type) {
-            .ascii => bytes.slice[1 .. bytes.slice.len - 1], // remove ""
-            .wide => bytes.slice[2 .. bytes.slice.len - 1], // remove L""
-        };
-        const column = switch (string_type) {
-            .ascii => options.start_column + 1, // for the removed "
-            .wide => options.start_column + 2, // for the removed L"
-        };
+        return initType(string_type, bytes, options);
+    }
+
+    pub fn initType(string_type: StringType, bytes: SourceBytes, options: StringParseOptions) IterativeStringParser {
+        var source = bytes.slice[1 .. bytes.slice.len - 1]; // remove ""
+        var column = options.start_column + 1; // for the removed "
+        if (bytes.slice[0] == 'L' or bytes.slice[0] == 'l') {
+            source = source[1..]; // remove L
+            column += 1; // for the removed L
+        }
         return .{
             .source = source,
             .code_page = bytes.code_page,
@@ -361,7 +363,7 @@ pub const StringParseOptions = struct {
 };
 
 pub fn parseQuotedString(
-    comptime literal_type: enum { ascii, wide },
+    comptime literal_type: StringType,
     allocator: std.mem.Allocator,
     bytes: SourceBytes,
     options: StringParseOptions,
@@ -375,7 +377,7 @@ pub fn parseQuotedString(
     var buf = try std.ArrayList(T).initCapacity(allocator, bytes.slice.len);
     errdefer buf.deinit();
 
-    var iterative_parser = IterativeStringParser.init(bytes, options);
+    var iterative_parser = IterativeStringParser.initType(literal_type, bytes, options);
 
     while (try iterative_parser.next()) |parsed| {
         const c = parsed.codepoint;
@@ -423,6 +425,11 @@ pub fn parseQuotedAsciiString(allocator: std.mem.Allocator, bytes: SourceBytes, 
 
 pub fn parseQuotedWideString(allocator: std.mem.Allocator, bytes: SourceBytes, options: StringParseOptions) ![:0]u16 {
     std.debug.assert(bytes.slice.len >= 3); // L""
+    return parseQuotedString(.wide, allocator, bytes, options);
+}
+
+pub fn parseQuotedAsciiStringAsWideString(allocator: std.mem.Allocator, bytes: SourceBytes, options: StringParseOptions) ![:0]u16 {
+    std.debug.assert(bytes.slice.len >= 2); // ""
     return parseQuotedString(.wide, allocator, bytes, options);
 }
 
@@ -681,6 +688,18 @@ test "parse quoted wide string with utf8 code page" {
     try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16LeStringLiteral("����"), try parseQuotedWideString(
         arena,
         .{ .slice = "L\"\xf0\xf0\x80\x80\x80\"", .code_page = .utf8 },
+        .{},
+    ));
+}
+
+test "parse quoted ascii string as wide string" {
+    var arena_allocator = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_allocator.deinit();
+    const arena = arena_allocator.allocator();
+
+    try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16LeStringLiteral("кириллица"), try parseQuotedAsciiStringAsWideString(
+        arena,
+        .{ .slice = "\"кириллица\"", .code_page = .utf8 },
         .{},
     ));
 }

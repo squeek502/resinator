@@ -459,7 +459,7 @@ pub const AcceleratorModifiers = packed struct(u8) {
 };
 
 const AcceleratorKeyCodepointTranslator = struct {
-    string_type: literals.IterativeStringParser.StringType,
+    string_type: literals.StringType,
 
     pub fn translate(self: @This(), maybe_parsed: ?literals.IterativeStringParser.ParsedCodepoint) ?u21 {
         const parsed = maybe_parsed orelse return null;
