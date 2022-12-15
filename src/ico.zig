@@ -48,7 +48,7 @@ pub fn read(allocator: std.mem.Allocator, reader: anytype) !IconDir {
 
     return .{
         .image_type = image_type,
-        .entries = entries.toOwnedSlice(),
+        .entries = try entries.toOwnedSlice(),
         .allocator = allocator,
     };
 }

@@ -33,7 +33,7 @@ pub fn expectSameResOutput(allocator: Allocator, source: []const u8, buffer: *st
         return error.ExpectedErrorButDidntGetOne;
     }
 
-    resinator.utils.testing.expectEqualBytes(expected_res.?, buffer.items) catch |err| {
+    std.testing.expectEqualSlices(u8, expected_res.?, buffer.items) catch |err| {
         std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
         return err;
     };

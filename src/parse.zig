@@ -491,7 +491,7 @@ pub const Parser = struct {
                     node.* = .{
                         .event = event,
                         .idvalue = idvalue,
-                        .type_and_options = type_and_options.toOwnedSlice(self.state.arena),
+                        .type_and_options = try type_and_options.toOwnedSlice(self.state.arena),
                     };
                     try accelerators.append(self.state.arena, &node.base);
                 }
@@ -506,7 +506,7 @@ pub const Parser = struct {
                     .common_resource_attributes = common_resource_attributes,
                     .optional_statements = optional_statements,
                     .begin_token = begin_token,
-                    .accelerators = accelerators.toOwnedSlice(self.state.arena),
+                    .accelerators = try accelerators.toOwnedSlice(self.state.arena),
                     .end_token = end_token,
                 };
                 return &node.base;

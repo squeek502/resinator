@@ -205,8 +205,9 @@ pub fn handleLineCommand(allocator: Allocator, line_command: []const u8, current
 
 pub fn parseAndRemoveLineCommandsAlloc(allocator: Allocator, source: []const u8) !ParseLineCommandsResult {
     var buf = try allocator.alloc(u8, source.len);
+    errdefer allocator.free(buf);
     var result = try parseAndRemoveLineCommands(allocator, source, buf);
-    result.result = allocator.shrink(buf, result.result.len);
+    result.result = try allocator.realloc(buf, result.result.len);
     return result;
 }
 

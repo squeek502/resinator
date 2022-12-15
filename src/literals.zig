@@ -410,9 +410,7 @@ pub fn parseQuotedString(
     }
 
     if (literal_type == .wide) {
-        const len = buf.items.len;
-        try buf.append(0);
-        return buf.toOwnedSlice()[0..len :0];
+        return buf.toOwnedSliceSentinel(0);
     } else {
         return buf.toOwnedSlice();
     }

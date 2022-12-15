@@ -200,9 +200,7 @@ pub const NameOrOrdinal = union(enum) {
             }
         }
 
-        const len = buf.items.len;
-        try buf.append(0);
-        return NameOrOrdinal{ .name = buf.toOwnedSlice()[0..len :0] };
+        return NameOrOrdinal{ .name = try buf.toOwnedSliceSentinel(0) };
     }
 
     pub fn maybeOrdinalFromString(bytes: SourceBytes) ?NameOrOrdinal {

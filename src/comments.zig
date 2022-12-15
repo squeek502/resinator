@@ -175,8 +175,9 @@ pub fn removeComments(source: []const u8, buf: []u8, source_mappings: ?*SourceMa
 
 pub fn removeCommentsAlloc(allocator: Allocator, source: []const u8, source_mappings: ?*SourceMappings) ![]u8 {
     var buf = try allocator.alloc(u8, source.len);
+    errdefer allocator.free(buf);
     var result = removeComments(source, buf, source_mappings);
-    return allocator.shrink(buf, result.len);
+    return allocator.realloc(buf, result.len);
 }
 
 fn testRemoveComments(expected: []const u8, source: []const u8) !void {
