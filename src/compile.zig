@@ -92,9 +92,11 @@ pub const Compiler = struct {
             .invalid => @panic("TODO"),
             .accelerators => try self.writeAccelerators(@fieldParentPtr(Node.Accelerators, "base", node), writer),
             .accelerator => unreachable, // handled by writeAccelerators
+            .dialog => @panic("TODO"),
             .string_table => try self.writeStringTable(@fieldParentPtr(Node.StringTable, "base", node)),
             .string_table_string => unreachable, // handled by writeStringTable
             .language_statement => self.writeLanguageStatement(@fieldParentPtr(Node.LanguageStatement, "base", node)),
+            .font_statement => unreachable,
             .simple_statement => @panic("TODO"),
         }
     }
