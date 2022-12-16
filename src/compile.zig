@@ -642,13 +642,14 @@ pub const Compiler = struct {
                             const literal_node = @fieldParentPtr(Node.Literal, "base", simple_statement.value);
 
                             const token_slice = literal_node.token.slice(self.source);
+                            const bytes = SourceBytes{
+                                .slice = token_slice,
+                                .code_page = self.code_pages.getForToken(literal_node.token),
+                            };
                             if (forced_ordinal or std.ascii.isDigit(token_slice[0])) {
-                                @panic("TODO parse MENU token as number");
+                                optional_statement_values.menu = .{ .ordinal = res.ForcedOrdinal.fromBytes(bytes) };
                             } else {
-                                optional_statement_values.menu = try NameOrOrdinal.nameFromString(self.allocator, .{
-                                    .slice = token_slice,
-                                    .code_page = self.code_pages.getForToken(literal_node.token),
-                                });
+                                optional_statement_values.menu = try NameOrOrdinal.nameFromString(self.allocator, bytes);
                             }
                         },
                         else => {},
@@ -1739,6 +1740,15 @@ test "dialog, dialogex resource" {
         \\{}
     ,
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00H\x00\x00\x00 \x00\x00\x00\xff\xff\x05\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\xff\xff\x00\x00\x00\x00\x01\x00\x00\x00@\x00\xc0\x80\x00\x00\x01\x00\x02\x00\x03\x00\x04\x00\"\x001\x00\"\x00\x00\x00\xff\xff\x02\x00E\x00r\x00r\x00o\x00r\x00!\x00\x00\x00\n\x00\x00\x00\x01\x01s\x00e\x00c\x00o\x00n\x00d\x00\x00\x00",
+        std.fs.cwd(),
+    );
+    try testCompileWithOutput(
+        \\1 DIALOGEX 1, 2, 3, 4
+        \\MENU 5+5
+        \\CLASS 5+5
+        \\{}
+    ,
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00$\x00\x00\x00 \x00\x00\x00\xff\xff\x05\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x88\x80\x00\x00\x01\x00\x02\x00\x03\x00\x04\x00\xff\xff\xc7\x01\xff\xff\n\x00\x00\x00",
         std.fs.cwd(),
     );
 }

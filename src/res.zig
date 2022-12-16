@@ -717,3 +717,47 @@ test "accelerator keys" {
         .{},
     ));
 }
+
+pub const ForcedOrdinal = struct {
+    pub fn fromBytes(bytes: SourceBytes) u16 {
+        var i: usize = 0;
+        var result: u21 = 0;
+        while (bytes.code_page.codepointAt(i, bytes.slice)) |codepoint| : (i += codepoint.byte_len) {
+            const c = switch (codepoint.value) {
+                // Codepoints that would need a surrogate pair in UTF-16 are
+                // broken up into their UTF-16 code units and each code unit
+                // is interpreted as a digit.
+                0x10000...0x10FFFF => {
+                    const high = @intCast(u16, (codepoint.value - 0x10000) >> 10) + 0xD800;
+                    if (result != 0) result *%= 10;
+                    result +%= high -% '0';
+
+                    const low = @intCast(u16, codepoint.value & 0x3FF) + 0xDC00;
+                    if (result != 0) result *%= 10;
+                    result +%= low -% '0';
+                    continue;
+                },
+                Codepoint.invalid => 0xFFFD,
+                else => codepoint.value,
+            };
+            if (result != 0) result *%= 10;
+            result +%= c -% '0';
+        }
+        return @truncate(u16, result);
+    }
+};
+
+test "forced ordinal" {
+    try std.testing.expectEqual(@as(u16, 3200), ForcedOrdinal.fromBytes(.{ .slice = "3200", .code_page = .windows1252 }));
+    try std.testing.expectEqual(@as(u16, 0x33), ForcedOrdinal.fromBytes(.{ .slice = "1+1", .code_page = .windows1252 }));
+    try std.testing.expectEqual(@as(u16, 65531), ForcedOrdinal.fromBytes(.{ .slice = "1!", .code_page = .windows1252 }));
+
+    try std.testing.expectEqual(@as(u16, 0x122), ForcedOrdinal.fromBytes(.{ .slice = "0\x8C", .code_page = .windows1252 }));
+    try std.testing.expectEqual(@as(u16, 0x122), ForcedOrdinal.fromBytes(.{ .slice = "0Œ", .code_page = .utf8 }));
+
+    // invalid UTF-8 gets converted to 0xFFFD (replacement char) and then interpreted as a digit
+    try std.testing.expectEqual(@as(u16, 0xFFCD), ForcedOrdinal.fromBytes(.{ .slice = "0\x81", .code_page = .utf8 }));
+    // codepoints >= 0x10000
+    try std.testing.expectEqual(@as(u16, 0x49F2), ForcedOrdinal.fromBytes(.{ .slice = "0\u{10002}", .code_page = .utf8 }));
+    try std.testing.expectEqual(@as(u16, 0x4AF0), ForcedOrdinal.fromBytes(.{ .slice = "0\u{10100}", .code_page = .utf8 }));
+}
