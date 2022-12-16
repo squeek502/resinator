@@ -745,6 +745,15 @@ pub const ForcedOrdinal = struct {
         }
         return @truncate(u16, result);
     }
+
+    pub fn fromUtf16Le(utf16: [:0]const u16) u16 {
+        var result: u16 = 0;
+        for (utf16) |code_unit| {
+            if (result != 0) result *%= 10;
+            result +%= code_unit -% '0';
+        }
+        return result;
+    }
 };
 
 test "forced ordinal" {
@@ -760,4 +769,8 @@ test "forced ordinal" {
     // codepoints >= 0x10000
     try std.testing.expectEqual(@as(u16, 0x49F2), ForcedOrdinal.fromBytes(.{ .slice = "0\u{10002}", .code_page = .utf8 }));
     try std.testing.expectEqual(@as(u16, 0x4AF0), ForcedOrdinal.fromBytes(.{ .slice = "0\u{10100}", .code_page = .utf8 }));
+
+    // From UTF-16
+    try std.testing.expectEqual(@as(u16, 0x122), ForcedOrdinal.fromUtf16Le(&[_:0]u16{ '0', 'Œ' }));
+    try std.testing.expectEqual(@as(u16, 0x4AF0), ForcedOrdinal.fromUtf16Le(std.unicode.utf8ToUtf16LeStringLiteral("0\u{10100}")));
 }
