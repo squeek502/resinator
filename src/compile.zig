@@ -571,7 +571,6 @@ pub const Compiler = struct {
         var optional_statement_values: OptionalStatementValues = .{};
         defer {
             if (optional_statement_values.class) |class| {
-                std.debug.print("freeing a class in defer", .{});
                 class.deinit(self.allocator);
             }
             if (optional_statement_values.menu) |menu| {
