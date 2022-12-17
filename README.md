@@ -1,7 +1,7 @@
 resinator
 =========
 
-A (very work-in-progress) cross-platform Windows resource-definition script (.rc) to resource file (.res) compiler. The intention is for this to eventually get merged into the Zig compiler as per [this accepted proposal](https://github.com/ziglang/zig/issues/3702).
+A (work-in-progress) cross-platform Windows resource-definition script (.rc) to resource file (.res) compiler. The intention is for this to eventually get merged into the Zig compiler as per [this accepted proposal](https://github.com/ziglang/zig/issues/3702), but it will also be maintained as a separate tool.
 
 [WIP dumping ground for various `.rc`/`.res` documentation](https://squeek502.github.io/resinator/)
 
@@ -35,7 +35,7 @@ The plan is to use fuzz testing with the `rc` tool as an oracle to ensure that `
   + The Windows RC compiler seemingly treats `<0x04>` characters outside of string literals as a 'skip the next character' instruction when parsing, i.e. `RCDATA<0x04>x` gets parsed as if it were `RCDATA`. It's possible to emulate this behavior in `resinator`, but it seems unlikely that any real `.rc` files are intentionally using this behavior, so by making it a compile error it avoids running into strange behavior if a `<0x04>` character is ever inserted into a `.rc` file accidentally.
 - *[Not final]* In `resinator`, embedded 'Delete' (`<0x7F>`) characters are always illegal anywhere in a `.rc` file.
   + The Windows RC compiler seemingly treats `<0x7F>` characters as a terminator in some capacity. A few examples:
-    - `1 RC<0x7F>DATA {}` gets parsed as `1 RC DATA {}` 
+    - `1 RC<0x7F>DATA {}` gets parsed as `1 RC DATA {}`
     - `<0x7F>1 RCDATA {}` "succeeds" but results in an empty `.res` file (no RCDATA resource)
     - `1 RCDATA { "<0x7F>" }` fails with `unexpected end of file in string literal`
   + It's possible to emulate this behavior in `resinator`, but it seems unlikely that any real `.rc` files are intentionally using this behavior, so by making it a compile error it avoids running into strange behavior if a `<0x7F>` character is ever inserted into a `.rc` file accidentally.
