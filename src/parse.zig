@@ -545,9 +545,13 @@ pub const Parser = struct {
                 const begin_token = self.state.token;
                 try self.check(.begin);
 
-                // TODO: controls
-                try self.nextToken(.normal);
+                var controls = std.ArrayListUnmanaged(*Node){};
+                defer controls.deinit(self.state.allocator);
+                while (try self.parseControlStatement(resource)) |control_node| {
+                    try controls.append(self.state.allocator, control_node);
+                }
 
+                try self.nextToken(.normal);
                 const end_token = self.state.token;
                 try self.check(.end);
 
@@ -563,7 +567,7 @@ pub const Parser = struct {
                     .help_id = help_id,
                     .optional_statements = optional_statements,
                     .begin_token = begin_token,
-                    .controls = &[_]*Node{},
+                    .controls = try self.state.arena.dupe(*Node, controls.items),
                     .end_token = end_token,
                 };
                 return &node.base;
@@ -592,74 +596,14 @@ pub const Parser = struct {
                         });
                     }
 
-                    var raw_data = std.ArrayList(*Node).init(self.state.allocator);
-                    defer raw_data.deinit();
-                    while (true) {
-                        const maybe_end_token = try self.lookaheadToken(.normal);
-                        switch (maybe_end_token.id) {
-                            .comma => {
-                                // comma as the first token in a raw data block is an error
-                                if (raw_data.items.len == 0) {
-                                    return self.addErrorDetailsAndFail(ErrorDetails{
-                                        .err = .expected_something_else,
-                                        .token = maybe_end_token,
-                                        .extra = .{ .expected_types = .{
-                                            .number = true,
-                                            .number_expression = true,
-                                            .string_literal = true,
-                                        } },
-                                    });
-                                }
-                                // otherwise just skip over commas
-                                self.nextToken(.normal) catch unreachable;
-                                continue;
-                            },
-                            .end => {
-                                self.nextToken(.normal) catch unreachable;
-                                break;
-                            },
-                            .eof => {
-                                return self.addErrorDetailsAndFail(ErrorDetails{
-                                    .err = .unfinished_raw_data_block,
-                                    .token = maybe_end_token,
-                                });
-                            },
-                            else => {},
-                        }
-                        const expression = try self.parseExpression(false);
-                        try raw_data.append(expression);
-
-                        if (!expression.isExpressionAlwaysSkipped() and !expression.isNumberExpression() and !expression.isStringLiteral()) {
-                            return self.addErrorDetailsAndFail(ErrorDetails{
-                                .err = .expected_something_else,
-                                .token = expression.getFirstToken(),
-                                .extra = .{ .expected_types = .{
-                                    .number = true,
-                                    .number_expression = true,
-                                    .string_literal = true,
-                                } },
-                            });
-                        }
-
-                        if (expression.isNumberExpression()) {
-                            const maybe_close_paren = try self.lookaheadToken(.normal);
-                            if (maybe_close_paren.id == .close_paren) {
-                                // <number expression>) is an error
-                                return self.addErrorDetailsAndFail(ErrorDetails{
-                                    .err = .expected_token,
-                                    .token = maybe_close_paren,
-                                    .extra = .{ .expected = .operator },
-                                });
-                            }
-                        }
-                    }
+                    const raw_data = try self.parseRawDataBlock();
 
                     const node = try self.state.arena.create(Node.ResourceRawData);
                     node.* = .{
                         .id = id_token,
                         .type = type_token,
                         .common_resource_attributes = common_resource_attributes,
-                        .raw_data = try self.state.arena.dupe(*Node, raw_data.items),
+                        .raw_data = raw_data,
                     };
                     return &node.base;
                 }
@@ -676,6 +620,164 @@ pub const Parser = struct {
                 return &node.base;
             },
         }
+    }
+
+    /// Expects the current token to be a begin token.
+    /// After return, the current token will be the end token.
+    fn parseRawDataBlock(self: *Self) Error![]*Node {
+        var raw_data = std.ArrayList(*Node).init(self.state.allocator);
+        defer raw_data.deinit();
+        while (true) {
+            const maybe_end_token = try self.lookaheadToken(.normal);
+            switch (maybe_end_token.id) {
+                .comma => {
+                    // comma as the first token in a raw data block is an error
+                    if (raw_data.items.len == 0) {
+                        return self.addErrorDetailsAndFail(ErrorDetails{
+                            .err = .expected_something_else,
+                            .token = maybe_end_token,
+                            .extra = .{ .expected_types = .{
+                                .number = true,
+                                .number_expression = true,
+                                .string_literal = true,
+                            } },
+                        });
+                    }
+                    // otherwise just skip over commas
+                    self.nextToken(.normal) catch unreachable;
+                    continue;
+                },
+                .end => {
+                    self.nextToken(.normal) catch unreachable;
+                    break;
+                },
+                .eof => {
+                    return self.addErrorDetailsAndFail(ErrorDetails{
+                        .err = .unfinished_raw_data_block,
+                        .token = maybe_end_token,
+                    });
+                },
+                else => {},
+            }
+            const expression = try self.parseExpression(false);
+            try raw_data.append(expression);
+
+            if (!expression.isExpressionAlwaysSkipped() and !expression.isNumberExpression() and !expression.isStringLiteral()) {
+                return self.addErrorDetailsAndFail(ErrorDetails{
+                    .err = .expected_something_else,
+                    .token = expression.getFirstToken(),
+                    .extra = .{ .expected_types = .{
+                        .number = true,
+                        .number_expression = true,
+                        .string_literal = true,
+                    } },
+                });
+            }
+
+            if (expression.isNumberExpression()) {
+                const maybe_close_paren = try self.lookaheadToken(.normal);
+                if (maybe_close_paren.id == .close_paren) {
+                    // <number expression>) is an error
+                    return self.addErrorDetailsAndFail(ErrorDetails{
+                        .err = .expected_token,
+                        .token = maybe_close_paren,
+                        .extra = .{ .expected = .operator },
+                    });
+                }
+            }
+        }
+        return try self.state.arena.dupe(*Node, raw_data.items);
+    }
+
+    /// Expects the current token to be handled, and that the control statement will
+    /// begin on the next token.
+    /// After return, the current token will be the token immediately before the end of the
+    /// control statement (or unchanged if the function returns null).
+    fn parseControlStatement(self: *Self, resource: Resource) Error!?*Node {
+        const control_token = try self.lookaheadToken(.normal);
+        const control = rc.Control.map.get(control_token.slice(self.lexer.buffer)) orelse return null;
+        self.nextToken(.normal) catch unreachable;
+
+        try self.skipAnyCommas();
+
+        var text: ?Token = null;
+        if (control.hasTextParam()) {
+            try self.nextToken(.normal);
+            switch (self.state.token.id) {
+                .quoted_ascii_string, .quoted_wide_string, .number => {
+                    text = self.state.token;
+                },
+                else => {
+                    return self.addErrorDetailsAndFail(ErrorDetails{
+                        .err = .expected_something_else,
+                        .token = self.state.token,
+                        .extra = .{ .expected_types = .{
+                            .number = true,
+                            .string_literal = true,
+                        } },
+                    });
+                },
+            }
+            try self.skipAnyCommas();
+        }
+
+        const id = try self.parseExpression(false);
+
+        try self.skipAnyCommas();
+
+        var class: ?*Node = null;
+        var style: ?*Node = null;
+        if (control == .control) {
+            class = try self.parseExpression(false);
+            try self.skipAnyCommas();
+            style = try self.parseExpression(false);
+            try self.skipAnyCommas();
+        }
+
+        const x = try self.parseExpression(false);
+        _ = try self.parseOptionalToken(.comma);
+        const y = try self.parseExpression(false);
+        _ = try self.parseOptionalToken(.comma);
+        const width = try self.parseExpression(false);
+        _ = try self.parseOptionalToken(.comma);
+        const height = try self.parseExpression(false);
+
+        if (control != .control) {
+            if (try self.parseOptionalToken(.comma)) {
+                style = try self.parseExpression(false);
+            }
+        }
+
+        var exstyle: ?*Node = null;
+        if (style != null and try self.parseOptionalToken(.comma)) {
+            exstyle = try self.parseExpression(false);
+        }
+        var help_id: ?*Node = null;
+        if (resource == .dialogex and exstyle != null and try self.parseOptionalToken(.comma)) {
+            help_id = try self.parseExpression(false);
+        }
+
+        var extra_data: []*Node = &[_]*Node{};
+        if (try self.parseOptionalToken(.begin)) {
+            extra_data = try self.parseRawDataBlock();
+        }
+
+        const node = try self.state.arena.create(Node.ControlStatement);
+        node.* = .{
+            .type = control_token,
+            .text = text,
+            .class = class,
+            .id = id,
+            .x = x,
+            .y = y,
+            .width = width,
+            .height = height,
+            .style = style,
+            .exstyle = exstyle,
+            .help_id = help_id,
+            .extra_data = extra_data,
+        };
+        return &node.base;
     }
 
     /// Expects the current token to be a literal token that contains the string LANGUAGE
@@ -1363,6 +1465,567 @@ test "dialogs" {
         \\ {
         \\ }
         \\
+    );
+}
+
+test "dialog controls" {
+    try testParse(
+        \\1 DIALOGEX 1, 2, 3, 4
+        \\{
+        \\    AUTO3STATE,, "mytext",, 900,, 1 2 3 4, 0, 0, 100 { "AUTO3STATE" }
+        \\    AUTOCHECKBOX "mytext", 901, 1, 2, 3, 4, 0, 0, 100 { "AUTOCHECKBOX" }
+        \\    AUTORADIOBUTTON "mytext", 902, 1, 2, 3, 4, 0, 0, 100 { "AUTORADIOBUTTON" }
+        \\    CHECKBOX "mytext", 903, 1, 2, 3, 4, 0, 0, 100 { "CHECKBOX" }
+        \\    COMBOBOX 904,, 1 2 3 4, 0, 0, 100 { "COMBOBOX" }
+        \\    CONTROL "mytext",, 905,, "\x42UTTON",, 1,, 2 3 4 0, 0, 100 { "CONTROL (BUTTON)" }
+        \\    CONTROL 1,, 9051,, (0x80+1),, 1,, 2 3 4 0, 0, 100 { "CONTROL (0x80)" }
+        \\    CONTROL 1,, 9052,, (0x80+1),, 1,, 2 3 4 0 { "CONTROL (0x80)" }
+        \\    CTEXT "mytext", 906, 1, 2, 3, 4, 0, 0, 100 { "CTEXT" }
+        \\    CTEXT "mytext", 9061, 1, 2, 3, 4 { "CTEXT" }
+        \\    DEFPUSHBUTTON "mytext", 907, 1, 2, 3, 4, 0, 0, 100 { "DEFPUSHBUTTON" }
+        \\    EDITTEXT 908, 1, 2, 3, 4, 0, 0, 100 { "EDITTEXT" }
+        \\    HEDIT 9081, 1, 2, 3, 4, 0, 0, 100 { "HEDIT" }
+        \\    IEDIT 9082, 1, 2, 3, 4, 0, 0, 100 { "IEDIT" }
+        \\    GROUPBOX "mytext", 909, 1, 2, 3, 4, 0, 0, 100 { "GROUPBOX" }
+        \\    ICON "mytext", 910, 1, 2, 3, 4, 0, 0, 100 { "ICON" }
+        \\    LISTBOX 911, 1, 2, 3, 4, 0, 0, 100 { "LISTBOX" }
+        \\    LTEXT "mytext", 912, 1, 2, 3, 4, 0, 0, 100 { "LTEXT" }
+        \\    PUSHBOX "mytext", 913, 1, 2, 3, 4, 0, 0, 100 { "PUSHBOX" }
+        \\    PUSHBUTTON "mytext", 914, 1, 2, 3, 4, 0, 0, 100 { "PUSHBUTTON" }
+        \\    RADIOBUTTON "mytext", 915, 1, 2, 3, 4, 0, 0, 100 { "RADIOBUTTON" }
+        \\    RTEXT "mytext", 916, 1, 2, 3, 4, 0, 0, 100 { "RTEXT" }
+        \\    SCROLLBAR 917, 1, 2, 3, 4, 0, 0, 100 { "SCROLLBAR" }
+        \\    STATE3 "mytext", 918, 1, 2, 3, 4, 0, 0, 100 { "STATE3" }
+        \\    USERBUTTON "mytext", 919, 1, 2, 3, 4, 0, 0, 100 { "USERBUTTON" }
+        \\}
+    ,
+        \\root
+        \\ dialog 1 DIALOGEX [0 common_resource_attributes]
+        \\  x:
+        \\   literal 1
+        \\  y:
+        \\   literal 2
+        \\  width:
+        \\   literal 3
+        \\  height:
+        \\   literal 4
+        \\ {
+        \\  control_statement AUTO3STATE text: "mytext"
+        \\   id:
+        \\    literal 900
+        \\   x:
+        \\    literal 1
+        \\   y:
+        \\    literal 2
+        \\   width:
+        \\    literal 3
+        \\   height:
+        \\    literal 4
+        \\   style:
+        \\    literal 0
+        \\   exstyle:
+        \\    literal 0
+        \\   help_id:
+        \\    literal 100
+        \\  {
+        \\   literal "AUTO3STATE"
+        \\  }
+        \\  control_statement AUTOCHECKBOX text: "mytext"
+        \\   id:
+        \\    literal 901
+        \\   x:
+        \\    literal 1
+        \\   y:
+        \\    literal 2
+        \\   width:
+        \\    literal 3
+        \\   height:
+        \\    literal 4
+        \\   style:
+        \\    literal 0
+        \\   exstyle:
+        \\    literal 0
+        \\   help_id:
+        \\    literal 100
+        \\  {
+        \\   literal "AUTOCHECKBOX"
+        \\  }
+        \\  control_statement AUTORADIOBUTTON text: "mytext"
+        \\   id:
+        \\    literal 902
+        \\   x:
+        \\    literal 1
+        \\   y:
+        \\    literal 2
+        \\   width:
+        \\    literal 3
+        \\   height:
+        \\    literal 4
+        \\   style:
+        \\    literal 0
+        \\   exstyle:
+        \\    literal 0
+        \\   help_id:
+        \\    literal 100
+        \\  {
+        \\   literal "AUTORADIOBUTTON"
+        \\  }
+        \\  control_statement CHECKBOX text: "mytext"
+        \\   id:
+        \\    literal 903
+        \\   x:
+        \\    literal 1
+        \\   y:
+        \\    literal 2
+        \\   width:
+        \\    literal 3
+        \\   height:
+        \\    literal 4
+        \\   style:
+        \\    literal 0
+        \\   exstyle:
+        \\    literal 0
+        \\   help_id:
+        \\    literal 100
+        \\  {
+        \\   literal "CHECKBOX"
+        \\  }
+        \\  control_statement COMBOBOX
+        \\   id:
+        \\    literal 904
+        \\   x:
+        \\    literal 1
+        \\   y:
+        \\    literal 2
+        \\   width:
+        \\    literal 3
+        \\   height:
+        \\    literal 4
+        \\   style:
+        \\    literal 0
+        \\   exstyle:
+        \\    literal 0
+        \\   help_id:
+        \\    literal 100
+        \\  {
+        \\   literal "COMBOBOX"
+        \\  }
+        \\  control_statement CONTROL text: "mytext"
+        \\   class:
+        \\    literal "\x42UTTON"
+        \\   id:
+        \\    literal 905
+        \\   x:
+        \\    literal 2
+        \\   y:
+        \\    literal 3
+        \\   width:
+        \\    literal 4
+        \\   height:
+        \\    literal 0
+        \\   style:
+        \\    literal 1
+        \\   exstyle:
+        \\    literal 0
+        \\   help_id:
+        \\    literal 100
+        \\  {
+        \\   literal "CONTROL (BUTTON)"
+        \\  }
+        \\  control_statement CONTROL text: 1
+        \\   class:
+        \\    grouped_expression
+        \\    (
+        \\     binary_expression +
+        \\      literal 0x80
+        \\      literal 1
+        \\    )
+        \\   id:
+        \\    literal 9051
+        \\   x:
+        \\    literal 2
+        \\   y:
+        \\    literal 3
+        \\   width:
+        \\    literal 4
+        \\   height:
+        \\    literal 0
+        \\   style:
+        \\    literal 1
+        \\   exstyle:
+        \\    literal 0
+        \\   help_id:
+        \\    literal 100
+        \\  {
+        \\   literal "CONTROL (0x80)"
+        \\  }
+        \\  control_statement CONTROL text: 1
+        \\   class:
+        \\    grouped_expression
+        \\    (
+        \\     binary_expression +
+        \\      literal 0x80
+        \\      literal 1
+        \\    )
+        \\   id:
+        \\    literal 9052
+        \\   x:
+        \\    literal 2
+        \\   y:
+        \\    literal 3
+        \\   width:
+        \\    literal 4
+        \\   height:
+        \\    literal 0
+        \\   style:
+        \\    literal 1
+        \\  {
+        \\   literal "CONTROL (0x80)"
+        \\  }
+        \\  control_statement CTEXT text: "mytext"
+        \\   id:
+        \\    literal 906
+        \\   x:
+        \\    literal 1
+        \\   y:
+        \\    literal 2
+        \\   width:
+        \\    literal 3
+        \\   height:
+        \\    literal 4
+        \\   style:
+        \\    literal 0
+        \\   exstyle:
+        \\    literal 0
+        \\   help_id:
+        \\    literal 100
+        \\  {
+        \\   literal "CTEXT"
+        \\  }
+        \\  control_statement CTEXT text: "mytext"
+        \\   id:
+        \\    literal 9061
+        \\   x:
+        \\    literal 1
+        \\   y:
+        \\    literal 2
+        \\   width:
+        \\    literal 3
+        \\   height:
+        \\    literal 4
+        \\  {
+        \\   literal "CTEXT"
+        \\  }
+        \\  control_statement DEFPUSHBUTTON text: "mytext"
+        \\   id:
+        \\    literal 907
+        \\   x:
+        \\    literal 1
+        \\   y:
+        \\    literal 2
+        \\   width:
+        \\    literal 3
+        \\   height:
+        \\    literal 4
+        \\   style:
+        \\    literal 0
+        \\   exstyle:
+        \\    literal 0
+        \\   help_id:
+        \\    literal 100
+        \\  {
+        \\   literal "DEFPUSHBUTTON"
+        \\  }
+        \\  control_statement EDITTEXT
+        \\   id:
+        \\    literal 908
+        \\   x:
+        \\    literal 1
+        \\   y:
+        \\    literal 2
+        \\   width:
+        \\    literal 3
+        \\   height:
+        \\    literal 4
+        \\   style:
+        \\    literal 0
+        \\   exstyle:
+        \\    literal 0
+        \\   help_id:
+        \\    literal 100
+        \\  {
+        \\   literal "EDITTEXT"
+        \\  }
+        \\  control_statement HEDIT
+        \\   id:
+        \\    literal 9081
+        \\   x:
+        \\    literal 1
+        \\   y:
+        \\    literal 2
+        \\   width:
+        \\    literal 3
+        \\   height:
+        \\    literal 4
+        \\   style:
+        \\    literal 0
+        \\   exstyle:
+        \\    literal 0
+        \\   help_id:
+        \\    literal 100
+        \\  {
+        \\   literal "HEDIT"
+        \\  }
+        \\  control_statement IEDIT
+        \\   id:
+        \\    literal 9082
+        \\   x:
+        \\    literal 1
+        \\   y:
+        \\    literal 2
+        \\   width:
+        \\    literal 3
+        \\   height:
+        \\    literal 4
+        \\   style:
+        \\    literal 0
+        \\   exstyle:
+        \\    literal 0
+        \\   help_id:
+        \\    literal 100
+        \\  {
+        \\   literal "IEDIT"
+        \\  }
+        \\  control_statement GROUPBOX text: "mytext"
+        \\   id:
+        \\    literal 909
+        \\   x:
+        \\    literal 1
+        \\   y:
+        \\    literal 2
+        \\   width:
+        \\    literal 3
+        \\   height:
+        \\    literal 4
+        \\   style:
+        \\    literal 0
+        \\   exstyle:
+        \\    literal 0
+        \\   help_id:
+        \\    literal 100
+        \\  {
+        \\   literal "GROUPBOX"
+        \\  }
+        \\  control_statement ICON text: "mytext"
+        \\   id:
+        \\    literal 910
+        \\   x:
+        \\    literal 1
+        \\   y:
+        \\    literal 2
+        \\   width:
+        \\    literal 3
+        \\   height:
+        \\    literal 4
+        \\   style:
+        \\    literal 0
+        \\   exstyle:
+        \\    literal 0
+        \\   help_id:
+        \\    literal 100
+        \\  {
+        \\   literal "ICON"
+        \\  }
+        \\  control_statement LISTBOX
+        \\   id:
+        \\    literal 911
+        \\   x:
+        \\    literal 1
+        \\   y:
+        \\    literal 2
+        \\   width:
+        \\    literal 3
+        \\   height:
+        \\    literal 4
+        \\   style:
+        \\    literal 0
+        \\   exstyle:
+        \\    literal 0
+        \\   help_id:
+        \\    literal 100
+        \\  {
+        \\   literal "LISTBOX"
+        \\  }
+        \\  control_statement LTEXT text: "mytext"
+        \\   id:
+        \\    literal 912
+        \\   x:
+        \\    literal 1
+        \\   y:
+        \\    literal 2
+        \\   width:
+        \\    literal 3
+        \\   height:
+        \\    literal 4
+        \\   style:
+        \\    literal 0
+        \\   exstyle:
+        \\    literal 0
+        \\   help_id:
+        \\    literal 100
+        \\  {
+        \\   literal "LTEXT"
+        \\  }
+        \\  control_statement PUSHBOX text: "mytext"
+        \\   id:
+        \\    literal 913
+        \\   x:
+        \\    literal 1
+        \\   y:
+        \\    literal 2
+        \\   width:
+        \\    literal 3
+        \\   height:
+        \\    literal 4
+        \\   style:
+        \\    literal 0
+        \\   exstyle:
+        \\    literal 0
+        \\   help_id:
+        \\    literal 100
+        \\  {
+        \\   literal "PUSHBOX"
+        \\  }
+        \\  control_statement PUSHBUTTON text: "mytext"
+        \\   id:
+        \\    literal 914
+        \\   x:
+        \\    literal 1
+        \\   y:
+        \\    literal 2
+        \\   width:
+        \\    literal 3
+        \\   height:
+        \\    literal 4
+        \\   style:
+        \\    literal 0
+        \\   exstyle:
+        \\    literal 0
+        \\   help_id:
+        \\    literal 100
+        \\  {
+        \\   literal "PUSHBUTTON"
+        \\  }
+        \\  control_statement RADIOBUTTON text: "mytext"
+        \\   id:
+        \\    literal 915
+        \\   x:
+        \\    literal 1
+        \\   y:
+        \\    literal 2
+        \\   width:
+        \\    literal 3
+        \\   height:
+        \\    literal 4
+        \\   style:
+        \\    literal 0
+        \\   exstyle:
+        \\    literal 0
+        \\   help_id:
+        \\    literal 100
+        \\  {
+        \\   literal "RADIOBUTTON"
+        \\  }
+        \\  control_statement RTEXT text: "mytext"
+        \\   id:
+        \\    literal 916
+        \\   x:
+        \\    literal 1
+        \\   y:
+        \\    literal 2
+        \\   width:
+        \\    literal 3
+        \\   height:
+        \\    literal 4
+        \\   style:
+        \\    literal 0
+        \\   exstyle:
+        \\    literal 0
+        \\   help_id:
+        \\    literal 100
+        \\  {
+        \\   literal "RTEXT"
+        \\  }
+        \\  control_statement SCROLLBAR
+        \\   id:
+        \\    literal 917
+        \\   x:
+        \\    literal 1
+        \\   y:
+        \\    literal 2
+        \\   width:
+        \\    literal 3
+        \\   height:
+        \\    literal 4
+        \\   style:
+        \\    literal 0
+        \\   exstyle:
+        \\    literal 0
+        \\   help_id:
+        \\    literal 100
+        \\  {
+        \\   literal "SCROLLBAR"
+        \\  }
+        \\  control_statement STATE3 text: "mytext"
+        \\   id:
+        \\    literal 918
+        \\   x:
+        \\    literal 1
+        \\   y:
+        \\    literal 2
+        \\   width:
+        \\    literal 3
+        \\   height:
+        \\    literal 4
+        \\   style:
+        \\    literal 0
+        \\   exstyle:
+        \\    literal 0
+        \\   help_id:
+        \\    literal 100
+        \\  {
+        \\   literal "STATE3"
+        \\  }
+        \\  control_statement USERBUTTON text: "mytext"
+        \\   id:
+        \\    literal 919
+        \\   x:
+        \\    literal 1
+        \\   y:
+        \\    literal 2
+        \\   width:
+        \\    literal 3
+        \\   height:
+        \\    literal 4
+        \\   style:
+        \\    literal 0
+        \\   exstyle:
+        \\    literal 0
+        \\   help_id:
+        \\    literal 100
+        \\  {
+        \\   literal "USERBUTTON"
+        \\  }
+        \\ }
+        \\
+    );
+
+    // help_id param is not supported if the resource is DIALOG
+    try testParseError("expected '<'}' or END>', got ','",
+        \\1 DIALOG 1, 2, 3, 4
+        \\{
+        \\    AUTO3STATE,, "mytext",, 900,, 1 2 3 4, 0, 0, 100 { "AUTO3STATE" }
+        \\}
     );
 }
 

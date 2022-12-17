@@ -115,6 +115,7 @@ pub const Node = struct {
         accelerators,
         accelerator,
         dialog,
+        control_statement,
         string_table,
         string_table_string,
         language_statement,
@@ -133,6 +134,7 @@ pub const Node = struct {
                 .accelerators => Accelerators,
                 .accelerator => Accelerator,
                 .dialog => Dialog,
+                .control_statement => ControlStatement,
                 .string_table => StringTable,
                 .string_table_string => StringTableString,
                 .language_statement => LanguageStatement,
@@ -222,6 +224,23 @@ pub const Node = struct {
         begin_token: Token,
         controls: []*Node,
         end_token: Token,
+    };
+
+    pub const ControlStatement = struct {
+        base: Node = .{ .id = .control_statement },
+        type: Token,
+        text: ?Token,
+        /// Only relevant for the CONTROL control
+        class: ?*Node,
+        id: *Node,
+        x: *Node,
+        y: *Node,
+        width: *Node,
+        height: *Node,
+        style: ?*Node,
+        exstyle: ?*Node,
+        help_id: ?*Node,
+        extra_data: []*Node,
     };
 
     pub const StringTable = struct {
@@ -350,6 +369,10 @@ pub const Node = struct {
             .dialog => {
                 const casted = @fieldParentPtr(Node.Dialog, "base", node);
                 return casted.id;
+            },
+            .control_statement => {
+                const casted = @fieldParentPtr(Node.ControlStatement, "base", node);
+                return casted.type;
             },
             .string_table => {
                 const casted = @fieldParentPtr(Node.StringTable, "base", node);
@@ -480,6 +503,42 @@ pub const Node = struct {
                 try writer.writeByteNTimes(' ', indent);
                 try writer.writeAll(dialog.end_token.slice(tree.source));
                 try writer.writeAll("\n");
+            },
+            .control_statement => {
+                const control = @fieldParentPtr(Node.ControlStatement, "base", node);
+                try writer.print(" {s}", .{control.type.slice(tree.source)});
+                if (control.text) |text| {
+                    try writer.print(" text: {s}", .{text.slice(tree.source)});
+                }
+                try writer.writeByte('\n');
+                if (control.class) |class| {
+                    try writer.writeByteNTimes(' ', indent + 1);
+                    try writer.writeAll("class:\n");
+                    try class.dump(tree, writer, indent + 2);
+                }
+                inline for (.{ "id", "x", "y", "width", "height" }) |arg| {
+                    try writer.writeByteNTimes(' ', indent + 1);
+                    try writer.writeAll(arg ++ ":\n");
+                    try @field(control, arg).dump(tree, writer, indent + 2);
+                }
+                inline for (.{ "style", "exstyle", "help_id" }) |arg| {
+                    if (@field(control, arg)) |val_node| {
+                        try writer.writeByteNTimes(' ', indent + 1);
+                        try writer.writeAll(arg ++ ":\n");
+                        try val_node.dump(tree, writer, indent + 2);
+                    }
+                }
+                if (control.extra_data.len > 0) {
+                    try writer.writeByteNTimes(' ', indent);
+                    try writer.writeAll("{"); // TODO real begin token?
+                    try writer.writeAll("\n");
+                    for (control.extra_data) |data_node| {
+                        try data_node.dump(tree, writer, indent + 1);
+                    }
+                    try writer.writeByteNTimes(' ', indent);
+                    try writer.writeAll("}"); // TODO real end token?
+                    try writer.writeAll("\n");
+                }
             },
             .string_table => {
                 const string_table = @fieldParentPtr(Node.StringTable, "base", node);

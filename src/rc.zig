@@ -140,6 +140,63 @@ pub const OptionalStatements = enum {
     });
 };
 
+pub const Control = enum {
+    auto3state,
+    autocheckbox,
+    autoradiobutton,
+    checkbox,
+    combobox,
+    control,
+    ctext,
+    defpushbutton,
+    edittext,
+    hedit,
+    iedit,
+    groupbox,
+    icon,
+    listbox,
+    ltext,
+    pushbox,
+    pushbutton,
+    radiobutton,
+    rtext,
+    scrollbar,
+    state3,
+    userbutton,
+
+    pub const map = utils.ComptimeCaseInsensitiveStringMap(Control, .{
+        .{ "AUTO3STATE", .auto3state },
+        .{ "AUTOCHECKBOX", .autocheckbox },
+        .{ "AUTORADIOBUTTON", .autoradiobutton },
+        .{ "CHECKBOX", .checkbox },
+        .{ "COMBOBOX", .combobox },
+        .{ "CONTROL", .control },
+        .{ "CTEXT", .ctext },
+        .{ "DEFPUSHBUTTON", .defpushbutton },
+        .{ "EDITTEXT", .edittext },
+        .{ "HEDIT", .hedit },
+        .{ "IEDIT", .iedit },
+        .{ "GROUPBOX", .groupbox },
+        .{ "ICON", .icon },
+        .{ "LISTBOX", .listbox },
+        .{ "LTEXT", .ltext },
+        .{ "PUSHBOX", .pushbox },
+        .{ "PUSHBUTTON", .pushbutton },
+        .{ "RADIOBUTTON", .radiobutton },
+        .{ "RTEXT", .rtext },
+        .{ "SCROLLBAR", .scrollbar },
+        .{ "STATE3", .state3 },
+        .{ "USERBUTTON", .userbutton },
+    });
+
+    pub fn hasTextParam(control: Control) bool {
+        switch (control) {
+            .scrollbar, .listbox, .iedit, .hedit, .edittext, .combobox => return false,
+            else => return true,
+        }
+    }
+};
+
 /// Keywords that are be the first token in a statement and (if so) dictate how the rest
 /// of the statement is parsed.
 pub const TopLevelKeywords = enum {
