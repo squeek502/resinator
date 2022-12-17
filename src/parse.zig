@@ -229,11 +229,7 @@ pub const Parser = struct {
 
                     // The comma between point_size and typeface is both optional and
                     // there can be any number of them
-                    while (true) {
-                        const maybe_comma = try self.lookaheadToken(.normal);
-                        if (maybe_comma.id != .comma) break;
-                        self.nextToken(.normal) catch unreachable;
-                    }
+                    try self.skipAnyCommas();
 
                     try self.nextToken(.normal);
                     const typeface = self.state.token;
@@ -257,25 +253,19 @@ pub const Parser = struct {
                         switch (resource) {
                             .dialogex => {
                                 {
-                                    const maybe_comma = try self.lookaheadToken(.normal);
-                                    if (maybe_comma.id != .comma) break :ex_specific;
-                                    try self.nextToken(.normal);
+                                    if (!(try self.parseOptionalToken(.comma))) break :ex_specific;
 
                                     ex_specific.weight = try self.parseExpression(false);
                                     try self.checkNumberExpression(ex_specific.weight.?);
                                 }
                                 {
-                                    const maybe_comma = try self.lookaheadToken(.normal);
-                                    if (maybe_comma.id != .comma) break :ex_specific;
-                                    try self.nextToken(.normal);
+                                    if (!(try self.parseOptionalToken(.comma))) break :ex_specific;
 
                                     ex_specific.italic = try self.parseExpression(false);
                                     try self.checkNumberExpression(ex_specific.italic.?);
                                 }
                                 {
-                                    const maybe_comma = try self.lookaheadToken(.normal);
-                                    if (maybe_comma.id != .comma) break :ex_specific;
-                                    try self.nextToken(.normal);
+                                    if (!(try self.parseOptionalToken(.comma))) break :ex_specific;
 
                                     ex_specific.char_set = try self.parseExpression(false);
                                     try self.checkNumberExpression(ex_specific.char_set.?);
@@ -352,17 +342,9 @@ pub const Parser = struct {
                         });
                     }
 
-                    try self.nextToken(.normal);
-                    const comma_token: ?Token = comma: {
-                        if (self.state.token.id == .comma) {
-                            const token = self.state.token;
-                            try self.nextToken(.normal);
-                            break :comma token;
-                        } else {
-                            break :comma null;
-                        }
-                    };
+                    const comma_token: ?Token = if (try self.parseOptionalToken(.comma)) self.state.token else null;
 
+                    try self.nextToken(.normal);
                     if (self.state.token.id != .quoted_ascii_string and self.state.token.id != .quoted_wide_string) {
                         return self.addErrorDetailsAndFail(ErrorDetails{
                             .err = .expected_something_else,
@@ -489,9 +471,7 @@ pub const Parser = struct {
 
                     var type_and_options = std.ArrayListUnmanaged(Token){};
                     while (true) {
-                        const maybe_comma = try self.lookaheadToken(.normal);
-                        if (maybe_comma.id != .comma) break;
-                        self.nextToken(.normal) catch unreachable;
+                        if (!(try self.parseOptionalToken(.comma))) break;
 
                         try self.nextToken(.normal);
                         if (!rc.AcceleratorTypeAndOptions.map.has(self.tokenSlice())) {
@@ -536,18 +516,15 @@ pub const Parser = struct {
 
                 const x = try self.parseExpression(false);
                 try self.checkNumberExpression(x);
-                try self.nextToken(.normal);
-                try self.check(.comma);
+                _ = try self.parseOptionalToken(.comma);
 
                 const y = try self.parseExpression(false);
                 try self.checkNumberExpression(y);
-                try self.nextToken(.normal);
-                try self.check(.comma);
+                _ = try self.parseOptionalToken(.comma);
 
                 const width = try self.parseExpression(false);
                 try self.checkNumberExpression(width);
-                try self.nextToken(.normal);
-                try self.check(.comma);
+                _ = try self.parseOptionalToken(.comma);
 
                 const height = try self.parseExpression(false);
                 try self.checkNumberExpression(height);
@@ -843,6 +820,23 @@ pub const Parser = struct {
         };
 
         return &node.base;
+    }
+
+    /// Skips any amount of commas (including zero)
+    /// In other words, it will skip the regex `,*`
+    /// Assumes the token(s) should be parsed with `.normal` as the method.
+    fn skipAnyCommas(self: *Self) !void {
+        while (try self.parseOptionalToken(.comma)) {}
+    }
+
+    /// Advances the current token only if the token's id matches the specified `id`.
+    /// Assumes the token should be parsed with `.normal` as the method.
+    /// Returns true if the token matched, false otherwise.
+    fn parseOptionalToken(self: *Self, id: Token.Id) Error!bool {
+        const maybe_token = try self.lookaheadToken(.normal);
+        if (maybe_token.id != id) return false;
+        self.nextToken(.normal) catch unreachable;
+        return true;
     }
 
     fn addErrorDetails(self: *Self, details: ErrorDetails) Allocator.Error!void {
