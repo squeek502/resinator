@@ -3,7 +3,10 @@ const resinator = @import("resinator");
 const Allocator = std.mem.Allocator;
 
 pub fn expectSameResOutput(allocator: Allocator, source: []const u8, buffer: *std.ArrayList(u8)) !void {
-    const expected_res: ?[]const u8 = resinator.compile.getExpectedFromWindowsRC(allocator, source) catch null;
+    const expected_res: ?[]const u8 = resinator.compile.getExpectedFromWindowsRC(allocator, source) catch |err| switch (err) {
+        error.ExitCodeFailure, error.ProcessTerminated => null,
+        else => |e| return e,
+    };
     defer if (expected_res != null) allocator.free(expected_res.?);
 
     var diagnostics = resinator.errors.Diagnostics.init(allocator);

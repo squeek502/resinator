@@ -1339,8 +1339,8 @@ pub fn getExpectedFromWindowsRCWithDir(allocator: Allocator, source: []const u8,
     var result = try std.ChildProcess.exec(.{
         .allocator = allocator,
         .argv = &[_][]const u8{
-            // TODO: Don't hardcode this
-            "C:\\Program Files (x86)\\Windows Kits\\10\\bin\\10.0.19041.0\\x86\\rc.exe",
+            // Note: This relies on `rc.exe` being in the PATH
+            "rc.exe",
             "test.rc",
         },
         .cwd = cwd_path,
