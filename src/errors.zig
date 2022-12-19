@@ -80,8 +80,8 @@ pub const ErrorDetails = struct {
 
     comptime {
         // all fields in the extra union should be 32 bits or less
-        for (std.meta.fields(std.meta.fieldInfo(ErrorDetails, .extra).field_type)) |field| {
-            std.debug.assert(@bitSizeOf(field.field_type) <= 32);
+        for (std.meta.fields(std.meta.fieldInfo(ErrorDetails, .extra).type)) |field| {
+            std.debug.assert(@bitSizeOf(field.type) <= 32);
         }
     }
 
@@ -128,7 +128,7 @@ pub const ErrorDetails = struct {
 
             var i: usize = 0;
             inline for (struct_info.fields) |field_info| {
-                if (field_info.field_type != bool) continue;
+                if (field_info.type != bool) continue;
                 if (i == num_set_bits) return;
                 if (@field(self, field_info.name)) {
                     try writer.writeAll(strings.get(field_info.name).?);
