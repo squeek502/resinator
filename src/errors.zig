@@ -181,6 +181,7 @@ pub const ErrorDetails = struct {
         file_open_error,
         invalid_accelerator_key,
         accelerator_type_required,
+        rc_would_miscompile_control_padding,
 
         // Literals
         /// `number` is populated
@@ -270,6 +271,10 @@ pub const ErrorDetails = struct {
             },
             .accelerator_type_required => {
                 try writer.print("accelerator type [ASCII or VIRTKEY] required when key is an integer", .{});
+            },
+            .rc_would_miscompile_control_padding => switch (self.type) {
+                .err, .warning => return writer.print("the padding before this control would be miscompiled by the Win32 RC compiler (it would insert 2 extra bytes of padding)", .{}),
+                .note => return writer.print("to avoid the potential miscompilation, consider removing any 'extra data' blocks from the controls in this dialog", .{}),
             },
             .rc_would_miscompile_codepoint_byte_swap => switch (self.type) {
                 .err, .warning => return writer.print("codepoint U+{X} within a string literal would be miscompiled by the Win32 RC compiler (the bytes of the UTF-16 code unit would be swapped)", .{self.extra.number}),

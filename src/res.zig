@@ -125,6 +125,59 @@ pub const Language = packed struct(u16) {
     sublanguage_id: u6 = 0x01, // SUBLANG_ENGLISH_US (since primary is ENGLISH)
 };
 
+/// https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-dlgitemtemplate#remarks
+pub const ControlClass = enum(u16) {
+    button = 0x80,
+    edit = 0x81,
+    static = 0x82,
+    listbox = 0x83,
+    scrollbar = 0x84,
+    combobox = 0x85,
+
+    pub fn fromControl(control: rc.Control) ?ControlClass {
+        return switch (control) {
+            // zig fmt: off
+            .auto3state, .autocheckbox, .autoradiobutton,
+            .checkbox, .defpushbutton, .groupbox, .pushbox,
+            .pushbutton, .radiobutton, .state3, .userbutton => .button,
+            // zig fmt: on
+            .combobox => .combobox,
+            .control => null,
+            .ctext, .icon, .ltext, .rtext => .static,
+            .edittext, .hedit, .iedit => .edit,
+            .listbox => .listbox,
+            .scrollbar => .scrollbar,
+        };
+    }
+
+    pub fn getImpliedStyle(control: rc.Control) u32 {
+        var style = WS.CHILD | WS.VISIBLE;
+        switch (control) {
+            .auto3state => style |= BS.AUTO3STATE | WS.TABSTOP,
+            .autocheckbox => style |= BS.AUTOCHECKBOX | WS.TABSTOP,
+            .autoradiobutton => style |= BS.AUTORADIOBUTTON,
+            .checkbox => style |= BS.CHECKBOX | WS.TABSTOP,
+            .combobox => {},
+            .control => @panic("TODO"),
+            .ctext => style |= SS.CENTER | WS.GROUP,
+            .defpushbutton => style |= BS.DEFPUSHBUTTON | WS.TABSTOP,
+            .edittext, .hedit, .iedit => style |= WS.TABSTOP | WS.BORDER,
+            .groupbox => style |= BS.GROUPBOX,
+            .icon => style |= SS.ICON,
+            .listbox => style |= LBS.NOTIFY | WS.BORDER,
+            .ltext => style |= WS.GROUP,
+            .pushbox => style |= BS.PUSHBOX | WS.TABSTOP,
+            .pushbutton => style |= WS.TABSTOP,
+            .radiobutton => style |= BS.RADIOBUTTON,
+            .rtext => style |= SS.RIGHT | WS.GROUP,
+            .scrollbar => {},
+            .state3 => style |= BS.@"3STATE" | WS.TABSTOP,
+            .userbutton => style |= BS.USERBUTTON | WS.TABSTOP,
+        }
+        return style;
+    }
+};
+
 pub const NameOrOrdinal = union(enum) {
     name: [:0]const u16,
     ordinal: u16,
@@ -160,6 +213,10 @@ pub const NameOrOrdinal = union(enum) {
                 try writer.writeIntLittle(u16, ordinal);
             },
         }
+    }
+
+    pub fn writeEmpty(writer: anytype) !void {
+        try writer.writeIntLittle(u16, 0);
     }
 
     pub fn fromString(allocator: Allocator, bytes: SourceBytes) !NameOrOrdinal {
@@ -774,3 +831,72 @@ test "forced ordinal" {
     try std.testing.expectEqual(@as(u16, 0x122), ForcedOrdinal.fromUtf16Le(&[_:0]u16{ '0', 'Œ' }));
     try std.testing.expectEqual(@as(u16, 0x4AF0), ForcedOrdinal.fromUtf16Le(std.unicode.utf8ToUtf16LeStringLiteral("0\u{10100}")));
 }
+
+/// Window Styles from WinUser.h
+pub const WS = struct {
+    pub const OVERLAPPED: u32 = 0x00000000;
+    pub const POPUP: u32 = 0x80000000;
+    pub const CHILD: u32 = 0x40000000;
+    pub const MINIMIZE: u32 = 0x20000000;
+    pub const VISIBLE: u32 = 0x10000000;
+    pub const DISABLED: u32 = 0x08000000;
+    pub const CLIPSIBLINGS: u32 = 0x04000000;
+    pub const CLIPCHILDREN: u32 = 0x02000000;
+    pub const MAXIMIZE: u32 = 0x01000000;
+    pub const CAPTION: u32 = BORDER | DLGFRAME;
+    pub const BORDER: u32 = 0x00800000;
+    pub const DLGFRAME: u32 = 0x00400000;
+    pub const VSCROLL: u32 = 0x00200000;
+    pub const HSCROLL: u32 = 0x00100000;
+    pub const SYSMENU: u32 = 0x00080000;
+    pub const THICKFRAME: u32 = 0x00040000;
+    pub const GROUP: u32 = 0x00020000;
+    pub const TABSTOP: u32 = 0x00010000;
+
+    pub const MINIMIZEBOX: u32 = 0x00020000;
+    pub const MAXIMIZEBOX: u32 = 0x00010000;
+
+    pub const TILED: u32 = OVERLAPPED;
+    pub const ICONIC: u32 = MINIMIZE;
+    pub const SIZEBOX: u32 = THICKFRAME;
+    pub const TILEDWINDOW: u32 = OVERLAPPEDWINDOW;
+
+    // Common Window Styles
+    pub const OVERLAPPEDWINDOW: u32 = OVERLAPPED | CAPTION | SYSMENU | THICKFRAME | MINIMIZEBOX | MAXIMIZEBOX;
+    pub const POPUPWINDOW: u32 = POPUP | BORDER | SYSMENU;
+    pub const CHILDWINDOW: u32 = CHILD;
+};
+
+/// Button Control Styles from WinUser.h
+/// This is not complete, it only contains what is needed
+pub const BS = struct {
+    pub const PUSHBUTTON: u32 = 0x00000000;
+    pub const DEFPUSHBUTTON: u32 = 0x00000001;
+    pub const CHECKBOX: u32 = 0x00000002;
+    pub const AUTOCHECKBOX: u32 = 0x00000003;
+    pub const RADIOBUTTON: u32 = 0x00000004;
+    pub const @"3STATE": u32 = 0x00000005;
+    pub const AUTO3STATE: u32 = 0x00000006;
+    pub const GROUPBOX: u32 = 0x00000007;
+    pub const USERBUTTON: u32 = 0x00000008;
+    pub const AUTORADIOBUTTON: u32 = 0x00000009;
+    pub const PUSHBOX: u32 = 0x0000000A;
+    pub const OWNERDRAW: u32 = 0x0000000B;
+    pub const TYPEMASK: u32 = 0x0000000F;
+    pub const LEFTTEXT: u32 = 0x00000020;
+};
+
+/// Static Control Constants from WinUser.h
+/// This is not complete, it only contains what is needed
+pub const SS = struct {
+    pub const LEFT: u32 = 0x00000000;
+    pub const CENTER: u32 = 0x00000001;
+    pub const RIGHT: u32 = 0x00000002;
+    pub const ICON: u32 = 0x00000003;
+};
+
+/// Listbox Styles from WinUser.h
+/// This is not complete, it only contains what is needed
+pub const LBS = struct {
+    pub const NOTIFY: u32 = 0x0001;
+};

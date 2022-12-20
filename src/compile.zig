@@ -466,8 +466,11 @@ pub const Compiler = struct {
     }
 
     pub fn writeDataPadding(writer: anytype, data_size: u32) !void {
-        const padding_after_data = std.mem.alignForward(data_size, 4) - data_size;
-        try writer.writeByteNTimes(0, padding_after_data);
+        try writer.writeByteNTimes(0, numPaddingBytesNeeded(data_size));
+    }
+
+    pub fn numPaddingBytesNeeded(data_size: u32) u3 {
+        return @intCast(u3, (4 -% data_size) % 4);
     }
 
     pub fn evaluateAcceleratorKeyExpression(self: *Compiler, node: *Node, is_virt: bool) !u16 {
@@ -562,7 +565,7 @@ pub const Compiler = struct {
         std.debug.assert(resource == .dialog or resource == .dialogex);
 
         const OptionalStatementValues = struct {
-            style: u32 = 0x80880000, // WS_SYSMENU | WS_BORDER | WS_POPUP
+            style: u32 = res.WS.SYSMENU | res.WS.BORDER | res.WS.POPUP,
             exstyle: u32 = 0,
             class: ?NameOrOrdinal = null,
             menu: ?NameOrOrdinal = null,
@@ -741,6 +744,118 @@ pub const Compiler = struct {
         // Font
         if (optional_statement_values.font) |font| {
             try self.writeDialogFont(resource, font, data_writer);
+        }
+
+        for (node.controls) |control_node| {
+            const control = @fieldParentPtr(Node.ControlStatement, "base", control_node);
+            const control_type = rc.Control.map.get(control.type.slice(self.source)).?;
+
+            // Each control must be at a 4-byte boundary. However, the Windows RC
+            // compiler will miscompile controls if their extra data ends on an odd offset.
+            // We will avoid the miscompilation and emit a warning.
+            const num_padding = numPaddingBytesNeeded(@intCast(u32, data_buffer.items.len));
+            if (num_padding == 1 or num_padding == 3) {
+                try self.addErrorDetails(.{
+                    .err = .rc_would_miscompile_control_padding,
+                    .type = .warning,
+                    .token = control.type,
+                });
+                try self.addErrorDetails(.{
+                    .err = .rc_would_miscompile_control_padding,
+                    .type = .note,
+                    .print_source_line = false,
+                    .token = control.type,
+                });
+            }
+            try data_writer.writeByteNTimes(0, num_padding);
+
+            var style: u32 = if (control.style) |style_expression|
+                evaluateNumberExpression(style_expression, self.source, self.code_pages).value
+            else
+                0;
+
+            // Certain styles are implied by the control type
+            style |= res.ControlClass.getImpliedStyle(control_type);
+
+            const exstyle: u32 = if (control.exstyle) |exstyle_expression|
+                evaluateNumberExpression(exstyle_expression, self.source, self.code_pages).value
+            else
+                0;
+
+            switch (resource) {
+                .dialog => {
+                    // Note: Reverse order from DIALOGEX
+                    try data_writer.writeIntLittle(u32, style);
+                    try data_writer.writeIntLittle(u32, exstyle);
+                },
+                .dialogex => {
+                    const help_id: u32 = if (control.help_id) |help_id_expression|
+                        evaluateNumberExpression(help_id_expression, self.source, self.code_pages).value
+                    else
+                        0;
+                    try data_writer.writeIntLittle(u32, help_id);
+                    // Note: Reverse order from DIALOG
+                    try data_writer.writeIntLittle(u32, exstyle);
+                    try data_writer.writeIntLittle(u32, style);
+                },
+                else => unreachable,
+            }
+
+            const control_x = evaluateNumberExpression(control.x, self.source, self.code_pages);
+            const control_y = evaluateNumberExpression(control.y, self.source, self.code_pages);
+            const control_width = evaluateNumberExpression(control.width, self.source, self.code_pages);
+            const control_height = evaluateNumberExpression(control.height, self.source, self.code_pages);
+
+            try data_writer.writeIntLittle(u16, control_x.asWord());
+            try data_writer.writeIntLittle(u16, control_y.asWord());
+            try data_writer.writeIntLittle(u16, control_width.asWord());
+            try data_writer.writeIntLittle(u16, control_height.asWord());
+
+            const control_id = evaluateNumberExpression(control.id, self.source, self.code_pages);
+            switch (resource) {
+                .dialog => try data_writer.writeIntLittle(u16, control_id.asWord()),
+                .dialogex => try data_writer.writeIntLittle(u32, control_id.value),
+                else => unreachable,
+            }
+
+            if (res.ControlClass.fromControl(control_type)) |control_class| {
+                const ordinal = NameOrOrdinal{ .ordinal = @enumToInt(control_class) };
+                try ordinal.write(data_writer);
+            } else {
+                @panic("TODO: generic CONTROL class parsing");
+            }
+
+            if (control.text) |text_token| {
+                const bytes = SourceBytes{
+                    .slice = text_token.slice(self.source),
+                    .code_page = self.code_pages.getForToken(text_token),
+                };
+                if (NameOrOrdinal.maybeOrdinalFromString(bytes)) |ordinal| {
+                    try ordinal.write(data_writer);
+                } else {
+                    const column = text_token.calculateColumn(self.source, 8, null);
+                    const text = try parseQuotedStringAsWideString(self.allocator, bytes, .{
+                        .start_column = column,
+                        .diagnostics = .{ .diagnostics = self.diagnostics, .token = text_token },
+                    });
+                    defer self.allocator.free(text);
+                    const name_or_ordinal = NameOrOrdinal{ .name = text };
+                    try name_or_ordinal.write(data_writer);
+                }
+            } else {
+                try NameOrOrdinal.writeEmpty(data_writer);
+            }
+
+            var extra_data_buf = std.ArrayListUnmanaged(u8){};
+            defer extra_data_buf.deinit(self.allocator);
+            var extra_data_writer = extra_data_buf.writer(self.allocator);
+            for (control.extra_data) |data_expression| {
+                const data = try self.evaluateDataExpression(data_expression);
+                defer data.deinit(self.allocator);
+                try data.write(extra_data_writer);
+            }
+            try data_writer.writeIntLittle(u16, @intCast(u16, extra_data_buf.items.len));
+            try data_writer.writeAll(extra_data_buf.items);
         }
 
         const data_size = @intCast(u32, data_buffer.items.len);
@@ -1766,4 +1881,59 @@ test "dialog, dialogex resource" {
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x18\x00\x00\x00 \x00\x00\x00\xff\xff\x05\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x88\x80\x00\x00\x00\x00\x00\x00\x01\x00\x02\x00\x03\x00\x04\x00\x00\x00\x00\x00\x00\x00",
         std.fs.cwd(),
     );
+    try testCompileWithOutput(
+        \\1 DIALOGEX 1, 2, 3, 4 {
+        \\  AUTO3STATE,, "mytext",, 900-1,, 1 2 3 4, 0x22222222, 0x12345678, 100 { "AUTO3STATE" }
+        \\}
+    ,
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00V\x00\x00\x00 \x00\x00\x00\xff\xff\x05\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x88\x80\x01\x00\x01\x00\x02\x00\x03\x00\x04\x00\x00\x00\x00\x00\x00\x00d\x00\x00\x00xV4\x12&\"#r\x01\x00\x02\x00\x03\x00\x04\x00\x83\x03\x00\x00\xff\xff\x80\x00m\x00y\x00t\x00e\x00x\x00t\x00\x00\x00\n\x00AUTO3STATE\x00\x00",
+        std.fs.cwd(),
+    );
+    // Note: Extra data is not tested extensively here due to a miscompilation in the Windows RC
+    //       compiler where it would add extra padding bytes if the data of a control ends on
+    //       an odd offset. We avoid that here by ensuring that the extra data has an even number
+    //       of bytes.
+    try testCompileWithOutput(
+        \\1 DIALOGEX 1, 2, 3, 4
+        \\{
+        \\    AUTO3STATE,, "mytext",, 900,, 1 2 3 4, 0, 0, 100 { "1234" }
+        \\    AUTOCHECKBOX "mytext", 901, 1, 2, 3, 4, 0, 0, 100
+        \\    AUTORADIOBUTTON "mytext", 902, 1, 2, 3, 4, 0, 0, 100
+        \\    CHECKBOX "mytext", 903, 1, 2, 3, 4, 0, 0, 100
+        \\    COMBOBOX 904,, 1 2 3 4, 0, 0, 100
+        \\    CTEXT "mytext", 906, 1, 2, 3, 4, 0, 0, 100
+        \\    CTEXT "mytext", 9061, 1, 2, 3, 4
+        \\    DEFPUSHBUTTON "mytext", 907, 1, 2, 3, 4, 0, 0, 100
+        \\    EDITTEXT 908, 1, 2, 3, 4, 0, 0, 100
+        \\    HEDIT 9081, 1, 2, 3, 4, 0, 0, 100
+        \\    IEDIT 9082, 1, 2, 3, 4, 0, 0, 100
+        \\    GROUPBOX "mytext", 909, 1, 2, 3, 4, 0, 0, 100
+        \\    ICON "mytext", 910, 1, 2, 3, 4, 0, 0, 100
+        \\    LISTBOX 911, 1, 2, 3, 4, 0, 0, 100
+        \\    LTEXT "mytext", 912, 1, 2, 3, 4, 0, 0, 100
+        \\    PUSHBOX "mytext", 913, 1, 2, 3, 4, 0, 0, 100
+        \\    PUSHBUTTON "mytext", 914, 1, 2, 3, 4, 0, 0, 100
+        \\    RADIOBUTTON "mytext", 915, 1, 2, 3, 4, 0, 0, 100
+        \\    RTEXT "mytext", 916, 1, 2, 3, 4, 0, 0, 100
+        \\    SCROLLBAR 917, 1, 2, 3, 4, 0, 0, 100
+        \\    STATE3 "mytext", 918, 1, 2, 3, 4, 0, 0, 100
+        \\    USERBUTTON "mytext", 919, 1, 2, 3, 4, 0, 0, 100
+        \\}
+    ,
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xa4\x03\x00\x00 \x00\x00\x00\xff\xff\x05\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x88\x80\x16\x00\x01\x00\x02\x00\x03\x00\x04\x00\x00\x00\x00\x00\x00\x00d\x00\x00\x00\x00\x00\x00\x00\x06\x00\x01P\x01\x00\x02\x00\x03\x00\x04\x00\x84\x03\x00\x00\xff\xff\x80\x00m\x00y\x00t\x00e\x00x\x00t\x00\x00\x00\x04\x001234d\x00\x00\x00\x00\x00\x00\x00\x03\x00\x01P\x01\x00\x02\x00\x03\x00\x04\x00\x85\x03\x00\x00\xff\xff\x80\x00m\x00y\x00t\x00e\x00x\x00t\x00\x00\x00\x00\x00d\x00\x00\x00\x00\x00\x00\x00\t\x00\x00P\x01\x00\x02\x00\x03\x00\x04\x00\x86\x03\x00\x00\xff\xff\x80\x00m\x00y\x00t\x00e\x00x\x00t\x00\x00\x00\x00\x00d\x00\x00\x00\x00\x00\x00\x00\x02\x00\x01P\x01\x00\x02\x00\x03\x00\x04\x00\x87\x03\x00\x00\xff\xff\x80\x00m\x00y\x00t\x00e\x00x\x00t\x00\x00\x00\x00\x00d\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00P\x01\x00\x02\x00\x03\x00\x04\x00\x88\x03\x00\x00\xff\xff\x85\x00\x00\x00\x00\x00d\x00\x00\x00\x00\x00\x00\x00\x01\x00\x02P\x01\x00\x02\x00\x03\x00\x04\x00\x8a\x03\x00\x00\xff\xff\x82\x00m\x00y\x00t\x00e\x00x\x00t\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x02P\x01\x00\x02\x00\x03\x00\x04\x00e#\x00\x00\xff\xff\x82\x00m\x00y\x00t\x00e\x00x\x00t\x00\x00\x00\x00\x00d\x00\x00\x00\x00\x00\x00\x00\x01\x00\x01P\x01\x00\x02\x00\x03\x00\x04\x00\x8b\x03\x00\x00\xff\xff\x80\x00m\x00y\x00t\x00e\x00x\x00t\x00\x00\x00\x00\x00d\x00\x00\x00\x00\x00\x00\x00\x00\x00\x81P\x01\x00\x02\x00\x03\x00\x04\x00\x8c\x03\x00\x00\xff\xff\x81\x00\x00\x00\x00\x00d\x00\x00\x00\x00\x00\x00\x00\x00\x00\x81P\x01\x00\x02\x00\x03\x00\x04\x00y#\x00\x00\xff\xff\x81\x00\x00\x00\x00\x00d\x00\x00\x00\x00\x00\x00\x00\x00\x00\x81P\x01\x00\x02\x00\x03\x00\x04\x00z#\x00\x00\xff\xff\x81\x00\x00\x00\x00\x00d\x00\x00\x00\x00\x00\x00\x00\x07\x00\x00P\x01\x00\x02\x00\x03\x00\x04\x00\x8d\x03\x00\x00\xff\xff\x80\x00m\x00y\x00t\x00e\x00x\x00t\x00\x00\x00\x00\x00d\x00\x00\x00\x00\x00\x00\x00\x03\x00\x00P\x01\x00\x02\x00\x03\x00\x04\x00\x8e\x03\x00\x00\xff\xff\x82\x00m\x00y\x00t\x00e\x00x\x00t\x00\x00\x00\x00\x00d\x00\x00\x00\x00\x00\x00\x00\x01\x00\x80P\x01\x00\x02\x00\x03\x00\x04\x00\x8f\x03\x00\x00\xff\xff\x83\x00\x00\x00\x00\x00d\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02P\x01\x00\x02\x00\x03\x00\x04\x00\x90\x03\x00\x00\xff\xff\x82\x00m\x00y\x00t\x00e\x00x\x00t\x00\x00\x00\x00\x00d\x00\x00\x00\x00\x00\x00\x00\n\x00\x01P\x01\x00\x02\x00\x03\x00\x04\x00\x91\x03\x00\x00\xff\xff\x80\x00m\x00y\x00t\x00e\x00x\x00t\x00\x00\x00\x00\x00d\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01P\x01\x00\x02\x00\x03\x00\x04\x00\x92\x03\x00\x00\xff\xff\x80\x00m\x00y\x00t\x00e\x00x\x00t\x00\x00\x00\x00\x00d\x00\x00\x00\x00\x00\x00\x00\x04\x00\x00P\x01\x00\x02\x00\x03\x00\x04\x00\x93\x03\x00\x00\xff\xff\x80\x00m\x00y\x00t\x00e\x00x\x00t\x00\x00\x00\x00\x00d\x00\x00\x00\x00\x00\x00\x00\x02\x00\x02P\x01\x00\x02\x00\x03\x00\x04\x00\x94\x03\x00\x00\xff\xff\x82\x00m\x00y\x00t\x00e\x00x\x00t\x00\x00\x00\x00\x00d\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00P\x01\x00\x02\x00\x03\x00\x04\x00\x95\x03\x00\x00\xff\xff\x84\x00\x00\x00\x00\x00d\x00\x00\x00\x00\x00\x00\x00\x05\x00\x01P\x01\x00\x02\x00\x03\x00\x04\x00\x96\x03\x00\x00\xff\xff\x80\x00m\x00y\x00t\x00e\x00x\x00t\x00\x00\x00\x00\x00d\x00\x00\x00\x00\x00\x00\x00\x08\x00\x01P\x01\x00\x02\x00\x03\x00\x04\x00\x97\x03\x00\x00\xff\xff\x80\x00m\x00y\x00t\x00e\x00x\x00t\x00\x00\x00\x00\x00",
+        std.fs.cwd(),
+    );
+
+    // TODO
+    // try testCompileWithOutput(
+    //     \\1 DIALOGEX 1, 2, 3, 4
+    //     \\{
+    //     \\    CONTROL "mytext",, 905,, "\x42UTTON",, 1,, 2 3 4 0, 0, 100
+    //     \\    CONTROL 1,, 9051,, (0x80+1),, 1,, 2 3 4 0, 0, 100
+    //     \\    CONTROL 1,, 9052,, (0x80+1),, 1,, 2 3 4 0
+    //     \\}
+    // ,
+    //     "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x92\x00\x00\x00 \x00\x00\x00\xff\xff\x05\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x88\x80\x03\x00\x01\x00\x02\x00\x03\x00\x04\x00\x00\x00\x00\x00\x00\x00d\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00P\x02\x00\x03\x00\x04\x00\x00\x00\x89\x03\x00\x00\xff\xff\x80\x00m\x00y\x00t\x00e\x00x\x00t\x00\x00\x00\x00\x00d\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00P\x02\x00\x03\x00\x04\x00\x00\x00[#\x00\x00\x81\xff\x00\x00\xff\xff\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00P\x02\x00\x03\x00\x04\x00\x00\x00\\#\x00\x00\x81\xff\x00\x00\xff\xff\x01\x00\x00\x00\x00\x00",
+    //     std.fs.cwd(),
+    // );
 }
