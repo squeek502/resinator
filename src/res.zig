@@ -158,7 +158,7 @@ pub const ControlClass = enum(u16) {
             .autoradiobutton => style |= BS.AUTORADIOBUTTON,
             .checkbox => style |= BS.CHECKBOX | WS.TABSTOP,
             .combobox => {},
-            .control => @panic("TODO"),
+            .control => {},
             .ctext => style |= SS.CENTER | WS.GROUP,
             .defpushbutton => style |= BS.DEFPUSHBUTTON | WS.TABSTOP,
             .edittext, .hedit, .iedit => style |= WS.TABSTOP | WS.BORDER,

@@ -822,7 +822,51 @@ pub const Compiler = struct {
                 const ordinal = NameOrOrdinal{ .ordinal = @enumToInt(control_class) };
                 try ordinal.write(data_writer);
             } else {
-                @panic("TODO: generic CONTROL class parsing");
+                const class_node = control.class.?;
+                if (class_node.isNumberExpression()) {
+                    const number = evaluateNumberExpression(class_node, self.source, self.code_pages);
+                    const ordinal = NameOrOrdinal{ .ordinal = number.asWord() };
+                    // TODO: This is different from how the Windows RC compiles ordinals here,
+                    //       but I think that's a miscompilation/bug of the Windows implementation
+                    //       and this is the correct way to do it. Should emit a warning if this is
+                    //       accurate, or conform to the Windows behavior if not (Windows behavior
+                    //       is encoding as <ordinal as a single byte>FF aka 0xFF<ord> written as little
+                    //       endian).
+                    try ordinal.write(data_writer);
+                } else if (class_node.isStringLiteral()) {
+                    const literal_node = @fieldParentPtr(Node.Literal, "base", class_node);
+                    const bytes = SourceBytes{
+                        .slice = literal_node.token.slice(self.source),
+                        .code_page = self.code_pages.getForToken(literal_node.token),
+                    };
+                    const parsed = try parseQuotedStringAsWideString(self.allocator, bytes, .{
+                        .diagnostics = .{ .diagnostics = self.diagnostics, .token = literal_node.token },
+                        .start_column = literal_node.token.calculateColumn(self.source, 8, null),
+                    });
+                    defer self.allocator.free(parsed);
+                    if (rc.ControlClass.fromWideString(parsed)) |control_class| {
+                        const ordinal = NameOrOrdinal{ .ordinal = @enumToInt(control_class) };
+                        try ordinal.write(data_writer);
+                    } else {
+                        const name = NameOrOrdinal{ .name = parsed };
+                        try name.write(data_writer);
+                    }
+                } else {
+                    const literal_node = @fieldParentPtr(Node.Literal, "base", class_node);
+                    const literal_slice = literal_node.token.slice(self.source);
+                    const control_class = rc.ControlClass.map.get(literal_slice) orelse {
+                        // TODO catch this during parsing instead?
+                        return self.addErrorDetailsAndFail(ErrorDetails{
+                            .err = .expected_something_else,
+                            .token = literal_node.token,
+                            .extra = .{ .expected_types = .{
+                                .control_class = true,
+                            } },
+                        });
+                    };
+                    const ordinal = NameOrOrdinal{ .ordinal = @enumToInt(control_class) };
+                    try ordinal.write(data_writer);
+                }
             }
 
             if (control.text) |text_token| {
@@ -1924,16 +1968,15 @@ test "dialog, dialogex resource" {
         std.fs.cwd(),
     );
 
-    // TODO
-    // try testCompileWithOutput(
-    //     \\1 DIALOGEX 1, 2, 3, 4
-    //     \\{
-    //     \\    CONTROL "mytext",, 905,, "\x42UTTON",, 1,, 2 3 4 0, 0, 100
-    //     \\    CONTROL 1,, 9051,, (0x80+1),, 1,, 2 3 4 0, 0, 100
-    //     \\    CONTROL 1,, 9052,, (0x80+1),, 1,, 2 3 4 0
-    //     \\}
-    // ,
-    //     "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x92\x00\x00\x00 \x00\x00\x00\xff\xff\x05\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x88\x80\x03\x00\x01\x00\x02\x00\x03\x00\x04\x00\x00\x00\x00\x00\x00\x00d\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00P\x02\x00\x03\x00\x04\x00\x00\x00\x89\x03\x00\x00\xff\xff\x80\x00m\x00y\x00t\x00e\x00x\x00t\x00\x00\x00\x00\x00d\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00P\x02\x00\x03\x00\x04\x00\x00\x00[#\x00\x00\x81\xff\x00\x00\xff\xff\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00P\x02\x00\x03\x00\x04\x00\x00\x00\\#\x00\x00\x81\xff\x00\x00\xff\xff\x01\x00\x00\x00\x00\x00",
-    //     std.fs.cwd(),
-    // );
+    try testCompileWithOutput(
+        \\1 DIALOGEX 1, 2, 3, 4
+        \\{
+        \\    CONTROL "mytext",, 905,, "\x42UTTON",, 1,, 2 3 4 0, 0, 100
+        \\    CONTROL "mytext",, 905,, L"EDIT",, 1,, 2 3 4 0, 0, 100
+        \\    CONTROL "mytext",, 905,, COMBOBOX,, 1,, 2 3 4 0, 0, 100
+        \\}
+    ,
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xa4\x00\x00\x00 \x00\x00\x00\xff\xff\x05\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x88\x80\x03\x00\x01\x00\x02\x00\x03\x00\x04\x00\x00\x00\x00\x00\x00\x00d\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00P\x02\x00\x03\x00\x04\x00\x00\x00\x89\x03\x00\x00\xff\xff\x80\x00m\x00y\x00t\x00e\x00x\x00t\x00\x00\x00\x00\x00d\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00P\x02\x00\x03\x00\x04\x00\x00\x00\x89\x03\x00\x00\xff\xff\x81\x00m\x00y\x00t\x00e\x00x\x00t\x00\x00\x00\x00\x00d\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00P\x02\x00\x03\x00\x04\x00\x00\x00\x89\x03\x00\x00\xff\xff\x85\x00m\x00y\x00t\x00e\x00x\x00t\x00\x00\x00\x00\x00",
+        std.fs.cwd(),
+    );
 }

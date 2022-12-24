@@ -109,13 +109,15 @@ pub const ErrorDetails = struct {
         number_expression: bool = false,
         string_literal: bool = false,
         accelerator_type_or_option: bool = false,
-        _: u28 = undefined,
+        control_class: bool = false,
+        _: u27 = undefined,
 
         pub const strings = std.ComptimeStringMap([]const u8, .{
             .{ "number", "number" },
             .{ "number_expression", "number expression" },
             .{ "string_literal", "quoted string literal" },
             .{ "accelerator_type_or_option", "accelerator type or option [ASCII, VIRTKEY, etc]" },
+            .{ "control_class", "control class [BUTTON, EDIT, etc]" },
         });
 
         pub fn writeCommaSeparated(self: ExpectedTypes, writer: anytype) !void {

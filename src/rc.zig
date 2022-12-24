@@ -197,6 +197,37 @@ pub const Control = enum {
     }
 };
 
+pub const ControlClass = struct {
+    pub const map = utils.ComptimeCaseInsensitiveStringMap(res.ControlClass, .{
+        .{ "BUTTON", .button },
+        .{ "EDIT", .edit },
+        .{ "STATIC", .static },
+        .{ "LISTBOX", .listbox },
+        .{ "SCROLLBAR", .scrollbar },
+        .{ "COMBOBOX", .combobox },
+    });
+
+    /// Like `map.get` but works on WTF16 strings, for use with parsed
+    /// string literals ("BUTTON", or even "\x42UTTON")
+    pub fn fromWideString(str: []const u16) ?res.ControlClass {
+        const utf16Literal = std.unicode.utf8ToUtf16LeStringLiteral;
+        return if (std.os.windows.eqlIgnoreCaseWTF16(str, utf16Literal("BUTTON")))
+            .button
+        else if (std.os.windows.eqlIgnoreCaseWTF16(str, utf16Literal("EDIT")))
+            .edit
+        else if (std.os.windows.eqlIgnoreCaseWTF16(str, utf16Literal("STATIC")))
+            .static
+        else if (std.os.windows.eqlIgnoreCaseWTF16(str, utf16Literal("LISTBOX")))
+            .listbox
+        else if (std.os.windows.eqlIgnoreCaseWTF16(str, utf16Literal("SCROLLBAR")))
+            .scrollbar
+        else if (std.os.windows.eqlIgnoreCaseWTF16(str, utf16Literal("COMBOBOX")))
+            .combobox
+        else
+            null;
+    }
+};
+
 /// Keywords that are be the first token in a statement and (if so) dictate how the rest
 /// of the statement is parsed.
 pub const TopLevelKeywords = enum {
