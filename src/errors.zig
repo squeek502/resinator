@@ -121,7 +121,7 @@ pub const ErrorDetails = struct {
         pub fn writeCommaSeparated(self: ExpectedTypes, writer: anytype) !void {
             const struct_info = @typeInfo(ExpectedTypes).Struct;
             const num_real_fields = struct_info.fields.len - 1;
-            const num_padding_bits = @sizeOf(ExpectedTypes) - num_real_fields;
+            const num_padding_bits = @bitSizeOf(ExpectedTypes) - num_real_fields;
             const mask = std.math.maxInt(struct_info.backing_integer.?) >> num_padding_bits;
             const relevant_bits_only = @bitCast(struct_info.backing_integer.?, self) & mask;
             const num_set_bits = @popCount(relevant_bits_only);
