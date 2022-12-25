@@ -854,16 +854,8 @@ pub const Compiler = struct {
                 } else {
                     const literal_node = @fieldParentPtr(Node.Literal, "base", class_node);
                     const literal_slice = literal_node.token.slice(self.source);
-                    const control_class = rc.ControlClass.map.get(literal_slice) orelse {
-                        // TODO catch this during parsing instead?
-                        return self.addErrorDetailsAndFail(ErrorDetails{
-                            .err = .expected_something_else,
-                            .token = literal_node.token,
-                            .extra = .{ .expected_types = .{
-                                .control_class = true,
-                            } },
-                        });
-                    };
+                    // This succeeding is guaranteed by the parser
+                    const control_class = rc.ControlClass.map.get(literal_slice) orelse unreachable;
                     const ordinal = NameOrOrdinal{ .ordinal = @enumToInt(control_class) };
                     try ordinal.write(data_writer);
                 }

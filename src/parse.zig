@@ -729,6 +729,18 @@ pub const Parser = struct {
         var style: ?*Node = null;
         if (control == .control) {
             class = try self.parseExpression(false);
+            if (class.?.id == .literal) {
+                const class_literal = @fieldParentPtr(Node.Literal, "base", class.?);
+                if (class_literal.token.id == .literal and !rc.ControlClass.map.has(class_literal.token.slice(self.lexer.buffer))) {
+                    return self.addErrorDetailsAndFail(.{
+                        .err = .expected_something_else,
+                        .token = self.state.token,
+                        .extra = .{ .expected_types = .{
+                            .control_class = true,
+                        } },
+                    });
+                }
+            }
             try self.skipAnyCommas();
             style = try self.parseExpression(false);
             try self.skipAnyCommas();
@@ -2025,6 +2037,13 @@ test "dialog controls" {
         \\1 DIALOG 1, 2, 3, 4
         \\{
         \\    AUTO3STATE,, "mytext",, 900,, 1 2 3 4, 0, 0, 100 { "AUTO3STATE" }
+        \\}
+    );
+
+    try testParseError("expected control class [BUTTON, EDIT, etc]; got 'SOMETHING'",
+        \\1 DIALOG 1, 2, 3, 4
+        \\{
+        \\    CONTROL "", 900, SOMETHING, 0, 1, 2, 3, 4
         \\}
     );
 }
