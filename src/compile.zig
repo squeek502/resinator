@@ -826,12 +826,26 @@ pub const Compiler = struct {
                 if (class_node.isNumberExpression()) {
                     const number = evaluateNumberExpression(class_node, self.source, self.code_pages);
                     const ordinal = NameOrOrdinal{ .ordinal = number.asWord() };
-                    // TODO: This is different from how the Windows RC compiles ordinals here,
-                    //       but I think that's a miscompilation/bug of the Windows implementation
-                    //       and this is the correct way to do it. Should emit a warning if this is
-                    //       accurate, or conform to the Windows behavior if not (Windows behavior
-                    //       is encoding as <ordinal as a single byte>FF aka 0xFF<ord> written as little
-                    //       endian).
+                    // This is different from how the Windows RC compiles ordinals here,
+                    // but I think that's a miscompilation/bug of the Windows implementation.
+                    // The Windows behavior is (where LSB = least significant byte):
+                    // - If the LSB is 0x00 => 0xFFFF0000
+                    // - If the LSB is < 0x80 => 0x000000<LSB>
+                    // - If the LSB is >= 0x80 => 0x0000FF<LSB>
+                    //
+                    // Because of this, we emit a warning about the potential miscompilation
+                    try self.addErrorDetails(.{
+                        .err = .rc_would_miscompile_control_class_ordinal,
+                        .type = .warning,
+                        .token = class_node.getFirstToken(),
+                    });
+                    try self.addErrorDetails(.{
+                        .err = .rc_would_miscompile_control_class_ordinal,
+                        .type = .note,
+                        .print_source_line = false,
+                        .token = class_node.getFirstToken(),
+                    });
+                    // And then write out the ordinal using a proper a NameOrOrdinal encoding.
                     try ordinal.write(data_writer);
                 } else if (class_node.isStringLiteral()) {
                     const literal_node = @fieldParentPtr(Node.Literal, "base", class_node);
