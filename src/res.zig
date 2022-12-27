@@ -477,8 +477,9 @@ test "NameOrOrdinal code page awareness" {
 
 /// https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-accel#members
 /// https://devblogs.microsoft.com/oldnewthing/20070316-00/?p=27593
-pub const AcceleratorModifiers = packed struct(u8) {
+pub const AcceleratorModifiers = struct {
     value: u8 = 0,
+    explicit_ascii_or_virtkey: bool = false,
 
     pub const ASCII = 0;
     pub const VIRTKEY = 1;
@@ -490,6 +491,7 @@ pub const AcceleratorModifiers = packed struct(u8) {
     pub const last_accelerator_in_table = 1 << 7;
 
     pub fn apply(self: *AcceleratorModifiers, modifier: rc.AcceleratorTypeAndOptions) void {
+        if (modifier == .ascii or modifier == .virtkey) self.explicit_ascii_or_virtkey = true;
         self.value |= modifierValue(modifier);
     }
 

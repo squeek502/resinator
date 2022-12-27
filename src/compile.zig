@@ -503,7 +503,7 @@ pub const Compiler = struct {
                 const modifier = rc.AcceleratorTypeAndOptions.map.get(type_or_option.slice(self.source)).?;
                 modifiers.apply(modifier);
             }
-            if (accelerator.event.isNumberExpression() and !modifiers.isSet(.ascii) and !modifiers.isSet(.virtkey)) {
+            if (accelerator.event.isNumberExpression() and !modifiers.explicit_ascii_or_virtkey) {
                 return self.addErrorDetailsAndFail(.{
                     .err = .accelerator_type_required,
                     .token = accelerator.event.getFirstToken(),
@@ -1498,6 +1498,32 @@ fn testCompileWithOutput(source: []const u8, expected_output: []const u8, cwd: s
     try std.testing.expectEqualSlices(u8, expected_output, buffer.items);
 }
 
+fn testCompileError(expected_error_str: []const u8, source: []const u8) !void {
+    const allocator = std.testing.allocator;
+
+    var buffer = std.ArrayList(u8).init(std.testing.allocator);
+    defer buffer.deinit();
+
+    var diagnostics = Diagnostics.init(allocator);
+    defer diagnostics.deinit();
+
+    compile(std.testing.allocator, source, buffer.writer(), std.fs.cwd(), &diagnostics) catch |err| switch (err) {
+        error.ParseError, error.CompileError => {
+            if (diagnostics.errors.items.len < 1) return error.NoDiagnostics;
+            if (diagnostics.errors.items[0].type != .err) @panic("TODO handle compile error test with a non-error as the first error");
+            var buf: [256]u8 = undefined;
+            var fbs = std.io.fixedBufferStream(&buf);
+            try diagnostics.errors.items[0].render(fbs.writer(), source, diagnostics.strings.items);
+            try std.testing.expectEqualStrings(expected_error_str, fbs.getWritten());
+            return;
+        },
+        else => return err,
+    };
+    std.debug.print("expected compile error, got .res:\n", .{});
+    std.testing.expectEqualSlices(u8, "", buffer.items) catch {};
+    return error.UnexpectedSuccess;
+}
+
 pub fn getExpectedFromWindowsRCWithDir(allocator: Allocator, source: []const u8, cwd: std.fs.Dir, cwd_path: []const u8) ![]const u8 {
     try cwd.writeFile("test.rc", source);
 
@@ -1888,6 +1914,10 @@ test "accelerators resource" {
     ,
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x08\x00\x00\x00 \x00\x00\x00\xff\xff\t\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x9d\x00C\x00\x01\x00\x00\x00",
         std.fs.cwd(),
+    );
+    try testCompileError(
+        "accelerator type [ASCII or VIRTKEY] required when key is an integer",
+        "1 ACCELERATORS { 1, 1 }",
     );
 }
 
