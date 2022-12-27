@@ -174,6 +174,7 @@ pub const ErrorDetails = struct {
         /// `resource` is populated
         id_must_be_ordinal,
         string_resource_as_numeric_type,
+        ascii_character_not_equivalent_to_virtual_key_code,
 
         // Compiler
         /// `string_and_language` is populated
@@ -255,6 +256,11 @@ pub const ErrorDetails = struct {
             .string_resource_as_numeric_type => switch (self.type) {
                 .err, .warning => try writer.writeAll("the number 6 (RT_STRING) cannot be used as a resource type"),
                 .note => try writer.writeAll("using RT_STRING directly likely results in an invalid .res file, use a STRINGTABLE instead"),
+            },
+            .ascii_character_not_equivalent_to_virtual_key_code => {
+                // TODO: Better wording? This is what the Win32 RC compiler emits.
+                //       This occurs when VIRTKEY and a control code is specified ("^c", etc)
+                try writer.writeAll("ASCII character not equivalent to virtual key code");
             },
             .string_already_defined => switch (self.type) {
                 // TODO: better printing of language, using constant names from WinNT.h

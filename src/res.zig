@@ -544,6 +544,18 @@ pub fn parseAcceleratorKeyString(bytes: SourceBytes, is_virt: bool, options: lit
     if (first_codepoint == 0) return error.InvalidAccelerator;
 
     if (first_codepoint == '^') {
+        // Note: Emitting this warning unconditonally whenever ^ is the first character
+        //       matches the Win32 RC behavior, but it's questionable whether or not
+        //       the warning should be emitted for ^^ since that results in the ASCII
+        //       character ^ being written to the .res.
+        if (is_virt and options.diagnostics != null) {
+            try options.diagnostics.?.diagnostics.append(.{
+                .err = .ascii_character_not_equivalent_to_virtual_key_code,
+                .type = .warning,
+                .token = options.diagnostics.?.token,
+            });
+        }
+
         const c = translator.translate(try parser.next()) orelse return error.InvalidControlCharacter;
         switch (c) {
             '^' => return '^', // special case
