@@ -10,7 +10,7 @@ const columnsUntilTabStop = @import("literals.zig").columnsUntilTabStop;
 const code_pages = @import("code_pages.zig");
 const CodePage = code_pages.CodePage;
 
-const dumpTokensDuringTests = true;
+const dumpTokensDuringTests = false;
 
 pub const Token = struct {
     id: Id,
