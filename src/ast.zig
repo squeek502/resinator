@@ -116,6 +116,7 @@ pub const Node = struct {
         accelerator,
         dialog,
         control_statement,
+        menu,
         string_table,
         string_table_string,
         language_statement,
@@ -135,6 +136,7 @@ pub const Node = struct {
                 .accelerator => Accelerator,
                 .dialog => Dialog,
                 .control_statement => ControlStatement,
+                .menu => Menu,
                 .string_table => StringTable,
                 .string_table_string => StringTableString,
                 .language_statement => LanguageStatement,
@@ -241,6 +243,17 @@ pub const Node = struct {
         exstyle: ?*Node,
         help_id: ?*Node,
         extra_data: []*Node,
+    };
+
+    pub const Menu = struct {
+        base: Node = .{ .id = .menu },
+        id: Token,
+        type: Token,
+        common_resource_attributes: []Token,
+        optional_statements: []*Node,
+        begin_token: Token,
+        items: []*Node,
+        end_token: Token,
     };
 
     pub const StringTable = struct {
@@ -373,6 +386,10 @@ pub const Node = struct {
             .control_statement => {
                 const casted = @fieldParentPtr(Node.ControlStatement, "base", node);
                 return casted.type;
+            },
+            .menu => {
+                const casted = @fieldParentPtr(Node.Menu, "base", node);
+                return casted.id;
             },
             .string_table => {
                 const casted = @fieldParentPtr(Node.StringTable, "base", node);
@@ -539,6 +556,22 @@ pub const Node = struct {
                     try writer.writeAll("}"); // TODO real end token?
                     try writer.writeAll("\n");
                 }
+            },
+            .menu => {
+                const menu = @fieldParentPtr(Node.Menu, "base", node);
+                try writer.print(" {s} {s} [{d} common_resource_attributes]\n", .{ menu.id.slice(tree.source), menu.type.slice(tree.source), menu.common_resource_attributes.len });
+                for (menu.optional_statements) |statement| {
+                    try statement.dump(tree, writer, indent + 1);
+                }
+                try writer.writeByteNTimes(' ', indent);
+                try writer.writeAll(menu.begin_token.slice(tree.source));
+                try writer.writeAll("\n");
+                for (menu.items) |item| {
+                    try item.dump(tree, writer, indent + 1);
+                }
+                try writer.writeByteNTimes(' ', indent);
+                try writer.writeAll(menu.end_token.slice(tree.source));
+                try writer.writeAll("\n");
             },
             .string_table => {
                 const string_table = @fieldParentPtr(Node.StringTable, "base", node);

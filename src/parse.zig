@@ -572,6 +572,38 @@ pub const Parser = struct {
                 };
                 return &node.base;
             },
+            .menu, .menuex => {
+                try self.nextToken(.normal);
+                // common resource attributes must all be contiguous and come before optional-statements
+                const common_resource_attributes = try self.parseCommonResourceAttributes();
+                const optional_statements = try self.parseOptionalStatements(.stringtable);
+
+                const begin_token = self.state.token;
+                try self.check(.begin);
+
+                var items = std.ArrayListUnmanaged(*Node){};
+                defer items.deinit(self.state.allocator);
+                // TODO
+                // while (try self.parseMenuItemStatement(resource)) |item_node| {
+                //     try items.append(self.state.allocator, item_node);
+                // }
+
+                try self.nextToken(.normal);
+                const end_token = self.state.token;
+                try self.check(.end);
+
+                const node = try self.state.arena.create(Node.Menu);
+                node.* = .{
+                    .id = id_token,
+                    .type = type_token,
+                    .common_resource_attributes = common_resource_attributes,
+                    .optional_statements = optional_statements,
+                    .begin_token = begin_token,
+                    .items = try self.state.arena.dupe(*Node, items.items),
+                    .end_token = end_token,
+                };
+                return &node.base;
+            },
             .stringtable => unreachable,
             // Just try everything as a 'generic' resource (raw data or external file)
             // TODO: More fine-grained switch cases as necessary
@@ -2045,6 +2077,25 @@ test "dialog controls" {
         \\{
         \\    CONTROL "", 900, SOMETHING, 0, 1, 2, 3, 4
         \\}
+    );
+}
+
+test "menus" {
+    try testParse("1 MENU FIXED VERSION 1 CHARACTERISTICS (1+2) {}",
+        \\root
+        \\ menu 1 MENU [1 common_resource_attributes]
+        \\  simple_statement VERSION
+        \\   literal 1
+        \\  simple_statement CHARACTERISTICS
+        \\   grouped_expression
+        \\   (
+        \\    binary_expression +
+        \\     literal 1
+        \\     literal 2
+        \\   )
+        \\ {
+        \\ }
+        \\
     );
 }
 

@@ -95,6 +95,7 @@ pub const Compiler = struct {
             .accelerator => unreachable, // handled by writeAccelerators
             .dialog => try self.writeDialog(@fieldParentPtr(Node.Dialog, "base", node), writer),
             .control_statement => unreachable,
+            .menu => @panic("TODO"),
             .string_table => try self.writeStringTable(@fieldParentPtr(Node.StringTable, "base", node)),
             .string_table_string => unreachable, // handled by writeStringTable
             .language_statement => self.writeLanguageStatement(@fieldParentPtr(Node.LanguageStatement, "base", node)),
