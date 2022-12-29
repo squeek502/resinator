@@ -844,10 +844,13 @@ pub const Parser = struct {
                 .menuitem => {
                     try self.nextToken(.normal);
                     if (rc.MenuItem.isSeparator(self.state.token.slice(self.lexer.buffer))) {
+                        const separator_token = self.state.token;
+                        // There can be any number of trailing commas after SEPARATOR
+                        try self.skipAnyCommas();
                         const node = try self.state.arena.create(Node.MenuItemSeparator);
                         node.* = .{
                             .menuitem = menuitem_token,
-                            .separator = self.state.token,
+                            .separator = separator_token,
                         };
                         return &node.base;
                     } else {
@@ -2310,7 +2313,7 @@ test "menus" {
     );
     try testParse(
         \\1 MENU FIXED VERSION 1 CHARACTERISTICS (1+2) {
-        \\    MENUITEM SEPARATOR
+        \\    MENUITEM SEPARATOR,,
         \\    MENUITEM "HELLO",, 100, CHECKED,, GRAYED,,
         \\    MENUITEM "HELLO" 100 GRAYED INACTIVE
         \\    MENUITEM L"hello" (100+2)
