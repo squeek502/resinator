@@ -1005,6 +1005,28 @@ pub const Compiler = struct {
                 defer self.allocator.free(text);
                 try writer.writeAll(std.mem.sliceAsBytes(text[0 .. text.len + 1]));
             },
+            .popup => {
+                const popup = @fieldParentPtr(Node.Popup, "base", node);
+                var flags = res.MenuItemFlags{ .value = res.MF.POPUP };
+                for (popup.option_list) |option_token| {
+                    // This failing would be a bug in the parser
+                    const option = rc.MenuItem.Option.map.get(option_token.slice(self.source)) orelse unreachable;
+                    flags.apply(option);
+                }
+                // If a popup is the last item of a MENU, then it gets marked as last,
+                // as does the last of its items, as does the last of its items, etc.
+                if (is_last_of_parent) flags.markLast();
+                try writer.writeIntLittle(u16, flags.value);
+
+                var text = try self.parseQuotedStringAsWideString(popup.text);
+                defer self.allocator.free(text);
+                try writer.writeAll(std.mem.sliceAsBytes(text[0 .. text.len + 1]));
+
+                for (popup.items) |item, i| {
+                    const is_last = is_last_of_parent and i == popup.items.len - 1;
+                    try self.writeMenuItem(item, writer, is_last);
+                }
+            },
             else => @panic("TODO"),
         }
     }
@@ -2084,6 +2106,18 @@ test "menu, menuex resource" {
         \\}
     ,
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x1a\x00\x00\x00 \x00\x00\x00\xff\xff\x04\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xeb@d\x00h\x00e\x00l\x00l\x00o\x00\x00\x00\x00\x00",
+        std.fs.cwd(),
+    );
+    try testCompileWithOutput(
+        \\1 MENU
+        \\{
+        \\    POPUP "hello", CHECKED, GRAYED, HELP, INACTIVE, MENUBARBREAK, MENUBREAK {
+        \\        MENUITEM SEPARATOR
+        \\        POPUP "" { MENUITEM SEPARATOR }
+        \\    }
+        \\}
+    ,
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\"\x00\x00\x00 \x00\x00\x00\xff\xff\x04\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xfb@h\x00e\x00l\x00l\x00o\x00\x00\x00\x00\x00\x00\x00\x00\x00\x90\x00\x00\x00\x80\x00\x00\x00\x00\x00\x00\x00",
         std.fs.cwd(),
     );
 }
