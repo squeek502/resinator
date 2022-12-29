@@ -946,7 +946,81 @@ pub const Parser = struct {
                     return &node.base;
                 },
             },
-            .menuex => @panic("TODO"),
+            .menuex => switch (menuitem) {
+                .menuitem => {
+                    try self.nextToken(.normal);
+                    const text = self.state.token;
+                    if (!text.isStringLiteral()) {
+                        return self.addErrorDetailsAndFail(ErrorDetails{
+                            .err = .expected_something_else,
+                            .token = text,
+                            .extra = .{ .expected_types = .{
+                                .string_literal = true,
+                            } },
+                        });
+                    }
+
+                    var no_more_commas = false;
+                    const id: ?*Node = node: {
+                        if (!(try self.parseOptionalToken(.comma))) {
+                            no_more_commas = true;
+                            break :node null;
+                        }
+                        // consecutive commas is treated as a blank parameter but
+                        // there can still be more parameters afterwards
+                        if ((try self.lookaheadToken(.normal)).id == .comma) {
+                            break :node null;
+                        }
+                        const node = try self.parseExpression(false);
+                        try self.checkNumberExpression(node);
+                        break :node node;
+                    };
+
+                    const item_type: ?*Node = node: {
+                        if (no_more_commas or !(try self.parseOptionalToken(.comma))) {
+                            no_more_commas = true;
+                            break :node null;
+                        }
+                        // consecutive commas is treated as a blank parameter and
+                        // there can still be more parameters afterwards
+                        if ((try self.lookaheadToken(.normal)).id == .comma) {
+                            break :node null;
+                        }
+                        const node = try self.parseExpression(false);
+                        try self.checkNumberExpression(node);
+                        break :node node;
+                    };
+
+                    const state: ?*Node = node: {
+                        if (no_more_commas or !(try self.parseOptionalToken(.comma))) {
+                            no_more_commas = true;
+                            break :node null;
+                        }
+                        // consecutive commas is treated as a blank parameter and
+                        // there can still be more parameters afterwards
+                        if ((try self.lookaheadToken(.normal)).id == .comma) {
+                            break :node null;
+                        }
+                        const node = try self.parseExpression(false);
+                        try self.checkNumberExpression(node);
+                        break :node node;
+                    };
+
+                    // trailing comma is allowed, skip it
+                    _ = try self.parseOptionalToken(.comma);
+
+                    const node = try self.state.arena.create(Node.MenuItemEx);
+                    node.* = .{
+                        .menuitem = menuitem_token,
+                        .text = text,
+                        .id = id,
+                        .type = item_type,
+                        .state = state,
+                    };
+                    return &node.base;
+                },
+                .popup => @panic("TODO"),
+            },
             else => unreachable,
         }
         @compileError("unreachable");
@@ -2272,6 +2346,40 @@ test "menus" {
         \\    }
         \\   END
         \\  }
+        \\ }
+        \\
+    );
+
+    try testParse(
+        \\1 MENUEX FIXED VERSION 1 CHARACTERISTICS (1+2) {
+        \\    MENUITEM "", -1, 0x00000800L
+        \\    MENUITEM ""
+        \\    MENUITEM "hello",,,,
+        \\    MENUITEM "hello",,,1,
+        \\}
+    ,
+        \\root
+        \\ menu 1 MENUEX [1 common_resource_attributes]
+        \\  simple_statement VERSION
+        \\   literal 1
+        \\  simple_statement CHARACTERISTICS
+        \\   grouped_expression
+        \\   (
+        \\    binary_expression +
+        \\     literal 1
+        \\     literal 2
+        \\   )
+        \\ {
+        \\  menu_item_ex MENUITEM ""
+        \\   id:
+        \\    literal -1
+        \\   type:
+        \\    literal 0x00000800L
+        \\  menu_item_ex MENUITEM ""
+        \\  menu_item_ex MENUITEM "hello"
+        \\  menu_item_ex MENUITEM "hello"
+        \\   state:
+        \\    literal 1
         \\ }
         \\
     );
