@@ -91,7 +91,7 @@ pub const MemoryFlags = packed struct(u16) {
         } else {
             return switch (predefined_resource_type.?) {
                 .RCDATA, .BITMAP, .HTML, .MANIFEST, .ACCELERATOR => MemoryFlags{ .value = MOVEABLE | SHARED },
-                .GROUP_ICON, .GROUP_CURSOR, .STRING, .FONT, .DIALOG => MemoryFlags{ .value = MOVEABLE | SHARED | DISCARDABLE },
+                .GROUP_ICON, .GROUP_CURSOR, .STRING, .FONT, .DIALOG, .MENU => MemoryFlags{ .value = MOVEABLE | SHARED | DISCARDABLE },
                 .ICON, .CURSOR => MemoryFlags{ .value = MOVEABLE | DISCARDABLE },
                 .FONTDIR => MemoryFlags{ .value = MOVEABLE | PRELOAD },
                 else => {
@@ -845,6 +845,46 @@ test "forced ordinal" {
     try std.testing.expectEqual(@as(u16, 0x122), ForcedOrdinal.fromUtf16Le(&[_:0]u16{ '0', 'Œ' }));
     try std.testing.expectEqual(@as(u16, 0x4AF0), ForcedOrdinal.fromUtf16Le(std.unicode.utf8ToUtf16LeStringLiteral("0\u{10100}")));
 }
+
+pub const MenuItemFlags = struct {
+    value: u16 = 0,
+
+    pub fn apply(self: *MenuItemFlags, option: rc.MenuItem.Option) void {
+        self.value |= optionValue(option);
+    }
+
+    pub fn isSet(self: MenuItemFlags, option: rc.MenuItem.Option) bool {
+        return self.value & optionValue(option) != 0;
+    }
+
+    fn optionValue(option: rc.MenuItem.Option) u16 {
+        return @intCast(u16, switch (option) {
+            .checked => MF.CHECKED,
+            .grayed => MF.GRAYED,
+            .help => MF.HELP,
+            .inactive => MF.DISABLED,
+            .menubarbreak => MF.MENUBARBREAK,
+            .menubreak => MF.MENUBREAK,
+        });
+    }
+
+    pub fn markLast(self: *MenuItemFlags) void {
+        self.value |= @intCast(u16, MF.END);
+    }
+};
+
+/// Menu Flags from WinUser.h
+/// This is not complete, it only contains what is needed
+pub const MF = struct {
+    pub const GRAYED: u32 = 0x00000001;
+    pub const DISABLED: u32 = 0x00000002;
+    pub const CHECKED: u32 = 0x00000008;
+    pub const POPUP: u32 = 0x00000010;
+    pub const MENUBARBREAK: u32 = 0x00000020;
+    pub const MENUBREAK: u32 = 0x00000040;
+    pub const HELP: u32 = 0x00004000;
+    pub const END: u32 = 0x00000080;
+};
 
 /// Window Styles from WinUser.h
 pub const WS = struct {

@@ -92,7 +92,7 @@ pub const Compiler = struct {
             .accelerator => unreachable, // handled by writeAccelerators
             .dialog => try self.writeDialog(@fieldParentPtr(Node.Dialog, "base", node), writer),
             .control_statement => unreachable,
-            .menu => @panic("TODO"),
+            .menu => try self.writeMenu(@fieldParentPtr(Node.Menu, "base", node), writer),
             .menu_item => unreachable,
             .menu_item_separator => unreachable,
             .menu_item_ex => unreachable,
@@ -936,6 +936,77 @@ pub const Compiler = struct {
         const typeface = try self.parseQuotedStringAsWideString(node.typeface);
         defer self.allocator.free(typeface);
         try writer.writeAll(std.mem.sliceAsBytes(typeface[0 .. typeface.len + 1]));
+    }
+
+    pub fn writeMenu(self: *Compiler, node: *Node.Menu, writer: anytype) !void {
+        var data_buffer = std.ArrayList(u8).init(self.allocator);
+        defer data_buffer.deinit();
+        const data_writer = data_buffer.writer();
+
+        const type_bytes = SourceBytes{
+            .slice = node.type.slice(self.source),
+            .code_page = self.code_pages.getForToken(node.type),
+        };
+        const resource = Resource.fromString(type_bytes);
+        std.debug.assert(resource == .menu or resource == .menuex);
+
+        // menu header
+        const version: u16 = if (resource == .menu) 0 else 1;
+        try data_writer.writeIntLittle(u16, version);
+        try data_writer.writeIntLittle(u16, 0); // cbHeaderSize
+        // rgbExtra: [cbHeaderSize]u8
+
+        for (node.items) |item, i| {
+            const is_last = i == node.items.len - 1;
+            try self.writeMenuItem(item, data_writer, is_last);
+        }
+
+        const data_size = @intCast(u32, data_buffer.items.len);
+        const id_bytes = SourceBytes{
+            .slice = node.id.slice(self.source),
+            .code_page = self.code_pages.getForToken(node.id),
+        };
+        var header = try ResourceHeader.init(self.allocator, id_bytes, type_bytes, data_size, self.state.language);
+        defer header.deinit(self.allocator);
+
+        header.applyMemoryFlags(node.common_resource_attributes, self.source);
+        header.applyOptionalStatements(node.optional_statements, self.source, self.code_pages);
+
+        try header.write(writer);
+
+        var data_fbs = std.io.fixedBufferStream(data_buffer.items);
+        try writeResourceData(writer, data_fbs.reader(), data_size);
+    }
+
+    pub fn writeMenuItem(self: *Compiler, node: *Node, writer: anytype, is_last_of_parent: bool) !void {
+        switch (node.id) {
+            .menu_item_separator => {
+                var flags = res.MenuItemFlags{};
+                if (is_last_of_parent) flags.markLast();
+                try writer.writeIntLittle(u16, flags.value);
+                try writer.writeIntLittle(u16, 0); // id
+                try writer.writeIntLittle(u16, 0); // null-terminated UTF-16 text
+            },
+            .menu_item => {
+                const menu_item = @fieldParentPtr(Node.MenuItem, "base", node);
+                var flags = res.MenuItemFlags{};
+                for (menu_item.option_list) |option_token| {
+                    // This failing would be a bug in the parser
+                    const option = rc.MenuItem.Option.map.get(option_token.slice(self.source)) orelse unreachable;
+                    flags.apply(option);
+                }
+                if (is_last_of_parent) flags.markLast();
+                try writer.writeIntLittle(u16, flags.value);
+
+                var result = evaluateNumberExpression(menu_item.result, self.source, self.code_pages);
+                try writer.writeIntLittle(u16, result.asWord());
+
+                var text = try self.parseQuotedStringAsWideString(menu_item.text);
+                defer self.allocator.free(text);
+                try writer.writeAll(std.mem.sliceAsBytes(text[0 .. text.len + 1]));
+            },
+            else => @panic("TODO"),
+        }
     }
 
     pub fn writeStringTable(self: *Compiler, node: *Node.StringTable) !void {
@@ -2000,6 +2071,19 @@ test "dialog, dialogex resource" {
         \\}
     ,
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xa4\x00\x00\x00 \x00\x00\x00\xff\xff\x05\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x88\x80\x03\x00\x01\x00\x02\x00\x03\x00\x04\x00\x00\x00\x00\x00\x00\x00d\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00P\x02\x00\x03\x00\x04\x00\x00\x00\x89\x03\x00\x00\xff\xff\x80\x00m\x00y\x00t\x00e\x00x\x00t\x00\x00\x00\x00\x00d\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00P\x02\x00\x03\x00\x04\x00\x00\x00\x89\x03\x00\x00\xff\xff\x81\x00m\x00y\x00t\x00e\x00x\x00t\x00\x00\x00\x00\x00d\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00P\x02\x00\x03\x00\x04\x00\x00\x00\x89\x03\x00\x00\xff\xff\x85\x00m\x00y\x00t\x00e\x00x\x00t\x00\x00\x00\x00\x00",
+        std.fs.cwd(),
+    );
+}
+
+test "menu, menuex resource" {
+    try testCompileWithOutput(
+        \\1 MENU
+        \\{
+        \\    MENUITEM SEPARATOR
+        \\    MENUITEM "hello", 100, CHECKED, GRAYED, HELP, INACTIVE, MENUBARBREAK, MENUBREAK
+        \\}
+    ,
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x1a\x00\x00\x00 \x00\x00\x00\xff\xff\x04\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xeb@d\x00h\x00e\x00l\x00l\x00o\x00\x00\x00\x00\x00",
         std.fs.cwd(),
     );
 }
