@@ -946,66 +946,25 @@ pub const Parser = struct {
                     return &node.base;
                 },
             },
-            .menuex => switch (menuitem) {
-                .menuitem => {
-                    try self.nextToken(.normal);
-                    const text = self.state.token;
-                    if (!text.isStringLiteral()) {
-                        return self.addErrorDetailsAndFail(ErrorDetails{
-                            .err = .expected_something_else,
-                            .token = text,
-                            .extra = .{ .expected_types = .{
-                                .string_literal = true,
-                            } },
-                        });
-                    }
+            .menuex => {
+                try self.nextToken(.normal);
+                const text = self.state.token;
+                if (!text.isStringLiteral()) {
+                    return self.addErrorDetailsAndFail(ErrorDetails{
+                        .err = .expected_something_else,
+                        .token = text,
+                        .extra = .{ .expected_types = .{
+                            .string_literal = true,
+                        } },
+                    });
+                }
 
-                    var no_more_commas = false;
-                    const id: ?*Node = node: {
-                        if (!(try self.parseOptionalToken(.comma))) {
-                            no_more_commas = true;
-                            break :node null;
-                        }
-                        // consecutive commas is treated as a blank parameter but
-                        // there can still be more parameters afterwards
-                        if ((try self.lookaheadToken(.normal)).id == .comma) {
-                            break :node null;
-                        }
-                        const node = try self.parseExpression(false);
-                        try self.checkNumberExpression(node);
-                        break :node node;
-                    };
+                var params_finished = false;
+                const id = try self.parseMenuItemExParam(&params_finished);
+                const item_type = try self.parseMenuItemExParam(&params_finished);
+                const state = try self.parseMenuItemExParam(&params_finished);
 
-                    const item_type: ?*Node = node: {
-                        if (no_more_commas or !(try self.parseOptionalToken(.comma))) {
-                            no_more_commas = true;
-                            break :node null;
-                        }
-                        // consecutive commas is treated as a blank parameter and
-                        // there can still be more parameters afterwards
-                        if ((try self.lookaheadToken(.normal)).id == .comma) {
-                            break :node null;
-                        }
-                        const node = try self.parseExpression(false);
-                        try self.checkNumberExpression(node);
-                        break :node node;
-                    };
-
-                    const state: ?*Node = node: {
-                        if (no_more_commas or !(try self.parseOptionalToken(.comma))) {
-                            no_more_commas = true;
-                            break :node null;
-                        }
-                        // consecutive commas is treated as a blank parameter and
-                        // there can still be more parameters afterwards
-                        if ((try self.lookaheadToken(.normal)).id == .comma) {
-                            break :node null;
-                        }
-                        const node = try self.parseExpression(false);
-                        try self.checkNumberExpression(node);
-                        break :node node;
-                    };
-
+                if (menuitem == .menuitem) {
                     // trailing comma is allowed, skip it
                     _ = try self.parseOptionalToken(.comma);
 
@@ -1018,12 +977,66 @@ pub const Parser = struct {
                         .state = state,
                     };
                     return &node.base;
-                },
-                .popup => @panic("TODO"),
+                }
+
+                const help_id = try self.parseMenuItemExParam(&params_finished);
+
+                // trailing comma is allowed, skip it
+                _ = try self.parseOptionalToken(.comma);
+
+                try self.nextToken(.normal);
+                const begin_token = self.state.token;
+                try self.check(.begin);
+
+                var items = std.ArrayListUnmanaged(*Node){};
+                while (try self.parseMenuItemStatement(resource)) |item_node| {
+                    try items.append(self.state.arena, item_node);
+                }
+
+                if (items.items.len == 0) {
+                    return self.addErrorDetailsAndFail(.{
+                        .err = .empty_menu_not_allowed,
+                        .token = menuitem_token,
+                    });
+                }
+
+                try self.nextToken(.normal);
+                const end_token = self.state.token;
+                try self.check(.end);
+
+                const node = try self.state.arena.create(Node.PopupEx);
+                node.* = .{
+                    .popup = menuitem_token,
+                    .text = text,
+                    .id = id,
+                    .type = item_type,
+                    .state = state,
+                    .help_id = help_id,
+                    .begin_token = begin_token,
+                    .items = try items.toOwnedSlice(self.state.arena),
+                    .end_token = end_token,
+                };
+                return &node.base;
             },
             else => unreachable,
         }
         @compileError("unreachable");
+    }
+
+    fn parseMenuItemExParam(self: *Self, finished: *bool) Error!?*Node {
+        if (finished.*) return null;
+        if (!(try self.parseOptionalToken(.comma))) {
+            finished.* = true;
+            return null;
+        }
+        // consecutive commas is treated as a blank parameter and
+        // there can still be more parameters afterwards
+        if ((try self.lookaheadToken(.normal)).id == .comma) {
+            return null;
+        }
+        const node = try self.parseExpression(false);
+        try self.checkNumberExpression(node);
+        return node;
     }
 
     /// Expects the current token to be a literal token that contains the string LANGUAGE
@@ -2356,6 +2369,12 @@ test "menus" {
         \\    MENUITEM ""
         \\    MENUITEM "hello",,,,
         \\    MENUITEM "hello",,,1,
+        \\    POPUP "hello",,,,, {
+        \\        POPUP "goodbye",,,,3,
+        \\        BEGIN
+        \\            POPUP "" { MENUITEM "" }
+        \\        END
+        \\    }
         \\}
     ,
         \\root
@@ -2380,6 +2399,18 @@ test "menus" {
         \\  menu_item_ex MENUITEM "hello"
         \\   state:
         \\    literal 1
+        \\  popup_ex POPUP "hello"
+        \\  {
+        \\   popup_ex POPUP "goodbye"
+        \\    help_id:
+        \\     literal 3
+        \\   BEGIN
+        \\    popup_ex POPUP ""
+        \\    {
+        \\     menu_item_ex MENUITEM ""
+        \\    }
+        \\   END
+        \\  }
         \\ }
         \\
     );
