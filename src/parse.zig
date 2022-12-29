@@ -90,25 +90,12 @@ pub const Parser = struct {
         }
     }
 
-    /// Expects the current token to be a possible common resource attribute.
-    /// After return, the current token will be the first token after all common resource attributes.
-    /// The returned slice is allocated by the parser's arena
-    fn parseCommonResourceAttributes(self: *Self) ![]Token {
-        var common_resource_attributes = std.ArrayListUnmanaged(Token){};
-        while (self.state.token.id == .literal and rc.CommonResourceAttributes.map.has(self.state.token.slice(self.lexer.buffer))) {
-            try common_resource_attributes.append(self.state.arena, self.state.token);
-            try self.nextToken(.normal);
-        }
-        return common_resource_attributes.toOwnedSlice(self.state.arena);
-    }
-
-    /// Like `parseCommonResourceAttributes`, but expects the current token
-    /// to be the token before possible common resource attributes.
+    /// Expects the current token to be the token before possible common resource attributes.
     /// After return, the current token will be the token immediately before the end of the
     /// common resource attributes (if any). If there are no common resource attributes, the
     /// current token is unchanged.
     /// The returned slice is allocated by the parser's arena
-    fn parseCommonResourceAttributesLookahead(self: *Self) ![]Token {
+    fn parseCommonResourceAttributes(self: *Self) ![]Token {
         var common_resource_attributes = std.ArrayListUnmanaged(Token){};
         while (true) {
             const maybe_common_resource_attribute = try self.lookaheadToken(.normal);
@@ -122,22 +109,27 @@ pub const Parser = struct {
         return common_resource_attributes.toOwnedSlice(self.state.arena);
     }
 
-    /// Expects the current token to be a possible optional statement keyword.
-    /// After return, the current token will be the first token after all optional statements.
+    /// Expects the current token to have already been dealt with, and that the
+    /// optional statements will potentially start on the next token.
+    /// After return, the current token will be the token immediately before the end of the
+    /// optional statements (if any). If there are no optional statements, the
+    /// current token is unchanged.
     /// The returned slice is allocated by the parser's arena
     fn parseOptionalStatements(self: *Self, resource: Resource) ![]*Node {
         var optional_statements = std.ArrayListUnmanaged(*Node){};
-        while (self.state.token.id == .literal) {
-            const slice = self.state.token.slice(self.lexer.buffer);
+        while (true) {
+            const lookahead_token = try self.lookaheadToken(.normal);
+            if (lookahead_token.id != .literal) break;
+            const slice = lookahead_token.slice(self.lexer.buffer);
             const optional_statement_type = rc.OptionalStatements.map.get(slice) orelse switch (resource) {
                 .dialog, .dialogex => rc.OptionalStatements.dialog_map.get(slice) orelse break,
                 else => break,
             };
+            self.nextToken(.normal) catch unreachable;
             switch (optional_statement_type) {
                 .language => {
                     const language = try self.parseLanguageStatement();
                     try optional_statements.append(self.state.arena, language);
-                    try self.nextToken(.normal);
                 },
                 // Number only
                 .version, .characteristics, .style, .exstyle => {
@@ -150,7 +142,6 @@ pub const Parser = struct {
                         .value = value,
                     };
                     try optional_statements.append(self.state.arena, &node.base);
-                    try self.nextToken(.normal);
                 },
                 // String only
                 .caption => {
@@ -178,7 +169,6 @@ pub const Parser = struct {
                         .value = &value_node.base,
                     };
                     try optional_statements.append(self.state.arena, &node.base);
-                    try self.nextToken(.normal);
                 },
                 // String or number
                 .class => {
@@ -201,7 +191,6 @@ pub const Parser = struct {
                         .value = value,
                     };
                     try optional_statements.append(self.state.arena, &node.base);
-                    try self.nextToken(.normal);
                 },
                 // Special case
                 .menu => {
@@ -220,7 +209,6 @@ pub const Parser = struct {
                         .value = &value_node.base,
                     };
                     try optional_statements.append(self.state.arena, &node.base);
-                    try self.nextToken(.normal);
                 },
                 .font => {
                     const identifier = self.state.token;
@@ -286,7 +274,6 @@ pub const Parser = struct {
                         .char_set = ex_specific.char_set,
                     };
                     try optional_statements.append(self.state.arena, &node.base);
-                    try self.nextToken(.normal);
                 },
             }
         }
@@ -305,11 +292,11 @@ pub const Parser = struct {
                 return language_statement;
             },
             .stringtable => {
-                try self.nextToken(.normal);
                 // common resource attributes must all be contiguous and come before optional-statements
                 const common_resource_attributes = try self.parseCommonResourceAttributes();
                 const optional_statements = try self.parseOptionalStatements(.stringtable);
 
+                try self.nextToken(.normal);
                 const begin_token = self.state.token;
                 try self.check(.begin);
 
@@ -422,11 +409,11 @@ pub const Parser = struct {
 
         switch (resource) {
             .accelerators => {
-                try self.nextToken(.normal);
                 // common resource attributes must all be contiguous and come before optional-statements
                 const common_resource_attributes = try self.parseCommonResourceAttributes();
                 const optional_statements = try self.parseOptionalStatements(resource);
 
+                try self.nextToken(.normal);
                 const begin_token = self.state.token;
                 try self.check(.begin);
 
@@ -512,7 +499,7 @@ pub const Parser = struct {
             },
             .dialog, .dialogex => {
                 // common resource attributes must all be contiguous and come before optional-statements
-                const common_resource_attributes = try self.parseCommonResourceAttributesLookahead();
+                const common_resource_attributes = try self.parseCommonResourceAttributes();
 
                 const x = try self.parseExpression(false);
                 try self.checkNumberExpression(x);
@@ -528,13 +515,11 @@ pub const Parser = struct {
 
                 const height = try self.parseExpression(false);
                 try self.checkNumberExpression(height);
-                try self.nextToken(.normal);
 
                 const help_id: ?*Node = help_id: {
-                    if (resource == .dialogex and self.state.token.id == .comma) {
+                    if (resource == .dialogex and try self.parseOptionalToken(.comma)) {
                         const expression = try self.parseExpression(false);
                         try self.checkNumberExpression(expression);
-                        try self.nextToken(.normal);
                         break :help_id expression;
                     }
                     break :help_id null;
@@ -542,6 +527,7 @@ pub const Parser = struct {
 
                 const optional_statements = try self.parseOptionalStatements(resource);
 
+                try self.nextToken(.normal);
                 const begin_token = self.state.token;
                 try self.check(.begin);
 
@@ -573,11 +559,22 @@ pub const Parser = struct {
                 return &node.base;
             },
             .menu, .menuex => {
-                try self.nextToken(.normal);
                 // common resource attributes must all be contiguous and come before optional-statements
                 const common_resource_attributes = try self.parseCommonResourceAttributes();
                 const optional_statements = try self.parseOptionalStatements(.stringtable);
 
+                var help_id: ?*Node = null;
+                if (resource == .menuex) {
+                    const maybe_number_expression_start = try self.lookaheadToken(.normal);
+                    switch (maybe_number_expression_start.id) {
+                        .number, .open_paren => {
+                            help_id = try self.parseExpression(true);
+                        },
+                        else => {},
+                    }
+                }
+
+                try self.nextToken(.normal);
                 const begin_token = self.state.token;
                 try self.check(.begin);
 
@@ -604,6 +601,7 @@ pub const Parser = struct {
                     .type = type_token,
                     .common_resource_attributes = common_resource_attributes,
                     .optional_statements = optional_statements,
+                    .help_id = help_id,
                     .begin_token = begin_token,
                     .items = try self.state.arena.dupe(*Node, items.items),
                     .end_token = end_token,
@@ -614,7 +612,7 @@ pub const Parser = struct {
             // Just try everything as a 'generic' resource (raw data or external file)
             // TODO: More fine-grained switch cases as necessary
             else => {
-                const common_resource_attributes = try self.parseCommonResourceAttributesLookahead();
+                const common_resource_attributes = try self.parseCommonResourceAttributes();
 
                 const maybe_begin = try self.lookaheadToken(.normal);
                 if (maybe_begin.id == .begin) {
@@ -2367,7 +2365,7 @@ test "menus" {
     );
 
     try testParse(
-        \\1 MENUEX FIXED VERSION 1 CHARACTERISTICS (1+2) {
+        \\1 MENUEX FIXED VERSION 1 CHARACTERISTICS (1+2) 1000 {
         \\    MENUITEM "", -1, 0x00000800L
         \\    MENUITEM ""
         \\    MENUITEM "hello",,,,
@@ -2391,6 +2389,8 @@ test "menus" {
         \\     literal 1
         \\     literal 2
         \\   )
+        \\  help_id:
+        \\   literal 1000
         \\ {
         \\  menu_item_ex MENUITEM ""
         \\   id:

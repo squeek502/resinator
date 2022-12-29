@@ -261,6 +261,8 @@ pub const Node = struct {
         type: Token,
         common_resource_attributes: []Token,
         optional_statements: []*Node,
+        /// `help_id` will never be non-null if `type` is MENU
+        help_id: ?*Node,
         begin_token: Token,
         items: []*Node,
         end_token: Token,
@@ -628,6 +630,11 @@ pub const Node = struct {
                 try writer.print(" {s} {s} [{d} common_resource_attributes]\n", .{ menu.id.slice(tree.source), menu.type.slice(tree.source), menu.common_resource_attributes.len });
                 for (menu.optional_statements) |statement| {
                     try statement.dump(tree, writer, indent + 1);
+                }
+                if (menu.help_id) |help_id| {
+                    try writer.writeByteNTimes(' ', indent + 1);
+                    try writer.writeAll("help_id:\n");
+                    try help_id.dump(tree, writer, indent + 2);
                 }
                 try writer.writeByteNTimes(' ', indent);
                 try writer.writeAll(menu.begin_token.slice(tree.source));
