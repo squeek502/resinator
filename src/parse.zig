@@ -889,7 +889,62 @@ pub const Parser = struct {
                         return &node.base;
                     }
                 },
-                .popup => @panic("TODO"),
+                .popup => {
+                    try self.nextToken(.normal);
+                    const text = self.state.token;
+                    if (!text.isStringLiteral()) {
+                        return self.addErrorDetailsAndFail(ErrorDetails{
+                            .err = .expected_something_else,
+                            .token = text,
+                            .extra = .{ .expected_types = .{
+                                .string_literal = true,
+                            } },
+                        });
+                    }
+                    try self.skipAnyCommas();
+
+                    var options = std.ArrayListUnmanaged(Token){};
+                    while (true) {
+                        const option_token = try self.lookaheadToken(.normal);
+                        if (!rc.MenuItem.Option.map.has(option_token.slice(self.lexer.buffer))) {
+                            break;
+                        }
+                        self.nextToken(.normal) catch unreachable;
+                        try options.append(self.state.arena, option_token);
+                        try self.skipAnyCommas();
+                    }
+
+                    try self.nextToken(.normal);
+                    const begin_token = self.state.token;
+                    try self.check(.begin);
+
+                    var items = std.ArrayListUnmanaged(*Node){};
+                    while (try self.parseMenuItemStatement(resource)) |item_node| {
+                        try items.append(self.state.arena, item_node);
+                    }
+
+                    if (items.items.len == 0) {
+                        return self.addErrorDetailsAndFail(.{
+                            .err = .empty_menu_not_allowed,
+                            .token = menuitem_token,
+                        });
+                    }
+
+                    try self.nextToken(.normal);
+                    const end_token = self.state.token;
+                    try self.check(.end);
+
+                    const node = try self.state.arena.create(Node.Popup);
+                    node.* = .{
+                        .popup = menuitem_token,
+                        .text = text,
+                        .option_list = try options.toOwnedSlice(self.state.arena),
+                        .begin_token = begin_token,
+                        .items = try items.toOwnedSlice(self.state.arena),
+                        .end_token = end_token,
+                    };
+                    return &node.base;
+                },
             },
             .menuex => @panic("TODO"),
             else => unreachable,
@@ -2162,17 +2217,23 @@ test "menus" {
         "empty menu of type 'MENUEX' not allowed",
         "1 MENUEX {}",
     );
-    // TODO
-    // try testParseError(
-    //     "empty menu of type 'POPUP' not allowed",
-    //     "1 MENU { MENUITEM SEPARATOR POPUP "" {} }",
-    // );
+    try testParseError(
+        "empty menu of type 'POPUP' not allowed",
+        "1 MENU { MENUITEM SEPARATOR POPUP \"\" {} }",
+    );
     try testParse(
         \\1 MENU FIXED VERSION 1 CHARACTERISTICS (1+2) {
         \\    MENUITEM SEPARATOR
         \\    MENUITEM "HELLO",, 100, CHECKED,, GRAYED,,
         \\    MENUITEM "HELLO" 100 GRAYED INACTIVE
         \\    MENUITEM L"hello" (100+2)
+        \\    POPUP "hello" {
+        \\        MENUITEM "goodbye", 100
+        \\        POPUP "goodbye",, GRAYED CHECKED
+        \\        BEGIN
+        \\            POPUP "" { MENUITEM SEPARATOR }
+        \\        END
+        \\    }
         \\}
     ,
         \\root
@@ -2199,6 +2260,18 @@ test "menus" {
         \\     literal 100
         \\     literal 2
         \\   )
+        \\  popup POPUP "hello" [0 options]
+        \\  {
+        \\   menu_item MENUITEM "goodbye" [0 options]
+        \\    literal 100
+        \\   popup POPUP "goodbye" [2 options]
+        \\   BEGIN
+        \\    popup POPUP "" [0 options]
+        \\    {
+        \\     menu_item_separator MENUITEM SEPARATOR
+        \\    }
+        \\   END
+        \\  }
         \\ }
         \\
     );

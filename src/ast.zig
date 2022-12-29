@@ -120,6 +120,8 @@ pub const Node = struct {
         menu_item,
         menu_item_separator,
         menu_item_ex,
+        popup,
+        popup_ex,
         string_table,
         string_table_string,
         language_statement,
@@ -143,6 +145,8 @@ pub const Node = struct {
                 .menu_item => MenuItem,
                 .menu_item_separator => MenuItemSeparator,
                 .menu_item_ex => MenuItemEx,
+                .popup => Popup,
+                .popup_ex => PopupEx,
                 .string_table => StringTable,
                 .string_table_string => StringTableString,
                 .language_statement => LanguageStatement,
@@ -285,6 +289,29 @@ pub const Node = struct {
         state: ?*Node,
     };
 
+    pub const Popup = struct {
+        base: Node = .{ .id = .popup },
+        popup: Token,
+        text: Token,
+        option_list: []Token,
+        begin_token: Token,
+        items: []*Node,
+        end_token: Token,
+    };
+
+    pub const PopupEx = struct {
+        base: Node = .{ .id = .popup_ex },
+        popup: Token,
+        text: Token,
+        id: ?*Node,
+        type: ?*Node,
+        state: ?*Node,
+        help_id: ?*Node,
+        begin_token: Token,
+        items: []*Node,
+        end_token: Token,
+    };
+
     pub const StringTable = struct {
         base: Node = .{ .id = .string_table },
         type: Token,
@@ -424,6 +451,11 @@ pub const Node = struct {
                 const node_type = menu_item_type.Type();
                 const casted = @fieldParentPtr(node_type, "base", node);
                 return casted.menuitem;
+            },
+            inline .popup, .popup_ex => |popup_type| {
+                const node_type = popup_type.Type();
+                const casted = @fieldParentPtr(node_type, "base", node);
+                return casted.popup;
             },
             .string_table => {
                 const casted = @fieldParentPtr(Node.StringTable, "base", node);
@@ -626,6 +658,39 @@ pub const Node = struct {
                         try val_node.dump(tree, writer, indent + 2);
                     }
                 }
+            },
+            .popup => {
+                const popup = @fieldParentPtr(Node.Popup, "base", node);
+                try writer.print(" {s} {s} [{d} options]\n", .{ popup.popup.slice(tree.source), popup.text.slice(tree.source), popup.option_list.len });
+                try writer.writeByteNTimes(' ', indent);
+                try writer.writeAll(popup.begin_token.slice(tree.source));
+                try writer.writeAll("\n");
+                for (popup.items) |item| {
+                    try item.dump(tree, writer, indent + 1);
+                }
+                try writer.writeByteNTimes(' ', indent);
+                try writer.writeAll(popup.end_token.slice(tree.source));
+                try writer.writeAll("\n");
+            },
+            .popup_ex => {
+                const popup = @fieldParentPtr(Node.PopupEx, "base", node);
+                try writer.print(" {s} {s}\n", .{ popup.popup.slice(tree.source), popup.text.slice(tree.source) });
+                inline for (.{ "id", "type", "state", "help_id" }) |arg| {
+                    if (@field(popup, arg)) |val_node| {
+                        try writer.writeByteNTimes(' ', indent + 1);
+                        try writer.writeAll(arg ++ ":\n");
+                        try val_node.dump(tree, writer, indent + 2);
+                    }
+                }
+                try writer.writeByteNTimes(' ', indent);
+                try writer.writeAll(popup.begin_token.slice(tree.source));
+                try writer.writeAll("\n");
+                for (popup.items) |item| {
+                    try item.dump(tree, writer, indent + 1);
+                }
+                try writer.writeByteNTimes(' ', indent);
+                try writer.writeAll(popup.end_token.slice(tree.source));
+                try writer.writeAll("\n");
             },
             .string_table => {
                 const string_table = @fieldParentPtr(Node.StringTable, "base", node);
