@@ -835,29 +835,66 @@ pub const Parser = struct {
     /// After return, the current token will be the token immediately before the end of the
     /// menuitem statement (or unchanged if the function returns null).
     fn parseMenuItemStatement(self: *Self, resource: Resource) Error!?*Node {
-        _ = resource;
-
         const menuitem_token = try self.lookaheadToken(.normal);
         const menuitem = rc.MenuItem.map.get(menuitem_token.slice(self.lexer.buffer)) orelse return null;
         self.nextToken(.normal) catch unreachable;
 
-        switch (menuitem) {
-            .menuitem => {
-                try self.nextToken(.normal);
-                if (rc.MenuItem.isSeparator(self.state.token.slice(self.lexer.buffer))) {
-                    const node = try self.state.arena.create(Node.MenuItemSeparator);
-                    node.* = .{
-                        .menuitem = menuitem_token,
-                        .separator = self.state.token,
-                    };
-                    return &node.base;
-                } else {
-                    @panic("TODO");
-                }
+        switch (resource) {
+            .menu => switch (menuitem) {
+                .menuitem => {
+                    try self.nextToken(.normal);
+                    if (rc.MenuItem.isSeparator(self.state.token.slice(self.lexer.buffer))) {
+                        const node = try self.state.arena.create(Node.MenuItemSeparator);
+                        node.* = .{
+                            .menuitem = menuitem_token,
+                            .separator = self.state.token,
+                        };
+                        return &node.base;
+                    } else {
+                        const text = self.state.token;
+                        if (!text.isStringLiteral()) {
+                            return self.addErrorDetailsAndFail(ErrorDetails{
+                                .err = .expected_something_else,
+                                .token = text,
+                                .extra = .{ .expected_types = .{
+                                    .string_literal = true,
+                                } },
+                            });
+                        }
+                        try self.skipAnyCommas();
+
+                        const result = try self.parseExpression(false);
+                        try self.checkNumberExpression(result);
+
+                        _ = try self.parseOptionalToken(.comma);
+
+                        var options = std.ArrayListUnmanaged(Token){};
+                        while (true) {
+                            const option_token = try self.lookaheadToken(.normal);
+                            if (!rc.MenuItem.Option.map.has(option_token.slice(self.lexer.buffer))) {
+                                break;
+                            }
+                            self.nextToken(.normal) catch unreachable;
+                            try options.append(self.state.arena, option_token);
+                            try self.skipAnyCommas();
+                        }
+
+                        const node = try self.state.arena.create(Node.MenuItem);
+                        node.* = .{
+                            .menuitem = menuitem_token,
+                            .text = text,
+                            .result = result,
+                            .option_list = try options.toOwnedSlice(self.state.arena),
+                        };
+                        return &node.base;
+                    }
+                },
+                .popup => @panic("TODO"),
             },
-            .popup => @panic("TODO"),
+            .menuex => @panic("TODO"),
+            else => unreachable,
         }
-        unreachable;
+        @compileError("unreachable");
     }
 
     /// Expects the current token to be a literal token that contains the string LANGUAGE
@@ -2128,9 +2165,16 @@ test "menus" {
     // TODO
     // try testParseError(
     //     "empty menu of type 'POPUP' not allowed",
-    //     "1 MENU { MENUITEM SEPARATOR POPUP {} }",
+    //     "1 MENU { MENUITEM SEPARATOR POPUP "" {} }",
     // );
-    try testParse("1 MENU FIXED VERSION 1 CHARACTERISTICS (1+2) { MENUITEM SEPARATOR }",
+    try testParse(
+        \\1 MENU FIXED VERSION 1 CHARACTERISTICS (1+2) {
+        \\    MENUITEM SEPARATOR
+        \\    MENUITEM "HELLO",, 100, CHECKED,, GRAYED,,
+        \\    MENUITEM "HELLO" 100 GRAYED INACTIVE
+        \\    MENUITEM L"hello" (100+2)
+        \\}
+    ,
         \\root
         \\ menu 1 MENU [1 common_resource_attributes]
         \\  simple_statement VERSION
@@ -2144,6 +2188,17 @@ test "menus" {
         \\   )
         \\ {
         \\  menu_item_separator MENUITEM SEPARATOR
+        \\  menu_item MENUITEM "HELLO" [2 options]
+        \\   literal 100
+        \\  menu_item MENUITEM "HELLO" [2 options]
+        \\   literal 100
+        \\  menu_item MENUITEM L"hello" [0 options]
+        \\   grouped_expression
+        \\   (
+        \\    binary_expression +
+        \\     literal 100
+        \\     literal 2
+        \\   )
         \\ }
         \\
     );

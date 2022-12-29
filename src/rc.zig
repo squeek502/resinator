@@ -240,6 +240,24 @@ pub const MenuItem = enum {
     pub fn isSeparator(bytes: []const u8) bool {
         return std.ascii.eqlIgnoreCase(bytes, "SEPARATOR");
     }
+
+    pub const Option = enum {
+        checked,
+        grayed,
+        help,
+        inactive,
+        menubarbreak,
+        menubreak,
+
+        pub const map = utils.ComptimeCaseInsensitiveStringMap(Option, .{
+            .{ "CHECKED", .checked },
+            .{ "GRAYED", .grayed },
+            .{ "HELP", .help },
+            .{ "INACTIVE", .inactive },
+            .{ "MENUBARBREAK", .menubarbreak },
+            .{ "MENUBREAK", .menubreak },
+        });
+    };
 };
 
 /// Keywords that are be the first token in a statement and (if so) dictate how the rest
