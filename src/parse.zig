@@ -583,10 +583,16 @@ pub const Parser = struct {
 
                 var items = std.ArrayListUnmanaged(*Node){};
                 defer items.deinit(self.state.allocator);
-                // TODO
-                // while (try self.parseMenuItemStatement(resource)) |item_node| {
-                //     try items.append(self.state.allocator, item_node);
-                // }
+                while (try self.parseMenuItemStatement(resource)) |item_node| {
+                    try items.append(self.state.allocator, item_node);
+                }
+
+                if (items.items.len == 0) {
+                    return self.addErrorDetailsAndFail(.{
+                        .err = .empty_menu_not_allowed,
+                        .token = type_token,
+                    });
+                }
 
                 try self.nextToken(.normal);
                 const end_token = self.state.token;
@@ -822,6 +828,36 @@ pub const Parser = struct {
             .extra_data = extra_data,
         };
         return &node.base;
+    }
+
+    /// Expects the current token to be handled, and that the menuitem/popup statement will
+    /// begin on the next token.
+    /// After return, the current token will be the token immediately before the end of the
+    /// menuitem statement (or unchanged if the function returns null).
+    fn parseMenuItemStatement(self: *Self, resource: Resource) Error!?*Node {
+        _ = resource;
+
+        const menuitem_token = try self.lookaheadToken(.normal);
+        const menuitem = rc.MenuItem.map.get(menuitem_token.slice(self.lexer.buffer)) orelse return null;
+        self.nextToken(.normal) catch unreachable;
+
+        switch (menuitem) {
+            .menuitem => {
+                try self.nextToken(.normal);
+                if (rc.MenuItem.isSeparator(self.state.token.slice(self.lexer.buffer))) {
+                    const node = try self.state.arena.create(Node.MenuItemSeparator);
+                    node.* = .{
+                        .menuitem = menuitem_token,
+                        .separator = self.state.token,
+                    };
+                    return &node.base;
+                } else {
+                    @panic("TODO");
+                }
+            },
+            .popup => @panic("TODO"),
+        }
+        unreachable;
     }
 
     /// Expects the current token to be a literal token that contains the string LANGUAGE
@@ -2081,7 +2117,20 @@ test "dialog controls" {
 }
 
 test "menus" {
-    try testParse("1 MENU FIXED VERSION 1 CHARACTERISTICS (1+2) {}",
+    try testParseError(
+        "empty menu of type 'MENU' not allowed",
+        "1 MENU {}",
+    );
+    try testParseError(
+        "empty menu of type 'MENUEX' not allowed",
+        "1 MENUEX {}",
+    );
+    // TODO
+    // try testParseError(
+    //     "empty menu of type 'POPUP' not allowed",
+    //     "1 MENU { MENUITEM SEPARATOR POPUP {} }",
+    // );
+    try testParse("1 MENU FIXED VERSION 1 CHARACTERISTICS (1+2) { MENUITEM SEPARATOR }",
         \\root
         \\ menu 1 MENU [1 common_resource_attributes]
         \\  simple_statement VERSION
@@ -2094,6 +2143,7 @@ test "menus" {
         \\     literal 2
         \\   )
         \\ {
+        \\  menu_item_separator MENUITEM SEPARATOR
         \\ }
         \\
     );

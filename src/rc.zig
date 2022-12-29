@@ -228,6 +228,20 @@ pub const ControlClass = struct {
     }
 };
 
+pub const MenuItem = enum {
+    menuitem,
+    popup,
+
+    pub const map = utils.ComptimeCaseInsensitiveStringMap(MenuItem, .{
+        .{ "MENUITEM", .menuitem },
+        .{ "POPUP", .popup },
+    });
+
+    pub fn isSeparator(bytes: []const u8) bool {
+        return std.ascii.eqlIgnoreCase(bytes, "SEPARATOR");
+    }
+};
+
 /// Keywords that are be the first token in a statement and (if so) dictate how the rest
 /// of the statement is parsed.
 pub const TopLevelKeywords = enum {

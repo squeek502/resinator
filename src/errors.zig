@@ -175,6 +175,7 @@ pub const ErrorDetails = struct {
         id_must_be_ordinal,
         string_resource_as_numeric_type,
         ascii_character_not_equivalent_to_virtual_key_code,
+        empty_menu_not_allowed,
 
         // Compiler
         /// `string_and_language` is populated
@@ -261,6 +262,9 @@ pub const ErrorDetails = struct {
                 // TODO: Better wording? This is what the Win32 RC compiler emits.
                 //       This occurs when VIRTKEY and a control code is specified ("^c", etc)
                 try writer.writeAll("ASCII character not equivalent to virtual key code");
+            },
+            .empty_menu_not_allowed => {
+                try writer.print("empty menu of type '{s}' not allowed", .{self.token.nameForErrorDisplay(source)});
             },
             .string_already_defined => switch (self.type) {
                 // TODO: better printing of language, using constant names from WinNT.h

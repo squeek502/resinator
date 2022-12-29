@@ -117,6 +117,9 @@ pub const Node = struct {
         dialog,
         control_statement,
         menu,
+        menu_item,
+        menu_item_separator,
+        menu_item_ex,
         string_table,
         string_table_string,
         language_statement,
@@ -137,6 +140,9 @@ pub const Node = struct {
                 .dialog => Dialog,
                 .control_statement => ControlStatement,
                 .menu => Menu,
+                .menu_item => MenuItem,
+                .menu_item_separator => MenuItemSeparator,
+                .menu_item_ex => MenuItemEx,
                 .string_table => StringTable,
                 .string_table_string => StringTableString,
                 .language_statement => LanguageStatement,
@@ -254,6 +260,29 @@ pub const Node = struct {
         begin_token: Token,
         items: []*Node,
         end_token: Token,
+    };
+
+    pub const MenuItem = struct {
+        base: Node = .{ .id = .menu_item },
+        menuitem: Token,
+        text: Token,
+        result: *Node,
+        option_list: []Token,
+    };
+
+    pub const MenuItemSeparator = struct {
+        base: Node = .{ .id = .menu_item_separator },
+        menuitem: Token,
+        separator: Token,
+    };
+
+    pub const MenuItemEx = struct {
+        base: Node = .{ .id = .menu_item_ex },
+        menuitem: Token,
+        text: Token,
+        id: ?*Node,
+        type: ?*Node,
+        state: ?*Node,
     };
 
     pub const StringTable = struct {
@@ -390,6 +419,11 @@ pub const Node = struct {
             .menu => {
                 const casted = @fieldParentPtr(Node.Menu, "base", node);
                 return casted.id;
+            },
+            inline .menu_item, .menu_item_separator, .menu_item_ex => |menu_item_type| {
+                const node_type = menu_item_type.Type();
+                const casted = @fieldParentPtr(node_type, "base", node);
+                return casted.menuitem;
             },
             .string_table => {
                 const casted = @fieldParentPtr(Node.StringTable, "base", node);
@@ -572,6 +606,26 @@ pub const Node = struct {
                 try writer.writeByteNTimes(' ', indent);
                 try writer.writeAll(menu.end_token.slice(tree.source));
                 try writer.writeAll("\n");
+            },
+            .menu_item => {
+                const menu_item = @fieldParentPtr(Node.MenuItem, "base", node);
+                try writer.print(" {s} {s} [{d} options]\n", .{ menu_item.menuitem.slice(tree.source), menu_item.text.slice(tree.source), menu_item.option_list.len });
+                try menu_item.result.dump(tree, writer, indent + 1);
+            },
+            .menu_item_separator => {
+                const menu_item = @fieldParentPtr(Node.MenuItemSeparator, "base", node);
+                try writer.print(" {s} {s}\n", .{ menu_item.menuitem.slice(tree.source), menu_item.separator.slice(tree.source) });
+            },
+            .menu_item_ex => {
+                const menu_item = @fieldParentPtr(Node.MenuItemEx, "base", node);
+                try writer.print(" {s} {s}\n", .{ menu_item.menuitem.slice(tree.source), menu_item.text.slice(tree.source) });
+                inline for (.{ "id", "type", "state" }) |arg| {
+                    if (@field(menu_item, arg)) |val_node| {
+                        try writer.writeByteNTimes(' ', indent + 1);
+                        try writer.writeAll(arg ++ ":\n");
+                        try val_node.dump(tree, writer, indent + 2);
+                    }
+                }
             },
             .string_table => {
                 const string_table = @fieldParentPtr(Node.StringTable, "base", node);
