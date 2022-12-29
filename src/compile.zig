@@ -5,11 +5,9 @@ const Lexer = @import("lex.zig").Lexer;
 const Parser = @import("parse.zig").Parser;
 const Resource = @import("rc.zig").Resource;
 const Token = @import("lex.zig").Token;
-const Number = @import("literals.zig").Number;
-const parseNumberLiteral = @import("literals.zig").parseNumberLiteral;
-const parseQuotedAsciiString = @import("literals.zig").parseQuotedAsciiString;
-const parseQuotedWideString = @import("literals.zig").parseQuotedWideString;
-const parseQuotedStringAsWideString = @import("literals.zig").parseQuotedStringAsWideString;
+const literals = @import("literals.zig");
+const Number = literals.Number;
+const SourceBytes = literals.SourceBytes;
 const Diagnostics = @import("errors.zig").Diagnostics;
 const ErrorDetails = @import("errors.zig").ErrorDetails;
 const MemoryFlags = @import("res.zig").MemoryFlags;
@@ -22,7 +20,6 @@ const utils = @import("utils.zig");
 const NameOrOrdinal = res.NameOrOrdinal;
 const CodePage = @import("code_pages.zig").CodePage;
 const CodePageLookup = @import("ast.zig").CodePageLookup;
-const SourceBytes = @import("literals.zig").SourceBytes;
 
 pub fn compile(allocator: Allocator, source: []const u8, writer: anytype, cwd: std.fs.Dir, diagnostics: *Diagnostics) !void {
     // TODO: Take this as a parameter
@@ -133,7 +130,7 @@ pub const Compiler = struct {
                         const slice = literal_node.token.slice(self.source);
                         const column = literal_node.token.calculateColumn(self.source, 8, null);
                         const bytes = SourceBytes{ .slice = slice, .code_page = self.code_pages.getForToken(literal_node.token) };
-                        const parsed = try parseQuotedAsciiString(self.allocator, bytes, .{
+                        const parsed = try literals.parseQuotedAsciiString(self.allocator, bytes, .{
                             .start_column = column,
                             .diagnostics = .{ .diagnostics = self.diagnostics, .token = literal_node.token },
                         });
@@ -146,7 +143,7 @@ pub const Compiler = struct {
                         const slice = literal_node.token.slice(self.source);
                         const column = literal_node.token.calculateColumn(self.source, 8, null);
                         const bytes = SourceBytes{ .slice = slice, .code_page = self.code_pages.getForToken(literal_node.token) };
-                        const parsed_string = try parseQuotedWideString(self.allocator, bytes, .{
+                        const parsed_string = try literals.parseQuotedWideString(self.allocator, bytes, .{
                             .start_column = column,
                             .diagnostics = .{ .diagnostics = self.diagnostics, .token = literal_node.token },
                         });
@@ -353,7 +350,7 @@ pub const Compiler = struct {
                     .slice = literal_node.token.slice(source),
                     .code_page = code_page_lookup.getForToken(literal_node.token),
                 };
-                return parseNumberLiteral(bytes);
+                return literals.parseNumberLiteral(bytes);
             },
             .binary_expression => {
                 const binary_expression_node = expression_node.cast(.binary_expression).?;
@@ -385,7 +382,7 @@ pub const Compiler = struct {
                             .slice = literal_node.token.slice(self.source),
                             .code_page = self.code_pages.getForToken(literal_node.token),
                         };
-                        const parsed = try parseQuotedAsciiString(self.allocator, bytes, .{
+                        const parsed = try literals.parseQuotedAsciiString(self.allocator, bytes, .{
                             .start_column = column,
                             .diagnostics = .{ .diagnostics = self.diagnostics, .token = literal_node.token },
                         });
@@ -398,7 +395,7 @@ pub const Compiler = struct {
                             .slice = literal_node.token.slice(self.source),
                             .code_page = self.code_pages.getForToken(literal_node.token),
                         };
-                        const parsed_string = try parseQuotedWideString(self.allocator, bytes, .{
+                        const parsed_string = try literals.parseQuotedWideString(self.allocator, bytes, .{
                             .start_column = column,
                             .diagnostics = .{ .diagnostics = self.diagnostics, .token = literal_node.token },
                         });
@@ -622,15 +619,7 @@ pub const Compiler = struct {
                             } else {
                                 std.debug.assert(simple_statement.value.isStringLiteral());
                                 const literal_node = @fieldParentPtr(Node.Literal, "base", simple_statement.value);
-                                const bytes = SourceBytes{
-                                    .slice = literal_node.token.slice(self.source),
-                                    .code_page = self.code_pages.getForToken(literal_node.token),
-                                };
-                                const column = literal_node.token.calculateColumn(self.source, 8, null);
-                                const parsed = try parseQuotedStringAsWideString(self.allocator, bytes, .{
-                                    .start_column = column,
-                                    .diagnostics = .{ .diagnostics = self.diagnostics, .token = literal_node.token },
-                                });
+                                const parsed = try self.parseQuotedStringAsWideString(literal_node.token);
                                 if (forced_ordinal) {
                                     defer self.allocator.free(parsed);
                                     optional_statement_values.class = NameOrOrdinal{ .ordinal = res.ForcedOrdinal.fromUtf16Le(parsed) };
@@ -733,15 +722,7 @@ pub const Compiler = struct {
         }
         // Caption
         if (optional_statement_values.caption) |caption| {
-            const bytes = SourceBytes{
-                .slice = caption.slice(self.source),
-                .code_page = self.code_pages.getForToken(caption),
-            };
-            const column = caption.calculateColumn(self.source, 8, null);
-            const parsed = try parseQuotedStringAsWideString(self.allocator, bytes, .{
-                .start_column = column,
-                .diagnostics = .{ .diagnostics = self.diagnostics, .token = caption },
-            });
+            const parsed = try self.parseQuotedStringAsWideString(caption);
             defer self.allocator.free(parsed);
             try data_writer.writeAll(std.mem.sliceAsBytes(parsed[0 .. parsed.len + 1]));
         } else {
@@ -855,14 +836,7 @@ pub const Compiler = struct {
                     try ordinal.write(data_writer);
                 } else if (class_node.isStringLiteral()) {
                     const literal_node = @fieldParentPtr(Node.Literal, "base", class_node);
-                    const bytes = SourceBytes{
-                        .slice = literal_node.token.slice(self.source),
-                        .code_page = self.code_pages.getForToken(literal_node.token),
-                    };
-                    const parsed = try parseQuotedStringAsWideString(self.allocator, bytes, .{
-                        .diagnostics = .{ .diagnostics = self.diagnostics, .token = literal_node.token },
-                        .start_column = literal_node.token.calculateColumn(self.source, 8, null),
-                    });
+                    const parsed = try self.parseQuotedStringAsWideString(literal_node.token);
                     defer self.allocator.free(parsed);
                     if (rc.ControlClass.fromWideString(parsed)) |control_class| {
                         const ordinal = NameOrOrdinal{ .ordinal = @enumToInt(control_class) };
@@ -889,11 +863,7 @@ pub const Compiler = struct {
                 if (NameOrOrdinal.maybeOrdinalFromString(bytes)) |ordinal| {
                     try ordinal.write(data_writer);
                 } else {
-                    const column = text_token.calculateColumn(self.source, 8, null);
-                    const text = try parseQuotedStringAsWideString(self.allocator, bytes, .{
-                        .start_column = column,
-                        .diagnostics = .{ .diagnostics = self.diagnostics, .token = text_token },
-                    });
+                    const text = try self.parseQuotedStringAsWideString(text_token);
                     defer self.allocator.free(text);
                     const name_or_ordinal = NameOrOrdinal{ .name = text };
                     try name_or_ordinal.write(data_writer);
@@ -963,15 +933,7 @@ pub const Compiler = struct {
             try writer.writeIntLittle(u8, 1); // DEFAULT_CHARSET
         }
 
-        const typeface_bytes = SourceBytes{
-            .slice = node.typeface.slice(self.source),
-            .code_page = self.code_pages.getForToken(node.typeface),
-        };
-        const column = node.typeface.calculateColumn(self.source, 8, null);
-        const typeface = try parseQuotedStringAsWideString(self.allocator, typeface_bytes, .{
-            .start_column = column,
-            .diagnostics = .{ .diagnostics = self.diagnostics, .token = node.typeface },
-        });
+        const typeface = try self.parseQuotedStringAsWideString(node.typeface);
         defer self.allocator.free(typeface);
         try writer.writeAll(std.mem.sliceAsBytes(typeface[0 .. typeface.len + 1]));
     }
@@ -1150,6 +1112,25 @@ pub const Compiler = struct {
         try header.write(writer);
     }
 
+    pub fn sourceBytesForToken(self: *Compiler, token: Token) SourceBytes {
+        return .{
+            .slice = token.slice(self.source),
+            .code_page = self.code_pages.getForToken(token),
+        };
+    }
+
+    /// Helper that calls parseQuotedStringAsWideString with the relevant context
+    pub fn parseQuotedStringAsWideString(self: *Compiler, token: Token) ![:0]u16 {
+        return literals.parseQuotedStringAsWideString(
+            self.allocator,
+            self.sourceBytesForToken(token),
+            .{
+                .start_column = token.calculateColumn(self.source, 8, null),
+                .diagnostics = .{ .diagnostics = self.diagnostics, .token = token },
+            },
+        );
+    }
+
     fn addErrorDetails(self: *Compiler, details: ErrorDetails) Allocator.Error!void {
         try self.diagnostics.append(details);
     }
@@ -1321,7 +1302,7 @@ pub const StringTable = struct {
                 const utf16_string = utf16: {
                     switch (string_token.id) {
                         .quoted_ascii_string => {
-                            const parsed = try parseQuotedAsciiString(compiler.allocator, bytes, .{
+                            const parsed = try literals.parseQuotedAsciiString(compiler.allocator, bytes, .{
                                 .start_column = column,
                                 .diagnostics = .{ .diagnostics = compiler.diagnostics, .token = string_token },
                             });
@@ -1329,7 +1310,7 @@ pub const StringTable = struct {
                             // TODO: Should this be UTF-8? parseQuotedAsciiString returns a Windows-1252 encoded string.
                             break :utf16 try std.unicode.utf8ToUtf16LeWithNull(compiler.allocator, parsed);
                         },
-                        .quoted_wide_string => break :utf16 try parseQuotedWideString(compiler.allocator, bytes, .{
+                        .quoted_wide_string => break :utf16 try literals.parseQuotedWideString(compiler.allocator, bytes, .{
                             .start_column = column,
                             .diagnostics = .{ .diagnostics = compiler.diagnostics, .token = string_token },
                         }),
