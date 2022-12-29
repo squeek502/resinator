@@ -981,6 +981,11 @@ pub const Compiler = struct {
     pub fn writeMenuItem(self: *Compiler, node: *Node, writer: anytype, is_last_of_parent: bool) !void {
         switch (node.id) {
             .menu_item_separator => {
+                // This is the 'alternate compability form' of the separator, see
+                // https://devblogs.microsoft.com/oldnewthing/20080710-00/?p=21673
+                //
+                // The 'correct' way is to set the MF_SEPARATOR flag, but the Win32 RC
+                // compiler still uses this alternate form, so that's what we use too.
                 var flags = res.MenuItemFlags{};
                 if (is_last_of_parent) flags.markLast();
                 try writer.writeIntLittle(u16, flags.value);
