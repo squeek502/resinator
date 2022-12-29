@@ -953,8 +953,20 @@ pub const Compiler = struct {
         // menu header
         const version: u16 = if (resource == .menu) 0 else 1;
         try data_writer.writeIntLittle(u16, version);
-        try data_writer.writeIntLittle(u16, 0); // cbHeaderSize
-        // rgbExtra: [cbHeaderSize]u8
+        const header_size: u16 = if (resource == .menu) 0 else 4;
+        try data_writer.writeIntLittle(u16, header_size); // cbHeaderSize
+        // Note: There can be extra bytes at the end, but they are always zero-length for us.
+        // MENU   => rgbExtra: [cbHeaderSize]u8
+        // MENUEX => rgbExtra: [cbHeaderSize-4]u8
+
+        if (resource == .menuex) {
+            if (node.help_id) |help_id_node| {
+                const help_id = evaluateNumberExpression(help_id_node, self.source, self.code_pages);
+                try data_writer.writeIntLittle(u32, help_id.value);
+            } else {
+                try data_writer.writeIntLittle(u32, 0);
+            }
+        }
 
         for (node.items) |item, i| {
             const is_last = i == node.items.len - 1;
@@ -1018,8 +1030,6 @@ pub const Compiler = struct {
                     const option = rc.MenuItem.Option.map.get(option_token.slice(self.source)) orelse unreachable;
                     flags.apply(option);
                 }
-                // If a popup is the last item of a MENU, then it gets marked as last,
-                // as does the last of its items, as does the last of its items, etc.
                 if (is_last_of_parent) flags.markLast();
                 try writer.writeIntLittle(u16, flags.value);
 
@@ -1028,11 +1038,65 @@ pub const Compiler = struct {
                 try writer.writeAll(std.mem.sliceAsBytes(text[0 .. text.len + 1]));
 
                 for (popup.items) |item, i| {
-                    const is_last = is_last_of_parent and i == popup.items.len - 1;
+                    const is_last = i == popup.items.len - 1;
                     try self.writeMenuItem(item, writer, is_last);
                 }
             },
-            else => @panic("TODO"),
+            inline .menu_item_ex, .popup_ex => |node_type| {
+                const menu_item = @fieldParentPtr(node_type.Type(), "base", node);
+
+                if (menu_item.type) |flags| {
+                    const value = evaluateNumberExpression(flags, self.source, self.code_pages);
+                    try writer.writeIntLittle(u32, value.value);
+                } else {
+                    try writer.writeIntLittle(u32, 0);
+                }
+
+                if (menu_item.state) |state| {
+                    const value = evaluateNumberExpression(state, self.source, self.code_pages);
+                    try writer.writeIntLittle(u32, value.value);
+                } else {
+                    try writer.writeIntLittle(u32, 0);
+                }
+
+                if (menu_item.id) |id| {
+                    const value = evaluateNumberExpression(id, self.source, self.code_pages);
+                    try writer.writeIntLittle(u32, value.value);
+                } else {
+                    try writer.writeIntLittle(u32, 0);
+                }
+
+                var flags: u16 = 0;
+                if (is_last_of_parent) flags |= @intCast(u16, res.MF.END);
+                // This constant doesn't seem to have a named #define, it's different than MF_POPUP
+                if (node_type == .popup_ex) flags |= 0x01;
+                try writer.writeIntLittle(u16, flags);
+
+                var text = try self.parseQuotedStringAsWideString(menu_item.text);
+                defer self.allocator.free(text);
+                try writer.writeAll(std.mem.sliceAsBytes(text[0 .. text.len + 1]));
+
+                // Only the combination of the flags u16 and the text bytes can cause
+                // non-DWORD alignment, so we can just use the byte length of those
+                // two values to realign to DWORD alignment.
+                const relevant_bytes = 2 + (text.len + 1) * 2;
+                try writeDataPadding(writer, @intCast(u32, relevant_bytes));
+
+                if (node_type == .popup_ex) {
+                    if (menu_item.help_id) |help_id_node| {
+                        const help_id = evaluateNumberExpression(help_id_node, self.source, self.code_pages);
+                        try writer.writeIntLittle(u32, help_id.value);
+                    } else {
+                        try writer.writeIntLittle(u32, 0);
+                    }
+
+                    for (menu_item.items) |item, i| {
+                        const is_last = i == menu_item.items.len - 1;
+                        try self.writeMenuItem(item, writer, is_last);
+                    }
+                }
+            },
+            else => unreachable,
         }
     }
 
@@ -2116,13 +2180,32 @@ test "menu, menuex resource" {
     try testCompileWithOutput(
         \\1 MENU
         \\{
-        \\    POPUP "hello", CHECKED, GRAYED, HELP, INACTIVE, MENUBARBREAK, MENUBREAK {
-        \\        MENUITEM SEPARATOR
-        \\        POPUP "" { MENUITEM SEPARATOR }
-        \\    }
+        \\  POPUP "hello", CHECKED, GRAYED, HELP, INACTIVE, MENUBARBREAK, MENUBREAK {
+        \\    MENUITEM SEPARATOR
+        \\    POPUP "" { MENUITEM SEPARATOR }
+        \\    POPUP "" { MENUITEM SEPARATOR }
+        \\  }
         \\}
     ,
-        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\"\x00\x00\x00 \x00\x00\x00\xff\xff\x04\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xfb@h\x00e\x00l\x00l\x00o\x00\x00\x00\x00\x00\x00\x00\x00\x00\x90\x00\x00\x00\x80\x00\x00\x00\x00\x00\x00\x00",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00,\x00\x00\x00 \x00\x00\x00\xff\xff\x04\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xfb@h\x00e\x00l\x00l\x00o\x00\x00\x00\x00\x00\x00\x00\x00\x00\x10\x00\x00\x00\x80\x00\x00\x00\x00\x00\x90\x00\x00\x00\x80\x00\x00\x00\x00\x00",
+        std.fs.cwd(),
+    );
+    try testCompileWithOutput(
+        \\1 MENUEX 1000
+        \\BEGIN
+        \\  POPUP "&File", 200,,, 1001
+        \\  BEGIN
+        \\    MENUITEM "&Open\tCtrl+O", 100
+        \\    MENUITEM "", -1, 0x00000800L
+        \\    MENUITEM "&Exit\tAlt+X",  101
+        \\  END
+        \\  POPUP "&View", 201,,, 1002
+        \\  BEGIN
+        \\    MENUITEM "&Status Bar", 102,, 0x00000008L
+        \\  END
+        \\END
+    ,
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xd0\x00\x00\x00 \x00\x00\x00\xff\xff\x04\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x04\x00\xe8\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xc8\x00\x00\x00\x01\x00&\x00F\x00i\x00l\x00e\x00\x00\x00\x00\x00\xe9\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00d\x00\x00\x00\x00\x00&\x00O\x00p\x00e\x00n\x00\t\x00C\x00t\x00r\x00l\x00+\x00O\x00\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00\xff\xff\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00e\x00\x00\x00\x80\x00&\x00E\x00x\x00i\x00t\x00\t\x00A\x00l\x00t\x00+\x00X\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xc9\x00\x00\x00\x81\x00&\x00V\x00i\x00e\x00w\x00\x00\x00\x00\x00\xea\x03\x00\x00\x00\x00\x00\x00\x08\x00\x00\x00f\x00\x00\x00\x80\x00&\x00S\x00t\x00a\x00t\x00u\x00s\x00 \x00B\x00a\x00r\x00\x00\x00\x00\x00",
         std.fs.cwd(),
     );
 }
