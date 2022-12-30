@@ -622,10 +622,9 @@ pub const Parser = struct {
                 try self.check(.begin);
 
                 var block_statements = std.ArrayListUnmanaged(*Node){};
-                // TODO
-                // while (try self.parseBlock()) |block_node| {
-                //     try block_statements.append(self.state.arena, block_node);
-                // }
+                while (try self.parseVersionBlock()) |block_node| {
+                    try block_statements.append(self.state.arena, block_node);
+                }
 
                 try self.nextToken(.normal);
                 const end_token = self.state.token;
@@ -1116,6 +1115,88 @@ pub const Parser = struct {
                 return &node.base;
             },
         }
+    }
+
+    /// Expects the current token to be handled, and that the version BLOCK/VALUE will
+    /// begin on the next token.
+    /// After return, the current token will be the token immediately before the end of the
+    /// version BLOCK/VALUE (or unchanged if the function returns null).
+    fn parseVersionBlock(self: *Self) Error!?*Node {
+        const keyword_token = try self.lookaheadToken(.normal);
+        const keyword = rc.VersionBlock.map.get(keyword_token.slice(self.lexer.buffer)) orelse return null;
+        self.nextToken(.normal) catch unreachable;
+
+        try self.nextToken(.normal);
+        const key = self.state.token;
+        if (!key.isStringLiteral()) {
+            return self.addErrorDetailsAndFail(.{
+                .err = .expected_something_else,
+                .token = key,
+                .extra = .{ .expected_types = .{
+                    .string_literal = true,
+                } },
+            });
+        }
+        try self.skipAnyCommas();
+
+        const values = try self.parseBlockValuesList();
+
+        switch (keyword) {
+            .block => {
+                try self.nextToken(.normal);
+                const begin_token = self.state.token;
+                try self.check(.begin);
+
+                var children = std.ArrayListUnmanaged(*Node){};
+                while (try self.parseVersionBlock()) |value_node| {
+                    try children.append(self.state.arena, value_node);
+                }
+
+                try self.nextToken(.normal);
+                const end_token = self.state.token;
+                try self.check(.end);
+
+                const node = try self.state.arena.create(Node.Block);
+                node.* = .{
+                    .block_token = keyword_token,
+                    .key = key,
+                    .values = values,
+                    .begin_token = begin_token,
+                    .children = try children.toOwnedSlice(self.state.arena),
+                    .end_token = end_token,
+                };
+                return &node.base;
+            },
+            .value => {
+                const node = try self.state.arena.create(Node.BlockValue);
+                node.* = .{
+                    .value_token = keyword_token,
+                    .name = key,
+                    .values = values,
+                };
+                return &node.base;
+            },
+        }
+    }
+
+    fn parseBlockValuesList(self: *Self) Error![]*Node {
+        var values = std.ArrayListUnmanaged(*Node){};
+        while (true) {
+            const lookahead_token = try self.lookaheadToken(.normal);
+            switch (lookahead_token.id) {
+                .number,
+                .open_paren,
+                .quoted_ascii_string,
+                .quoted_wide_string,
+                => {},
+                else => break,
+            }
+            const value = try self.parseExpression(false);
+            try values.append(self.state.arena, value);
+
+            try self.skipAnyCommas();
+        }
+        return values.toOwnedSlice(self.state.arena);
     }
 
     /// Expects the current token to be a literal token that contains the string LANGUAGE
@@ -2512,7 +2593,18 @@ test "versioninfo" {
         \\FILEOS 2
         \\FILETYPE 3
         \\FILESUBTYPE 4
-        \\{}
+        \\{
+        \\  VALUE "hello"
+        \\  BLOCK "something",,
+        \\  BEGIN
+        \\      BLOCK "something else",, 1,, 2
+        \\      BEGIN
+        \\          VALUE "key",,
+        \\          VALUE "key",, 1,, 2,, 3,,
+        \\          VALUE "key" 1 2 3 "4"
+        \\      END
+        \\  END
+        \\}
     ,
         \\root
         \\ version_info 1 VERSIONINFO [1 common_resource_attributes]
@@ -2541,6 +2633,25 @@ test "versioninfo" {
         \\  simple_statement FILESUBTYPE
         \\   literal 4
         \\ {
+        \\  block_value VALUE "hello"
+        \\  block BLOCK "something"
+        \\  BEGIN
+        \\   block BLOCK "something else"
+        \\    literal 1
+        \\    literal 2
+        \\   BEGIN
+        \\    block_value VALUE "key"
+        \\    block_value VALUE "key"
+        \\     literal 1
+        \\     literal 2
+        \\     literal 3
+        \\    block_value VALUE "key"
+        \\     literal 1
+        \\     literal 2
+        \\     literal 3
+        \\     literal "4"
+        \\   END
+        \\  END
         \\ }
         \\
     );

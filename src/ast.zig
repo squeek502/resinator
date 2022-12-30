@@ -124,6 +124,8 @@ pub const Node = struct {
         popup_ex,
         version_info,
         version_statement,
+        block,
+        block_value,
         string_table,
         string_table_string,
         language_statement,
@@ -151,6 +153,8 @@ pub const Node = struct {
                 .popup_ex => PopupEx,
                 .version_info => VersionInfo,
                 .version_statement => VersionStatement,
+                .block => Block,
+                .block_value => BlockValue,
                 .string_table => StringTable,
                 .string_table_string => StringTableString,
                 .language_statement => LanguageStatement,
@@ -338,6 +342,25 @@ pub const Node = struct {
         parts: []*Node,
     };
 
+    pub const Block = struct {
+        base: Node = .{ .id = .block },
+        block_token: Token,
+        key: Token,
+        /// This is undocumented but BLOCK statements support values after
+        /// the key just like VALUE statements.
+        values: []*Node,
+        begin_token: Token,
+        children: []*Node,
+        end_token: Token,
+    };
+
+    pub const BlockValue = struct {
+        base: Node = .{ .id = .block_value },
+        value_token: Token,
+        name: Token,
+        values: []*Node,
+    };
+
     pub const StringTable = struct {
         base: Node = .{ .id = .string_table },
         type: Token,
@@ -492,6 +515,14 @@ pub const Node = struct {
             .version_statement => {
                 const casted = @fieldParentPtr(Node.VersionStatement, "base", node);
                 return casted.type;
+            },
+            .block => {
+                const casted = @fieldParentPtr(Node.Block, "base", node);
+                return casted.block_token;
+            },
+            .block_value => {
+                const casted = @fieldParentPtr(Node.BlockValue, "base", node);
+                return casted.value_token;
             },
             .string_table => {
                 const casted = @fieldParentPtr(Node.StringTable, "base", node);
@@ -754,6 +785,29 @@ pub const Node = struct {
                 try writer.print(" {s}\n", .{version_statement.type.slice(tree.source)});
                 for (version_statement.parts) |part| {
                     try part.dump(tree, writer, indent + 1);
+                }
+            },
+            .block => {
+                const block = @fieldParentPtr(Node.Block, "base", node);
+                try writer.print(" {s} {s}\n", .{ block.block_token.slice(tree.source), block.key.slice(tree.source) });
+                for (block.values) |value| {
+                    try value.dump(tree, writer, indent + 1);
+                }
+                try writer.writeByteNTimes(' ', indent);
+                try writer.writeAll(block.begin_token.slice(tree.source));
+                try writer.writeAll("\n");
+                for (block.children) |child| {
+                    try child.dump(tree, writer, indent + 1);
+                }
+                try writer.writeByteNTimes(' ', indent);
+                try writer.writeAll(block.end_token.slice(tree.source));
+                try writer.writeAll("\n");
+            },
+            .block_value => {
+                const block_value = @fieldParentPtr(Node.BlockValue, "base", node);
+                try writer.print(" {s} {s}\n", .{ block_value.value_token.slice(tree.source), block_value.name.slice(tree.source) });
+                for (block_value.values) |value| {
+                    try value.dump(tree, writer, indent + 1);
                 }
             },
             .string_table => {

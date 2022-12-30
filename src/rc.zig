@@ -280,6 +280,16 @@ pub const VersionInfo = enum {
     });
 };
 
+pub const VersionBlock = enum {
+    block,
+    value,
+
+    pub const map = utils.ComptimeCaseInsensitiveStringMap(VersionBlock, .{
+        .{ "BLOCK", .block },
+        .{ "VALUE", .value },
+    });
+};
+
 /// Keywords that are be the first token in a statement and (if so) dictate how the rest
 /// of the statement is parsed.
 pub const TopLevelKeywords = enum {
