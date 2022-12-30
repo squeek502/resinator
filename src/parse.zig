@@ -584,16 +584,16 @@ pub const Parser = struct {
                     try items.append(self.state.allocator, item_node);
                 }
 
+                try self.nextToken(.normal);
+                const end_token = self.state.token;
+                try self.check(.end);
+
                 if (items.items.len == 0) {
                     return self.addErrorDetailsAndFail(.{
                         .err = .empty_menu_not_allowed,
                         .token = type_token,
                     });
                 }
-
-                try self.nextToken(.normal);
-                const end_token = self.state.token;
-                try self.check(.end);
 
                 const node = try self.state.arena.create(Node.Menu);
                 node.* = .{
@@ -959,16 +959,16 @@ pub const Parser = struct {
                         try items.append(self.state.arena, item_node);
                     }
 
+                    try self.nextToken(.normal);
+                    const end_token = self.state.token;
+                    try self.check(.end);
+
                     if (items.items.len == 0) {
                         return self.addErrorDetailsAndFail(.{
                             .err = .empty_menu_not_allowed,
                             .token = menuitem_token,
                         });
                     }
-
-                    try self.nextToken(.normal);
-                    const end_token = self.state.token;
-                    try self.check(.end);
 
                     const node = try self.state.arena.create(Node.Popup);
                     node.* = .{
@@ -1030,16 +1030,16 @@ pub const Parser = struct {
                     try items.append(self.state.arena, item_node);
                 }
 
+                try self.nextToken(.normal);
+                const end_token = self.state.token;
+                try self.check(.end);
+
                 if (items.items.len == 0) {
                     return self.addErrorDetailsAndFail(.{
                         .err = .empty_menu_not_allowed,
                         .token = menuitem_token,
                     });
                 }
-
-                try self.nextToken(.normal);
-                const end_token = self.state.token;
-                try self.check(.end);
 
                 const node = try self.state.arena.create(Node.PopupEx);
                 node.* = .{
@@ -2470,6 +2470,10 @@ test "menus" {
     try testParseError(
         "empty menu of type 'POPUP' not allowed",
         "1 MENU { MENUITEM SEPARATOR POPUP \"\" {} }",
+    );
+    try testParseError(
+        "expected '<'}' or END>', got 'hello'",
+        "1 MENU { hello }",
     );
     try testParse(
         \\1 MENU FIXED VERSION 1 CHARACTERISTICS (1+2) {
