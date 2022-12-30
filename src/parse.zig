@@ -954,6 +954,7 @@ pub const Parser = struct {
                     try self.check(.begin);
 
                     var items = std.ArrayListUnmanaged(*Node){};
+                    // TODO: Add nesting limit to avoid stack overflow
                     while (try self.parseMenuItemStatement(resource)) |item_node| {
                         try items.append(self.state.arena, item_node);
                     }
@@ -1024,6 +1025,7 @@ pub const Parser = struct {
                 try self.check(.begin);
 
                 var items = std.ArrayListUnmanaged(*Node){};
+                // TODO: Add nesting limit to avoid stack overflow
                 while (try self.parseMenuItemStatement(resource)) |item_node| {
                     try items.append(self.state.arena, item_node);
                 }
@@ -1148,6 +1150,7 @@ pub const Parser = struct {
                 try self.check(.begin);
 
                 var children = std.ArrayListUnmanaged(*Node){};
+                // TODO: Add nesting limit to avoid stack overflow
                 while (try self.parseVersionBlock()) |value_node| {
                     try children.append(self.state.arena, value_node);
                 }
