@@ -260,6 +260,26 @@ pub const MenuItem = enum {
     };
 };
 
+pub const VersionInfo = enum {
+    file_version,
+    product_version,
+    file_flags_mask,
+    file_flags,
+    file_os,
+    file_type,
+    file_subtype,
+
+    pub const map = utils.ComptimeCaseInsensitiveStringMap(VersionInfo, .{
+        .{ "FILEVERSION", .file_version },
+        .{ "PRODUCTVERSION", .product_version },
+        .{ "FILEFLAGSMASK", .file_flags_mask },
+        .{ "FILEFLAGS", .file_flags },
+        .{ "FILEOS", .file_os },
+        .{ "FILETYPE", .file_type },
+        .{ "FILESUBTYPE", .file_subtype },
+    });
+};
+
 /// Keywords that are be the first token in a statement and (if so) dictate how the rest
 /// of the statement is parsed.
 pub const TopLevelKeywords = enum {

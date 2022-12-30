@@ -608,6 +608,42 @@ pub const Parser = struct {
                 };
                 return &node.base;
             },
+            .versioninfo => {
+                // common resource attributes must all be contiguous and come before optional-statements
+                const common_resource_attributes = try self.parseCommonResourceAttributes();
+
+                var fixed_info = std.ArrayListUnmanaged(*Node){};
+                // TODO
+                // while (try self.parseVersionStatement()) |version_statement| {
+                //     try fixed_info.append(self.state.allocator, version_statement);
+                // }
+
+                try self.nextToken(.normal);
+                const begin_token = self.state.token;
+                try self.check(.begin);
+
+                var block_statements = std.ArrayListUnmanaged(*Node){};
+                // TODO
+                // while (try self.parseBlock()) |block_node| {
+                //     try block_statements.append(self.state.allocator, block_node);
+                // }
+
+                try self.nextToken(.normal);
+                const end_token = self.state.token;
+                try self.check(.end);
+
+                const node = try self.state.arena.create(Node.VersionInfo);
+                node.* = .{
+                    .id = id_token,
+                    .versioninfo = type_token,
+                    .common_resource_attributes = common_resource_attributes,
+                    .fixed_info = try fixed_info.toOwnedSlice(self.state.arena),
+                    .begin_token = begin_token,
+                    .block_statements = try block_statements.toOwnedSlice(self.state.arena),
+                    .end_token = end_token,
+                };
+                return &node.base;
+            },
             .stringtable => unreachable,
             // Just try everything as a 'generic' resource (raw data or external file)
             // TODO: More fine-grained switch cases as necessary
@@ -2414,6 +2450,18 @@ test "menus" {
         \\    }
         \\   END
         \\  }
+        \\ }
+        \\
+    );
+}
+
+test "versioninfo" {
+    try testParse(
+        \\1 VERSIONINFO FIXED {}
+    ,
+        \\root
+        \\ version_info 1 VERSIONINFO [1 common_resource_attributes]
+        \\ {
         \\ }
         \\
     );

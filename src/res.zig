@@ -90,7 +90,7 @@ pub const MemoryFlags = packed struct(u16) {
             return MemoryFlags{ .value = MOVEABLE | SHARED };
         } else {
             return switch (predefined_resource_type.?) {
-                .RCDATA, .BITMAP, .HTML, .MANIFEST, .ACCELERATOR => MemoryFlags{ .value = MOVEABLE | SHARED },
+                .RCDATA, .BITMAP, .HTML, .MANIFEST, .ACCELERATOR, .VERSION => MemoryFlags{ .value = MOVEABLE | SHARED },
                 .GROUP_ICON, .GROUP_CURSOR, .STRING, .FONT, .DIALOG, .MENU => MemoryFlags{ .value = MOVEABLE | SHARED | DISCARDABLE },
                 .ICON, .CURSOR => MemoryFlags{ .value = MOVEABLE | DISCARDABLE },
                 .FONTDIR => MemoryFlags{ .value = MOVEABLE | PRELOAD },

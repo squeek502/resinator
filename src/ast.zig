@@ -122,6 +122,8 @@ pub const Node = struct {
         menu_item_ex,
         popup,
         popup_ex,
+        version_info,
+        version_statement,
         string_table,
         string_table_string,
         language_statement,
@@ -147,6 +149,8 @@ pub const Node = struct {
                 .menu_item_ex => MenuItemEx,
                 .popup => Popup,
                 .popup_ex => PopupEx,
+                .version_info => VersionInfo,
+                .version_statement => VersionStatement,
                 .string_table => StringTable,
                 .string_table_string => StringTableString,
                 .language_statement => LanguageStatement,
@@ -314,6 +318,26 @@ pub const Node = struct {
         end_token: Token,
     };
 
+    pub const VersionInfo = struct {
+        base: Node = .{ .id = .version_info },
+        id: Token,
+        versioninfo: Token,
+        common_resource_attributes: []Token,
+        /// Will contain VersionStatement and/or SimpleStatement nodes
+        fixed_info: []*Node,
+        begin_token: Token,
+        block_statements: []*Node,
+        end_token: Token,
+    };
+
+    /// Used for FILEVERSION and PRODUCTVERSION statements
+    pub const VersionStatement = struct {
+        base: Node = .{ .id = .version_statement },
+        type: Token,
+        /// Between 1-4 parts
+        parts: []*Node,
+    };
+
     pub const StringTable = struct {
         base: Node = .{ .id = .string_table },
         type: Token,
@@ -351,7 +375,9 @@ pub const Node = struct {
     };
 
     /// A statement with one value associated with it.
-    /// Used for CAPTION, CHARACTERISTICS, CLASS, EXSTYLE, MENU, STYLE, VERSION
+    /// Used for CAPTION, CHARACTERISTICS, CLASS, EXSTYLE, MENU, STYLE, VERSION,
+    /// as well as VERSIONINFO-specific statements FILEFLAGSMASK, FILEFLAGS, FILEOS,
+    /// FILETYPE, FILESUBTYPE
     pub const SimpleStatement = struct {
         base: Node = .{ .id = .simple_statement },
         identifier: Token,
@@ -458,6 +484,14 @@ pub const Node = struct {
                 const node_type = popup_type.Type();
                 const casted = @fieldParentPtr(node_type, "base", node);
                 return casted.popup;
+            },
+            .version_info => {
+                const casted = @fieldParentPtr(Node.VersionInfo, "base", node);
+                return casted.id;
+            },
+            .version_statement => {
+                const casted = @fieldParentPtr(Node.VersionStatement, "base", node);
+                return casted.type;
             },
             .string_table => {
                 const casted = @fieldParentPtr(Node.StringTable, "base", node);
@@ -698,6 +732,29 @@ pub const Node = struct {
                 try writer.writeByteNTimes(' ', indent);
                 try writer.writeAll(popup.end_token.slice(tree.source));
                 try writer.writeAll("\n");
+            },
+            .version_info => {
+                const version_info = @fieldParentPtr(Node.VersionInfo, "base", node);
+                try writer.print(" {s} {s} [{d} common_resource_attributes]\n", .{ version_info.id.slice(tree.source), version_info.versioninfo.slice(tree.source), version_info.common_resource_attributes.len });
+                for (version_info.fixed_info) |fixed_info| {
+                    try fixed_info.dump(tree, writer, indent + 1);
+                }
+                try writer.writeByteNTimes(' ', indent);
+                try writer.writeAll(version_info.begin_token.slice(tree.source));
+                try writer.writeAll("\n");
+                for (version_info.block_statements) |block| {
+                    try block.dump(tree, writer, indent + 1);
+                }
+                try writer.writeByteNTimes(' ', indent);
+                try writer.writeAll(version_info.end_token.slice(tree.source));
+                try writer.writeAll("\n");
+            },
+            .version_statement => {
+                const version_statement = @fieldParentPtr(Node.VersionStatement, "base", node);
+                try writer.print(" {s}\n", .{version_statement.type.slice(tree.source)});
+                for (version_statement.parts) |part| {
+                    try part.dump(tree, writer, indent + 1);
+                }
             },
             .string_table => {
                 const string_table = @fieldParentPtr(Node.StringTable, "base", node);
