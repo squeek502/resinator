@@ -846,6 +846,66 @@ test "forced ordinal" {
     try std.testing.expectEqual(@as(u16, 0x4AF0), ForcedOrdinal.fromUtf16Le(std.unicode.utf8ToUtf16LeStringLiteral("0\u{10100}")));
 }
 
+/// https://learn.microsoft.com/en-us/windows/win32/api/verrsrc/ns-verrsrc-vs_fixedfileinfo
+pub const FixedFileInfo = struct {
+    file_version: Version = .{},
+    product_version: Version = .{},
+    file_flags_mask: u32 = 0,
+    file_flags: u32 = 0,
+    file_os: u32 = 0,
+    file_type: u32 = 0,
+    file_subtype: u32 = 0,
+    file_date: Version = .{}, // TODO: I think this is always all zeroes?
+
+    pub const signature = 0xFEEF04BD;
+    // Note: This corresponds to a version of 1.0
+    pub const version = 0x00010000;
+
+    pub const byte_len = 0x34;
+    pub const key = std.unicode.utf8ToUtf16LeStringLiteral("VS_VERSION_INFO");
+
+    pub const Version = struct {
+        parts: [4]u16 = [_]u16{0} ** 4,
+
+        pub fn mostSignificantCombinedParts(self: Version) u32 {
+            return (@as(u32, self.parts[0]) << 16) + self.parts[1];
+        }
+
+        pub fn leastSignificantCombinedParts(self: Version) u32 {
+            return (@as(u32, self.parts[2]) << 16) + self.parts[3];
+        }
+    };
+
+    pub fn write(self: FixedFileInfo, writer: anytype) !void {
+        try writer.writeIntLittle(u32, signature);
+        try writer.writeIntLittle(u32, version);
+        try writer.writeIntLittle(u32, self.file_version.mostSignificantCombinedParts());
+        try writer.writeIntLittle(u32, self.file_version.leastSignificantCombinedParts());
+        try writer.writeIntLittle(u32, self.product_version.mostSignificantCombinedParts());
+        try writer.writeIntLittle(u32, self.product_version.leastSignificantCombinedParts());
+        try writer.writeIntLittle(u32, self.file_flags_mask);
+        try writer.writeIntLittle(u32, self.file_flags);
+        try writer.writeIntLittle(u32, self.file_os);
+        try writer.writeIntLittle(u32, self.file_type);
+        try writer.writeIntLittle(u32, self.file_subtype);
+        try writer.writeIntLittle(u32, self.file_date.mostSignificantCombinedParts());
+        try writer.writeIntLittle(u32, self.file_date.leastSignificantCombinedParts());
+    }
+};
+
+test "FixedFileInfo.Version" {
+    const version = FixedFileInfo.Version{
+        .parts = .{ 1, 2, 3, 4 },
+    };
+    try std.testing.expectEqual(@as(u32, 0x00010002), version.mostSignificantCombinedParts());
+    try std.testing.expectEqual(@as(u32, 0x00030004), version.leastSignificantCombinedParts());
+}
+
+pub const VersionNode = struct {
+    pub const type_string: u16 = 1;
+    pub const type_binary: u16 = 0;
+};
+
 pub const MenuItemFlags = struct {
     value: u16 = 0,
 

@@ -1161,7 +1161,7 @@ pub const Parser = struct {
 
                 const node = try self.state.arena.create(Node.Block);
                 node.* = .{
-                    .block_token = keyword_token,
+                    .identifier = keyword_token,
                     .key = key,
                     .values = values,
                     .begin_token = begin_token,
@@ -1173,8 +1173,8 @@ pub const Parser = struct {
             .value => {
                 const node = try self.state.arena.create(Node.BlockValue);
                 node.* = .{
-                    .value_token = keyword_token,
-                    .name = key,
+                    .identifier = keyword_token,
+                    .key = key,
                     .values = values,
                 };
                 return &node.base;

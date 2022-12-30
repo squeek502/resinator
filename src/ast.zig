@@ -344,7 +344,8 @@ pub const Node = struct {
 
     pub const Block = struct {
         base: Node = .{ .id = .block },
-        block_token: Token,
+        /// The BLOCK token itself
+        identifier: Token,
         key: Token,
         /// This is undocumented but BLOCK statements support values after
         /// the key just like VALUE statements.
@@ -356,8 +357,9 @@ pub const Node = struct {
 
     pub const BlockValue = struct {
         base: Node = .{ .id = .block_value },
-        value_token: Token,
-        name: Token,
+        /// The VALUE token itself
+        identifier: Token,
+        key: Token,
         values: []*Node,
     };
 
@@ -518,11 +520,11 @@ pub const Node = struct {
             },
             .block => {
                 const casted = @fieldParentPtr(Node.Block, "base", node);
-                return casted.block_token;
+                return casted.identifier;
             },
             .block_value => {
                 const casted = @fieldParentPtr(Node.BlockValue, "base", node);
-                return casted.value_token;
+                return casted.identifier;
             },
             .string_table => {
                 const casted = @fieldParentPtr(Node.StringTable, "base", node);
@@ -789,7 +791,7 @@ pub const Node = struct {
             },
             .block => {
                 const block = @fieldParentPtr(Node.Block, "base", node);
-                try writer.print(" {s} {s}\n", .{ block.block_token.slice(tree.source), block.key.slice(tree.source) });
+                try writer.print(" {s} {s}\n", .{ block.identifier.slice(tree.source), block.key.slice(tree.source) });
                 for (block.values) |value| {
                     try value.dump(tree, writer, indent + 1);
                 }
@@ -805,7 +807,7 @@ pub const Node = struct {
             },
             .block_value => {
                 const block_value = @fieldParentPtr(Node.BlockValue, "base", node);
-                try writer.print(" {s} {s}\n", .{ block_value.value_token.slice(tree.source), block_value.name.slice(tree.source) });
+                try writer.print(" {s} {s}\n", .{ block_value.identifier.slice(tree.source), block_value.key.slice(tree.source) });
                 for (block_value.values) |value| {
                     try value.dump(tree, writer, indent + 1);
                 }

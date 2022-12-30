@@ -98,7 +98,7 @@ pub const Compiler = struct {
             .menu_item_ex => unreachable,
             .popup => unreachable,
             .popup_ex => unreachable,
-            .version_info => @panic("TODO"),
+            .version_info => try self.writeVersionInfo(@fieldParentPtr(Node.VersionInfo, "base", node), writer),
             .version_statement => unreachable,
             .block => unreachable,
             .block_value => unreachable,
@@ -1104,6 +1104,157 @@ pub const Compiler = struct {
         }
     }
 
+    pub fn writeVersionInfo(self: *Compiler, node: *Node.VersionInfo, writer: anytype) !void {
+        var data_buffer = std.ArrayList(u8).init(self.allocator);
+        defer data_buffer.deinit();
+        const data_writer = data_buffer.writer();
+
+        try data_writer.writeIntLittle(u16, 0); // placeholder size
+        try data_writer.writeIntLittle(u16, res.FixedFileInfo.byte_len);
+        try data_writer.writeIntLittle(u16, res.VersionNode.type_binary);
+        const key_bytes = std.mem.sliceAsBytes(res.FixedFileInfo.key[0 .. res.FixedFileInfo.key.len + 1]);
+        try data_writer.writeAll(key_bytes);
+        try writeDataPadding(data_writer, @intCast(u32, data_buffer.items.len));
+
+        var fixed_file_info = res.FixedFileInfo{};
+        for (node.fixed_info) |fixed_info| {
+            switch (fixed_info.id) {
+                .version_statement => {
+                    const version_statement = @fieldParentPtr(Node.VersionStatement, "base", fixed_info);
+                    const version_type = rc.VersionInfo.map.get(version_statement.type.slice(self.source)).?;
+                    for (version_statement.parts) |part, i| {
+                        const part_value = evaluateNumberExpression(part, self.source, self.code_pages);
+                        switch (version_type) {
+                            .file_version => {
+                                fixed_file_info.file_version.parts[i] = part_value.asWord();
+                            },
+                            .product_version => {
+                                fixed_file_info.product_version.parts[i] = part_value.asWord();
+                            },
+                            else => unreachable,
+                        }
+                    }
+                },
+                .simple_statement => {
+                    const statement = @fieldParentPtr(Node.SimpleStatement, "base", fixed_info);
+                    const statement_type = rc.VersionInfo.map.get(statement.identifier.slice(self.source)).?;
+                    const value = evaluateNumberExpression(statement.value, self.source, self.code_pages);
+                    switch (statement_type) {
+                        .file_flags_mask => fixed_file_info.file_flags_mask = value.value,
+                        .file_flags => fixed_file_info.file_flags = value.value,
+                        .file_os => fixed_file_info.file_os = value.value,
+                        .file_type => fixed_file_info.file_type = value.value,
+                        .file_subtype => fixed_file_info.file_subtype = value.value,
+                        else => unreachable,
+                    }
+                },
+                else => unreachable,
+            }
+        }
+        try fixed_file_info.write(data_writer);
+
+        for (node.block_statements) |statement| {
+            try self.writeVersionNode(statement, data_writer, &data_buffer);
+        }
+
+        // we now know the full size of this node (including its children), so set its size
+        std.mem.writeIntLittle(u16, data_buffer.items[0..2], @intCast(u16, data_buffer.items.len));
+
+        const type_bytes = self.sourceBytesForToken(node.versioninfo);
+        const data_size = @intCast(u32, data_buffer.items.len);
+        const id_bytes = self.sourceBytesForToken(node.id);
+        var header = try ResourceHeader.init(self.allocator, id_bytes, type_bytes, data_size, self.state.language);
+        defer header.deinit(self.allocator);
+
+        header.applyMemoryFlags(node.common_resource_attributes, self.source);
+
+        try header.write(writer);
+
+        var data_fbs = std.io.fixedBufferStream(data_buffer.items);
+        try writeResourceData(writer, data_fbs.reader(), data_size);
+    }
+
+    pub fn writeVersionNode(self: *Compiler, node: *Node, writer: anytype, buf: *std.ArrayList(u8)) !void {
+        try writeDataPadding(writer, @intCast(u32, buf.items.len));
+
+        const node_and_children_size_offset = buf.items.len;
+        try writer.writeIntLittle(u16, 0); // placeholder for size
+        const data_size_offset = buf.items.len;
+        try writer.writeIntLittle(u16, 0); // placeholder for data size
+        const data_type_offset = buf.items.len;
+        // Data type is string unless the node contains values that are numbers.
+        try writer.writeIntLittle(u16, res.VersionNode.type_string);
+
+        switch (node.id) {
+            inline .block, .block_value => |node_type| {
+                const block_or_value = @fieldParentPtr(node_type.Type(), "base", node);
+                const parsed_key = try self.parseQuotedStringAsWideString(block_or_value.key);
+                defer self.allocator.free(parsed_key);
+
+                try writer.writeAll(std.mem.sliceAsBytes(parsed_key[0 .. parsed_key.len + 1]));
+
+                var has_number_value: bool = false;
+                for (block_or_value.values) |value_node| {
+                    if (value_node.isNumberExpression()) {
+                        has_number_value = true;
+                        break;
+                    }
+                }
+                // The Win32 RC compiler does some strange stuff with the data size:
+                // Strings are counted as UTF-16 code units including the null-terminator
+                // Numbers are counted as their byte lengths
+                // TODO: Make using the real byte size a configurable option (as long as
+                //       the real byte size is still parsable by consumers of the
+                //       version info data).
+                var values_size_win32_rc: usize = 0;
+
+                // TODO: This can sometimes not be added, need to figure out when exactly
+                //       that happens
+                try writeDataPadding(writer, @intCast(u32, buf.items.len));
+
+                for (block_or_value.values) |value_node| {
+                    if (value_node.isNumberExpression()) {
+                        const number = evaluateNumberExpression(value_node, self.source, self.code_pages);
+                        // This is used to write u16 or u32 depending on the number's suffix
+                        const data_wrapper = Data{ .number = number };
+                        try data_wrapper.write(writer);
+                        // Numbers use byte count
+                        values_size_win32_rc += if (number.is_long) 4 else 2;
+                    } else {
+                        std.debug.assert(value_node.isStringLiteral());
+                        const literal_node = value_node.cast(.literal).?;
+                        const parsed_value = try self.parseQuotedStringAsWideString(literal_node.token);
+                        defer self.allocator.free(parsed_value);
+                        try writer.writeAll(std.mem.sliceAsBytes(parsed_value[0 .. parsed_value.len + 1]));
+                        // Strings use UTF-16 code-unit count including the null-terminator
+                        // TODO: The null-terminator can sometimes not be included,
+                        //       need to figure out when exactly that happens
+                        values_size_win32_rc += parsed_value.len + 1;
+                    }
+                }
+                var data_size_slice = buf.items[data_size_offset..];
+                std.mem.writeIntLittle(u16, data_size_slice[0..@sizeOf(u16)], @intCast(u16, values_size_win32_rc));
+
+                if (has_number_value) {
+                    const data_type_slice = buf.items[data_type_offset..];
+                    std.mem.writeIntLittle(u16, data_type_slice[0..@sizeOf(u16)], res.VersionNode.type_binary);
+                }
+
+                if (node_type == .block) {
+                    const block = block_or_value;
+                    for (block.children) |child| {
+                        try self.writeVersionNode(child, writer, buf);
+                    }
+                }
+            },
+            else => unreachable,
+        }
+
+        const node_and_children_size = buf.items.len - node_and_children_size_offset;
+        const node_and_children_size_slice = buf.items[node_and_children_size_offset..];
+        std.mem.writeIntLittle(u16, node_and_children_size_slice[0..@sizeOf(u16)], @intCast(u16, node_and_children_size));
+    }
+
     pub fn writeStringTable(self: *Compiler, node: *Node.StringTable) !void {
         const language = getLanguageFromOptionalStatements(node.optional_statements, self.source, self.code_pages) orelse self.state.language;
 
@@ -1286,6 +1437,7 @@ pub const Compiler = struct {
     }
 
     /// Helper that calls parseQuotedStringAsWideString with the relevant context
+    /// Resulting slice is allocated by `self.allocator`.
     pub fn parseQuotedStringAsWideString(self: *Compiler, token: Token) ![:0]u16 {
         return literals.parseQuotedStringAsWideString(
             self.allocator,
@@ -2210,6 +2362,82 @@ test "menu, menuex resource" {
         \\END
     ,
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xd0\x00\x00\x00 \x00\x00\x00\xff\xff\x04\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x04\x00\xe8\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xc8\x00\x00\x00\x01\x00&\x00F\x00i\x00l\x00e\x00\x00\x00\x00\x00\xe9\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00d\x00\x00\x00\x00\x00&\x00O\x00p\x00e\x00n\x00\t\x00C\x00t\x00r\x00l\x00+\x00O\x00\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00\xff\xff\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00e\x00\x00\x00\x80\x00&\x00E\x00x\x00i\x00t\x00\t\x00A\x00l\x00t\x00+\x00X\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xc9\x00\x00\x00\x81\x00&\x00V\x00i\x00e\x00w\x00\x00\x00\x00\x00\xea\x03\x00\x00\x00\x00\x00\x00\x08\x00\x00\x00f\x00\x00\x00\x80\x00&\x00S\x00t\x00a\x00t\x00u\x00s\x00 \x00B\x00a\x00r\x00\x00\x00\x00\x00",
+        std.fs.cwd(),
+    );
+}
+
+test "versioninfo resource" {
+    try testCompileWithOutput(
+        \\1 VERSIONINFO FIXED
+        \\FILEVERSION 1
+        \\PRODUCTVERSION 1,3-1,3,4
+        \\FILEFLAGSMASK 1
+        \\FILEFLAGS (1|2)
+        \\FILEOS 2
+        \\FILETYPE 3
+        \\FILESUBTYPE 4
+        \\{}
+    ,
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\\\x00\x00\x00 \x00\x00\x00\xff\xff\x10\x00\xff\xff\x01\x00\x00\x00\x00\x00 \x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\\\x004\x00\x00\x00V\x00S\x00_\x00V\x00E\x00R\x00S\x00I\x00O\x00N\x00_\x00I\x00N\x00F\x00O\x00\x00\x00\x00\x00\xbd\x04\xef\xfe\x00\x00\x01\x00\x00\x00\x01\x00\x00\x00\x00\x00\x02\x00\x01\x00\x04\x00\x03\x00\x01\x00\x00\x00\x03\x00\x00\x00\x02\x00\x00\x00\x03\x00\x00\x00\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+        std.fs.cwd(),
+    );
+    // This tests some edge cases around padding, data size, etc
+    try testCompileWithOutput(
+        \\test VERSIONINFO
+        \\BEGIN
+        \\  VALUE "key" 1L 2
+        \\END
+    ,
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00r\x00\x00\x00(\x00\x00\x00\xff\xff\x10\x00T\x00E\x00S\x00T\x00\x00\x00\x00\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00r\x004\x00\x00\x00V\x00S\x00_\x00V\x00E\x00R\x00S\x00I\x00O\x00N\x00_\x00I\x00N\x00F\x00O\x00\x00\x00\x00\x00\xbd\x04\xef\xfe\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x16\x00\x06\x00\x00\x00k\x00e\x00y\x00\x00\x00\x00\x00\x01\x00\x00\x00\x02\x00\x00\x00",
+        std.fs.cwd(),
+    );
+    // TODO: This seems to cause a miscompilation in the Win32 RC (no padding
+    //       bytes are added before the "a", it's size is reported as 1)
+    // try testCompileWithOutput(
+    //     \\test VERSIONINFO
+    //     \\BEGIN
+    //     \\  VALUE "key" 1L 2
+    //     \\  BLOCK "" BEGIN VALUE "key" "a" END
+    //     \\END
+    // ,
+    //     "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x8e\x00\x00\x00(\x00\x00\x00\xff\xff\x10\x00T\x00E\x00S\x00T\x00\x00\x00\x00\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x8e\x004\x00\x00\x00V\x00S\x00_\x00V\x00E\x00R\x00S\x00I\x00O\x00N\x00_\x00I\x00N\x00F\x00O\x00\x00\x00\x00\x00\xbd\x04\xef\xfe\x00\x00\x01\x00\x02\x00\x01\x00\x04\x00\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x16\x00\x06\x00\x00\x00k\x00e\x00y\x00\x00\x00\x00\x00\x01\x00\x00\x00\x02\x00\x00\x00\x1a\x00\x00\x00\x01\x00\x00\x00\x12\x00\x01\x00\x01\x00k\x00e\x00y\x00\x00\x00a\x00\x00\x00\x00\x00",
+    //     std.fs.cwd(),
+    // );
+}
+
+test "shell32 versioninfo" {
+    // This is the shell32.dll VERSIONINFO from https://devblogs.microsoft.com/oldnewthing/20061221-02/?p=28643
+    try testCompileWithOutput(
+        \\1 VERSIONINFO
+        \\FILEVERSION    3,0,2900,2869
+        \\PRODUCTVERSION 3,0,2900,2869
+        \\FILEFLAGSMASK  0x0000003FL
+        \\FILEFLAGS      0
+        \\FILEOS         0x00040004L
+        \\FILETYPE       0x00000002L
+        \\FILESUBTYPE    0x00000000L
+        \\BEGIN
+        \\ BLOCK "StringFileInfo"
+        \\ BEGIN
+        \\  BLOCK "040904B0"
+        \\  BEGIN
+        \\   VALUE "CompanyName", "Microsoft Corporation"
+        \\   VALUE "FileDescription", "Windows Shell Common Dll"
+        \\   VALUE "FileVersion", "6.00.2900.2869 (xpsp_sp2_gdr.060316-1512)"
+        \\   VALUE "InternalName", "SHELL32"
+        \\   VALUE "LegalCopyright", "\251 Microsoft Corporation. All rights reserved."
+        \\   VALUE "OriginalFilename", "SHELL32.DLL"
+        \\   VALUE "ProductName", "Microsoft\256 Windows\256 Operating System"
+        \\   VALUE "ProductVersion", "6.00.2900.2869"
+        \\  END
+        \\ END
+        \\ BLOCK "VarFileInfo"
+        \\ BEGIN
+        \\  VALUE "Translation", 0x0409, 0x04B0
+        \\ END
+        \\END
+    ,
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x98\x03\x00\x00 \x00\x00\x00\xff\xff\x10\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x98\x034\x00\x00\x00V\x00S\x00_\x00V\x00E\x00R\x00S\x00I\x00O\x00N\x00_\x00I\x00N\x00F\x00O\x00\x00\x00\x00\x00\xbd\x04\xef\xfe\x00\x00\x01\x00\x00\x00\x03\x005\x0bT\x0b\x00\x00\x03\x005\x0bT\x0b?\x00\x00\x00\x00\x00\x00\x00\x04\x00\x04\x00\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xf6\x02\x00\x00\x01\x00S\x00t\x00r\x00i\x00n\x00g\x00F\x00i\x00l\x00e\x00I\x00n\x00f\x00o\x00\x00\x00\xd2\x02\x00\x00\x01\x000\x004\x000\x009\x000\x004\x00B\x000\x00\x00\x00L\x00\x16\x00\x01\x00C\x00o\x00m\x00p\x00a\x00n\x00y\x00N\x00a\x00m\x00e\x00\x00\x00\x00\x00M\x00i\x00c\x00r\x00o\x00s\x00o\x00f\x00t\x00 \x00C\x00o\x00r\x00p\x00o\x00r\x00a\x00t\x00i\x00o\x00n\x00\x00\x00Z\x00\x19\x00\x01\x00F\x00i\x00l\x00e\x00D\x00e\x00s\x00c\x00r\x00i\x00p\x00t\x00i\x00o\x00n\x00\x00\x00\x00\x00W\x00i\x00n\x00d\x00o\x00w\x00s\x00 \x00S\x00h\x00e\x00l\x00l\x00 \x00C\x00o\x00m\x00m\x00o\x00n\x00 \x00D\x00l\x00l\x00\x00\x00\x00\x00t\x00*\x00\x01\x00F\x00i\x00l\x00e\x00V\x00e\x00r\x00s\x00i\x00o\x00n\x00\x00\x00\x00\x006\x00.\x000\x000\x00.\x002\x009\x000\x000\x00.\x002\x008\x006\x009\x00 \x00(\x00x\x00p\x00s\x00p\x00_\x00s\x00p\x002\x00_\x00g\x00d\x00r\x00.\x000\x006\x000\x003\x001\x006\x00-\x001\x005\x001\x002\x00)\x00\x00\x000\x00\x08\x00\x01\x00I\x00n\x00t\x00e\x00r\x00n\x00a\x00l\x00N\x00a\x00m\x00e\x00\x00\x00S\x00H\x00E\x00L\x00L\x003\x002\x00\x00\x00\x80\x00.\x00\x01\x00L\x00e\x00g\x00a\x00l\x00C\x00o\x00p\x00y\x00r\x00i\x00g\x00h\x00t\x00\x00\x00\xa9\x00 \x00M\x00i\x00c\x00r\x00o\x00s\x00o\x00f\x00t\x00 \x00C\x00o\x00r\x00p\x00o\x00r\x00a\x00t\x00i\x00o\x00n\x00.\x00 \x00A\x00l\x00l\x00 \x00r\x00i\x00g\x00h\x00t\x00s\x00 \x00r\x00e\x00s\x00e\x00r\x00v\x00e\x00d\x00.\x00\x00\x00@\x00\x0c\x00\x01\x00O\x00r\x00i\x00g\x00i\x00n\x00a\x00l\x00F\x00i\x00l\x00e\x00n\x00a\x00m\x00e\x00\x00\x00S\x00H\x00E\x00L\x00L\x003\x002\x00.\x00D\x00L\x00L\x00\x00\x00j\x00%\x00\x01\x00P\x00r\x00o\x00d\x00u\x00c\x00t\x00N\x00a\x00m\x00e\x00\x00\x00\x00\x00M\x00i\x00c\x00r\x00o\x00s\x00o\x00f\x00t\x00\xae\x00 \x00W\x00i\x00n\x00d\x00o\x00w\x00s\x00\xae\x00 \x00O\x00p\x00e\x00r\x00a\x00t\x00i\x00n\x00g\x00 \x00S\x00y\x00s\x00t\x00e\x00m\x00\x00\x00\x00\x00B\x00\x0f\x00\x01\x00P\x00r\x00o\x00d\x00u\x00c\x00t\x00V\x00e\x00r\x00s\x00i\x00o\x00n\x00\x00\x006\x00.\x000\x000\x00.\x002\x009\x000\x000\x00.\x002\x008\x006\x009\x00\x00\x00\x00\x00D\x00\x00\x00\x01\x00V\x00a\x00r\x00F\x00i\x00l\x00e\x00I\x00n\x00f\x00o\x00\x00\x00\x00\x00$\x00\x04\x00\x00\x00T\x00r\x00a\x00n\x00s\x00l\x00a\x00t\x00i\x00o\x00n\x00\x00\x00\x00\x00\t\x04\xb0\x04",
         std.fs.cwd(),
     );
 }
