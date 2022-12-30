@@ -613,10 +613,9 @@ pub const Parser = struct {
                 const common_resource_attributes = try self.parseCommonResourceAttributes();
 
                 var fixed_info = std.ArrayListUnmanaged(*Node){};
-                // TODO
-                // while (try self.parseVersionStatement()) |version_statement| {
-                //     try fixed_info.append(self.state.allocator, version_statement);
-                // }
+                while (try self.parseVersionStatement()) |version_statement| {
+                    try fixed_info.append(self.state.arena, version_statement);
+                }
 
                 try self.nextToken(.normal);
                 const begin_token = self.state.token;
@@ -625,7 +624,7 @@ pub const Parser = struct {
                 var block_statements = std.ArrayListUnmanaged(*Node){};
                 // TODO
                 // while (try self.parseBlock()) |block_node| {
-                //     try block_statements.append(self.state.allocator, block_node);
+                //     try block_statements.append(self.state.arena, block_node);
                 // }
 
                 try self.nextToken(.normal);
@@ -1074,6 +1073,49 @@ pub const Parser = struct {
         const node = try self.parseExpression(false);
         try self.checkNumberExpression(node);
         return node;
+    }
+
+    /// Expects the current token to be handled, and that the version statement will
+    /// begin on the next token.
+    /// After return, the current token will be the token immediately before the end of the
+    /// version statement (or unchanged if the function returns null).
+    fn parseVersionStatement(self: *Self) Error!?*Node {
+        const type_token = try self.lookaheadToken(.normal);
+        const statement_type = rc.VersionInfo.map.get(type_token.slice(self.lexer.buffer)) orelse return null;
+        self.nextToken(.normal) catch unreachable;
+        switch (statement_type) {
+            .file_version, .product_version => {
+                var parts = std.BoundedArray(*Node, 4){};
+
+                while (parts.len < 4) {
+                    const value = try self.parseExpression(false);
+                    try self.checkNumberExpression(value);
+                    parts.addOneAssumeCapacity().* = value;
+
+                    if (parts.len == 4 or !(try self.parseOptionalToken(.comma))) {
+                        break;
+                    }
+                }
+
+                const node = try self.state.arena.create(Node.VersionStatement);
+                node.* = .{
+                    .type = type_token,
+                    .parts = try self.state.arena.dupe(*Node, parts.slice()),
+                };
+                return &node.base;
+            },
+            else => {
+                const value = try self.parseExpression(false);
+                try self.checkNumberExpression(value);
+
+                const node = try self.state.arena.create(Node.SimpleStatement);
+                node.* = .{
+                    .identifier = type_token,
+                    .value = value,
+                };
+                return &node.base;
+            },
+        }
     }
 
     /// Expects the current token to be a literal token that contains the string LANGUAGE
@@ -2456,11 +2498,48 @@ test "menus" {
 }
 
 test "versioninfo" {
+    try testParseError(
+        \\expected '<'{' or BEGIN>', got ','
+    ,
+        \\1 VERSIONINFO PRODUCTVERSION 1,2,3,4,5 {}
+    );
     try testParse(
-        \\1 VERSIONINFO FIXED {}
+        \\1 VERSIONINFO FIXED
+        \\FILEVERSION 1
+        \\PRODUCTVERSION 1,3-1,3,4
+        \\FILEFLAGSMASK 1
+        \\FILEFLAGS (1|2)
+        \\FILEOS 2
+        \\FILETYPE 3
+        \\FILESUBTYPE 4
+        \\{}
     ,
         \\root
         \\ version_info 1 VERSIONINFO [1 common_resource_attributes]
+        \\  version_statement FILEVERSION
+        \\   literal 1
+        \\  version_statement PRODUCTVERSION
+        \\   literal 1
+        \\   binary_expression -
+        \\    literal 3
+        \\    literal 1
+        \\   literal 3
+        \\   literal 4
+        \\  simple_statement FILEFLAGSMASK
+        \\   literal 1
+        \\  simple_statement FILEFLAGS
+        \\   grouped_expression
+        \\   (
+        \\    binary_expression |
+        \\     literal 1
+        \\     literal 2
+        \\   )
+        \\  simple_statement FILEOS
+        \\   literal 2
+        \\  simple_statement FILETYPE
+        \\   literal 3
+        \\  simple_statement FILESUBTYPE
+        \\   literal 4
         \\ {
         \\ }
         \\
