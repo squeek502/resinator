@@ -318,16 +318,7 @@ pub const Parser = struct {
                         else => {},
                     }
                     const id_expression = try self.parseExpression(false);
-                    if (!id_expression.isNumberExpression()) {
-                        return self.addErrorDetailsAndFail(ErrorDetails{
-                            .err = .expected_something_else,
-                            .token = id_expression.getFirstToken(),
-                            .extra = .{ .expected_types = .{
-                                .number = true,
-                                .number_expression = true,
-                            } },
-                        });
-                    }
+                    try self.checkNumberExpression(id_expression);
 
                     const comma_token: ?Token = if (try self.parseOptionalToken(.comma)) self.state.token else null;
 
@@ -445,16 +436,7 @@ pub const Parser = struct {
                     try self.check(.comma);
 
                     const idvalue = try self.parseExpression(false);
-                    if (!idvalue.isNumberExpression()) {
-                        return self.addErrorDetailsAndFail(.{
-                            .err = .expected_something_else,
-                            .token = self.state.token,
-                            .extra = .{ .expected_types = .{
-                                .number = true,
-                                .number_expression = true,
-                            } },
-                        });
-                    }
+                    try self.checkNumberExpression(idvalue);
 
                     var type_and_options = std.ArrayListUnmanaged(Token){};
                     while (true) {
@@ -792,6 +774,7 @@ pub const Parser = struct {
         }
 
         const id = try self.parseExpression(false);
+        try self.checkNumberExpression(id);
 
         try self.skipAnyCommas();
 
