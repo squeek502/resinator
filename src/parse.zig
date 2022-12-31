@@ -622,7 +622,7 @@ pub const Parser = struct {
                 try self.check(.begin);
 
                 var block_statements = std.ArrayListUnmanaged(*Node){};
-                while (try self.parseVersionBlock()) |block_node| {
+                while (try self.parseVersionBlockOrValue()) |block_node| {
                     try block_statements.append(self.state.arena, block_node);
                 }
 
@@ -1123,7 +1123,7 @@ pub const Parser = struct {
     /// begin on the next token.
     /// After return, the current token will be the token immediately before the end of the
     /// version BLOCK/VALUE (or unchanged if the function returns null).
-    fn parseVersionBlock(self: *Self) Error!?*Node {
+    fn parseVersionBlockOrValue(self: *Self) Error!?*Node {
         const keyword_token = try self.lookaheadToken(.normal);
         const keyword = rc.VersionBlock.map.get(keyword_token.slice(self.lexer.buffer)) orelse return null;
         self.nextToken(.normal) catch unreachable;
@@ -1139,9 +1139,12 @@ pub const Parser = struct {
                 } },
             });
         }
+        // Need to keep track of this to detect a potential miscompilation when
+        // the comma is omitted and the first value is a quoted string.
+        const had_comma_before_first_value = try self.parseOptionalToken(.comma);
         try self.skipAnyCommas();
 
-        const values = try self.parseBlockValuesList();
+        const values = try self.parseBlockValuesList(had_comma_before_first_value);
 
         switch (keyword) {
             .block => {
@@ -1151,7 +1154,7 @@ pub const Parser = struct {
 
                 var children = std.ArrayListUnmanaged(*Node){};
                 // TODO: Add nesting limit to avoid stack overflow
-                while (try self.parseVersionBlock()) |value_node| {
+                while (try self.parseVersionBlockOrValue()) |value_node| {
                     try children.append(self.state.arena, value_node);
                 }
 
@@ -1182,7 +1185,7 @@ pub const Parser = struct {
         }
     }
 
-    fn parseBlockValuesList(self: *Self) Error![]*Node {
+    fn parseBlockValuesList(self: *Self, had_comma_before_first_value: bool) Error![]*Node {
         var values = std.ArrayListUnmanaged(*Node){};
         while (true) {
             const lookahead_token = try self.lookaheadToken(.normal);
@@ -1198,6 +1201,20 @@ pub const Parser = struct {
             try values.append(self.state.arena, value);
 
             try self.skipAnyCommas();
+        }
+        if (!had_comma_before_first_value and values.items.len > 0 and values.items[0].isStringLiteral()) {
+            const token = values.items[0].cast(.literal).?.token;
+            try self.addErrorDetails(.{
+                .err = .rc_would_miscompile_version_value_padding,
+                .type = .warning,
+                .token = token,
+            });
+            try self.addErrorDetails(.{
+                .err = .rc_would_miscompile_version_value_padding,
+                .type = .note,
+                .token = token,
+                .print_source_line = false,
+            });
         }
         return values.toOwnedSlice(self.state.arena);
     }
@@ -2591,6 +2608,11 @@ test "versioninfo" {
     ,
         \\1 VERSIONINFO PRODUCTVERSION 1,2,3,4,5 {}
     );
+    try testParseWarning(
+        \\the padding before this quoted string value would be miscompiled by the Win32 RC compiler
+    ,
+        \\1 VERSIONINFO { VALUE "key" "value" }
+    );
     try testParse(
         \\1 VERSIONINFO FIXED
         \\FILEVERSION 1
@@ -2704,4 +2726,22 @@ fn testParseError(expected_error_str: []const u8, source: []const u8) !void {
     std.debug.print("expected parse error, got tree:\n", .{});
     try tree.dump(std.io.getStdErr().writer());
     return error.UnexpectedSuccess;
+}
+
+fn testParseWarning(expected_warning_str: []const u8, source: []const u8) !void {
+    const allocator = std.testing.allocator;
+    var diagnostics = Diagnostics.init(allocator);
+    defer diagnostics.deinit();
+    // TODO: test different code pages
+    var lexer = Lexer.init(source, .windows1252);
+    var parser = Parser.init(&lexer);
+    var tree = try parser.parse(allocator, &diagnostics);
+    defer tree.deinit();
+
+    if (diagnostics.errors.items.len < 1) return error.NoDiagnostics;
+    if (diagnostics.errors.items[0].type != .warning) @panic("TODO handle parse test with a non-warning as the first error");
+    var buf: [256]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buf);
+    try diagnostics.errors.items[0].render(fbs.writer(), source, diagnostics.strings.items);
+    try std.testing.expectEqualStrings(expected_warning_str, fbs.getWritten());
 }

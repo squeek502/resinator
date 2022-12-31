@@ -176,6 +176,7 @@ pub const ErrorDetails = struct {
         string_resource_as_numeric_type,
         ascii_character_not_equivalent_to_virtual_key_code,
         empty_menu_not_allowed,
+        rc_would_miscompile_version_value_padding,
 
         // Compiler
         /// `string_and_language` is populated
@@ -265,6 +266,10 @@ pub const ErrorDetails = struct {
             },
             .empty_menu_not_allowed => {
                 try writer.print("empty menu of type '{s}' not allowed", .{self.token.nameForErrorDisplay(source)});
+            },
+            .rc_would_miscompile_version_value_padding => switch (self.type) {
+                .err, .warning => return writer.print("the padding before this quoted string value would be miscompiled by the Win32 RC compiler", .{}),
+                .note => return writer.print("to avoid the potential miscompilation, consider adding a comma between the VALUE's key and the quoted string", .{}),
             },
             .string_already_defined => switch (self.type) {
                 // TODO: better printing of language, using constant names from WinNT.h
