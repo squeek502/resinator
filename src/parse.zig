@@ -813,30 +813,38 @@ pub const Parser = struct {
             }
             try self.skipAnyCommas();
             style = try self.parseExpression(false);
+            try self.checkNumberExpression(style.?);
             try self.skipAnyCommas();
         }
 
         const x = try self.parseExpression(false);
+        try self.checkNumberExpression(x);
         _ = try self.parseOptionalToken(.comma);
         const y = try self.parseExpression(false);
+        try self.checkNumberExpression(y);
         _ = try self.parseOptionalToken(.comma);
         const width = try self.parseExpression(false);
+        try self.checkNumberExpression(width);
         _ = try self.parseOptionalToken(.comma);
         const height = try self.parseExpression(false);
+        try self.checkNumberExpression(height);
 
         if (control != .control) {
             if (try self.parseOptionalToken(.comma)) {
                 style = try self.parseExpression(false);
+                try self.checkNumberExpression(style.?);
             }
         }
 
         var exstyle: ?*Node = null;
         if (style != null and try self.parseOptionalToken(.comma)) {
             exstyle = try self.parseExpression(false);
+            try self.checkNumberExpression(exstyle.?);
         }
         var help_id: ?*Node = null;
         if (resource == .dialogex and exstyle != null and try self.parseOptionalToken(.comma)) {
             help_id = try self.parseExpression(false);
+            try self.checkNumberExpression(help_id.?);
         }
 
         var extra_data: []*Node = &[_]*Node{};
