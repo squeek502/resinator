@@ -38,6 +38,8 @@ pub fn main() !void {
             //       since the only real problem is when clang doesn't preserve null characters
             //"-Werror=invalid-pp-token", // will error on unfinished string literals
             // TODO: could use -Werror instead
+            // https://learn.microsoft.com/en-us/windows/win32/menurc/predefined-macros
+            "-DRC_INVOKED",
             input_filename,
         },
         .max_output_bytes = std.math.maxInt(u32),
