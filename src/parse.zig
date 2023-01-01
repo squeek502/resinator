@@ -2838,6 +2838,7 @@ fn testParseError(expected_error_str: []const u8, source: []const u8) !void {
             return;
         },
     };
+    defer tree.deinit();
     std.debug.print("expected parse error, got tree:\n", .{});
     try tree.dump(std.io.getStdErr().writer());
     return error.UnexpectedSuccess;
