@@ -24,6 +24,8 @@ pub const Resource = enum {
     plugplay, // Obsolete
     rcdata,
     stringtable,
+    /// Undocumented
+    toolbar,
     //textinclude, // A special resource that is interpreted by Visual C++.
     //typelib, // A special resource that is used with the /TLBID and /TLBOUT linker options
     user_defined,
@@ -56,6 +58,7 @@ pub const Resource = enum {
         .{ "PLUGPLAY", .plugplay },
         .{ "RCDATA", .rcdata },
         .{ "STRINGTABLE", .stringtable },
+        .{ "TOOLBAR", .toolbar },
         .{ "VERSIONINFO", .versioninfo },
         .{ "VXD", .vxd },
     });
@@ -91,6 +94,7 @@ pub const Resource = enum {
             .PLUGPLAY => .plugplay,
             .RCDATA => .rcdata,
             .STRING => .string_num,
+            .TOOLBAR => .toolbar,
             .VERSION => .versioninfo,
             .VXD => .vxd,
             _ => .user_defined,
@@ -261,6 +265,16 @@ pub const MenuItem = enum {
             .{ "MENUBREAK", .menubreak },
         });
     };
+};
+
+pub const ToolbarButton = enum {
+    button,
+    separator,
+
+    pub const map = utils.ComptimeCaseInsensitiveStringMap(ToolbarButton, .{
+        .{ "BUTTON", .button },
+        .{ "SEPARATOR", .separator },
+    });
 };
 
 pub const VersionInfo = enum {

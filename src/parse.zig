@@ -559,6 +559,45 @@ pub const Parser = struct {
                 };
                 return &node.base;
             },
+            .toolbar => {
+                // common resource attributes must all be contiguous and come before optional-statements
+                const common_resource_attributes = try self.parseCommonResourceAttributes();
+
+                const button_width = try self.parseExpression(.{});
+                try self.checkNumberExpression(button_width);
+
+                try self.nextToken(.normal);
+                try self.check(.comma);
+
+                const button_height = try self.parseExpression(.{});
+                try self.checkNumberExpression(button_height);
+
+                try self.nextToken(.normal);
+                const begin_token = self.state.token;
+                try self.check(.begin);
+
+                var buttons = std.ArrayListUnmanaged(*Node){};
+                while (try self.parseToolbarButtonStatement()) |button_node| {
+                    try buttons.append(self.state.arena, button_node);
+                }
+
+                try self.nextToken(.normal);
+                const end_token = self.state.token;
+                try self.check(.end);
+
+                const node = try self.state.arena.create(Node.Toolbar);
+                node.* = .{
+                    .id = id_token,
+                    .type = type_token,
+                    .common_resource_attributes = common_resource_attributes,
+                    .button_width = button_width,
+                    .button_height = button_height,
+                    .begin_token = begin_token,
+                    .buttons = try buttons.toOwnedSlice(self.state.arena),
+                    .end_token = end_token,
+                };
+                return &node.base;
+            },
             .menu, .menuex => {
                 // common resource attributes must all be contiguous and come before optional-statements
                 const common_resource_attributes = try self.parseCommonResourceAttributes();
@@ -895,6 +934,33 @@ pub const Parser = struct {
             .extra_data = extra_data,
         };
         return &node.base;
+    }
+
+    fn parseToolbarButtonStatement(self: *Self) Error!?*Node {
+        const keyword_token = try self.lookaheadToken(.normal);
+        const button_type = rc.ToolbarButton.map.get(keyword_token.slice(self.lexer.buffer)) orelse return null;
+        self.nextToken(.normal) catch unreachable;
+
+        switch (button_type) {
+            .separator => {
+                const node = try self.state.arena.create(Node.Literal);
+                node.* = .{
+                    .token = keyword_token,
+                };
+                return &node.base;
+            },
+            .button => {
+                const button_id = try self.parseExpression(.{});
+                try self.checkNumberExpression(button_id);
+
+                const node = try self.state.arena.create(Node.SimpleStatement);
+                node.* = .{
+                    .identifier = keyword_token,
+                    .value = button_id,
+                };
+                return &node.base;
+            },
+        }
     }
 
     /// Expects the current token to be handled, and that the menuitem/popup statement will
@@ -2869,6 +2935,32 @@ test "dlginclude" {
         \\
     );
     try testParseError("expected quoted string literal; got 'something.h'", "1 DLGINCLUDE something.h");
+}
+
+test "toolbar" {
+    try testParse(
+        \\1 TOOLBAR DISCARDABLE 16, 15
+        \\BEGIN
+        \\  BUTTON 1
+        \\  SEPARATOR
+        \\  BUTTON 2
+        \\END
+    ,
+        \\root
+        \\ toolbar 1 TOOLBAR [1 common_resource_attributes]
+        \\  button_width:
+        \\   literal 16
+        \\  button_height:
+        \\   literal 15
+        \\ BEGIN
+        \\  simple_statement BUTTON
+        \\   literal 1
+        \\  literal SEPARATOR
+        \\  simple_statement BUTTON
+        \\   literal 2
+        \\ END
+        \\
+    );
 }
 
 test "parse errors" {

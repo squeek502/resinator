@@ -117,6 +117,7 @@ pub const Node = struct {
         accelerator,
         dialog,
         control_statement,
+        toolbar,
         menu,
         menu_item,
         menu_item_separator,
@@ -148,6 +149,7 @@ pub const Node = struct {
                 .accelerator => Accelerator,
                 .dialog => Dialog,
                 .control_statement => ControlStatement,
+                .toolbar => Toolbar,
                 .menu => Menu,
                 .menu_item => MenuItem,
                 .menu_item_separator => MenuItemSeparator,
@@ -271,6 +273,19 @@ pub const Node = struct {
         exstyle: ?*Node,
         help_id: ?*Node,
         extra_data: []*Node,
+    };
+
+    pub const Toolbar = struct {
+        base: Node = .{ .id = .toolbar },
+        id: Token,
+        type: Token,
+        common_resource_attributes: []Token,
+        button_width: *Node,
+        button_height: *Node,
+        begin_token: Token,
+        /// Will contain Literal and SimpleStatement nodes
+        buttons: []*Node,
+        end_token: Token,
     };
 
     pub const Menu = struct {
@@ -518,6 +533,10 @@ pub const Node = struct {
                 const casted = @fieldParentPtr(Node.ControlStatement, "base", node);
                 return casted.type;
             },
+            .toolbar => {
+                const casted = @fieldParentPtr(Node.Toolbar, "base", node);
+                return casted.id;
+            },
             .menu => {
                 const casted = @fieldParentPtr(Node.Menu, "base", node);
                 return casted.id;
@@ -728,6 +747,24 @@ pub const Node = struct {
                     try writer.writeAll("}"); // TODO real end token?
                     try writer.writeAll("\n");
                 }
+            },
+            .toolbar => {
+                const toolbar = @fieldParentPtr(Node.Toolbar, "base", node);
+                try writer.print(" {s} {s} [{d} common_resource_attributes]\n", .{ toolbar.id.slice(tree.source), toolbar.type.slice(tree.source), toolbar.common_resource_attributes.len });
+                inline for (.{ "button_width", "button_height" }) |arg| {
+                    try writer.writeByteNTimes(' ', indent + 1);
+                    try writer.writeAll(arg ++ ":\n");
+                    try @field(toolbar, arg).dump(tree, writer, indent + 2);
+                }
+                try writer.writeByteNTimes(' ', indent);
+                try writer.writeAll(toolbar.begin_token.slice(tree.source));
+                try writer.writeAll("\n");
+                for (toolbar.buttons) |button_or_sep| {
+                    try button_or_sep.dump(tree, writer, indent + 1);
+                }
+                try writer.writeByteNTimes(' ', indent);
+                try writer.writeAll(toolbar.end_token.slice(tree.source));
+                try writer.writeAll("\n");
             },
             .menu => {
                 const menu = @fieldParentPtr(Node.Menu, "base", node);

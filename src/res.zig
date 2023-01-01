@@ -30,6 +30,7 @@ pub const RT = enum(u8) {
     PLUGPLAY = 19,
     RCDATA = 10,
     STRING = 6,
+    TOOLBAR = 241,
     VERSION = 16,
     VXD = 20,
     _,
@@ -53,6 +54,7 @@ pub const RT = enum(u8) {
             .plugplay => .PLUGPLAY,
             .rcdata => .RCDATA,
             .stringtable => null, // TODO: Maybe unreachable?
+            .toolbar => .TOOLBAR,
             .user_defined => null,
             .versioninfo => .VERSION,
             .vxd => .VXD,
@@ -90,10 +92,17 @@ pub const MemoryFlags = packed struct(u16) {
             return MemoryFlags{ .value = MOVEABLE | SHARED };
         } else {
             return switch (predefined_resource_type.?) {
-                .RCDATA, .BITMAP, .HTML, .MANIFEST, .ACCELERATOR, .VERSION => MemoryFlags{ .value = MOVEABLE | SHARED },
-                .GROUP_ICON, .GROUP_CURSOR, .STRING, .FONT, .DIALOG, .MENU, .DLGINCLUDE => MemoryFlags{ .value = MOVEABLE | SHARED | DISCARDABLE },
+                // zig fmt: off
+                .RCDATA, .BITMAP, .HTML, .MANIFEST,
+                .ACCELERATOR, .VERSION, => MemoryFlags{ .value = MOVEABLE | SHARED },
+
+                .GROUP_ICON, .GROUP_CURSOR,
+                .STRING, .FONT, .DIALOG, .MENU,
+                .DLGINCLUDE, .TOOLBAR, => MemoryFlags{ .value = MOVEABLE | SHARED | DISCARDABLE },
+
                 .ICON, .CURSOR => MemoryFlags{ .value = MOVEABLE | DISCARDABLE },
                 .FONTDIR => MemoryFlags{ .value = MOVEABLE | PRELOAD },
+                // zig fmt: on
                 else => {
                     std.debug.print("TODO: {}\n", .{predefined_resource_type.?});
                     @panic("TODO");
@@ -330,6 +339,7 @@ pub const NameOrOrdinal = union(enum) {
                     .PLUGPLAY,
                     .RCDATA,
                     .STRING,
+                    .TOOLBAR,
                     .VERSION,
                     .VXD,
                     => |rt| return rt,

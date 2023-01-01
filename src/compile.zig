@@ -93,6 +93,7 @@ pub const Compiler = struct {
             .accelerator => unreachable, // handled by writeAccelerators
             .dialog => try self.writeDialog(@fieldParentPtr(Node.Dialog, "base", node), writer),
             .control_statement => unreachable,
+            .toolbar => try self.writeToolbar(@fieldParentPtr(Node.Toolbar, "base", node), writer),
             .menu => try self.writeMenu(@fieldParentPtr(Node.Menu, "base", node), writer),
             .menu_item => unreachable,
             .menu_item_separator => unreachable,
@@ -1061,6 +1062,56 @@ pub const Compiler = struct {
 
         header.applyMemoryFlags(node.common_resource_attributes, self.source);
         header.applyOptionalStatements(node.optional_statements, self.source, self.code_pages);
+
+        try header.write(writer);
+
+        var data_fbs = std.io.fixedBufferStream(data_buffer.items);
+        try writeResourceData(writer, data_fbs.reader(), data_size);
+    }
+
+    pub fn writeToolbar(self: *Compiler, node: *Node.Toolbar, writer: anytype) !void {
+        var data_buffer = std.ArrayList(u8).init(self.allocator);
+        defer data_buffer.deinit();
+        const data_writer = data_buffer.writer();
+
+        const button_width = evaluateNumberExpression(node.button_width, self.source, self.code_pages);
+        const button_height = evaluateNumberExpression(node.button_height, self.source, self.code_pages);
+
+        // I'm assuming this is some sort of version
+        // TODO: Try to find something mentioning this
+        try data_writer.writeIntLittle(u16, 1);
+        try data_writer.writeIntLittle(u16, button_width.asWord());
+        try data_writer.writeIntLittle(u16, button_height.asWord());
+        try data_writer.writeIntLittle(u16, @intCast(u16, node.buttons.len));
+
+        for (node.buttons) |button_or_sep| {
+            switch (button_or_sep.id) {
+                .literal => { // This is always SEPARATOR
+                    std.debug.assert(button_or_sep.cast(.literal).?.token.id == .literal);
+                    try data_writer.writeIntLittle(u16, 0);
+                },
+                .simple_statement => {
+                    const value_node = button_or_sep.cast(.simple_statement).?.value;
+                    const value = evaluateNumberExpression(value_node, self.source, self.code_pages);
+                    try data_writer.writeIntLittle(u16, value.asWord());
+                },
+                else => unreachable, // This is a bug in the parser
+            }
+        }
+
+        const data_size = @intCast(u32, data_buffer.items.len);
+        const id_bytes = SourceBytes{
+            .slice = node.id.slice(self.source),
+            .code_page = self.code_pages.getForToken(node.id),
+        };
+        const type_bytes = SourceBytes{
+            .slice = node.type.slice(self.source),
+            .code_page = self.code_pages.getForToken(node.type),
+        };
+        var header = try ResourceHeader.init(self.allocator, id_bytes, type_bytes, data_size, self.state.language);
+        defer header.deinit(self.allocator);
+
+        header.applyMemoryFlags(node.common_resource_attributes, self.source);
 
         try header.write(writer);
 
@@ -2693,6 +2744,22 @@ test "dlginclude" {
         \\2 DLGINCLUDE FIXED L"Something€𐍈ह.h"
     ,
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x10\x00\x00\x00 \x00\x00\x00\xff\xff\x11\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00something\x80???.h\x00\x10\x00\x00\x00 \x00\x00\x00\xff\xff\x11\x00\xff\xff\x02\x00\x00\x00\x00\x00 \x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00Something\x80???.h\x00",
+        std.fs.cwd(),
+    );
+}
+
+test "toolbar" {
+    try testCompileWithOutput(
+        \\143 TOOLBAR DISCARDABLE 16+1, 15
+        \\BEGIN
+        \\    BUTTON 32772
+        \\    SEPARATOR
+        \\    BUTTON 32773
+        \\    SEPARATOR
+        \\    BUTTON 32774
+        \\END
+    ,
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x12\x00\x00\x00 \x00\x00\x00\xff\xff\xf1\x00\xff\xff\x8f\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x11\x00\x0f\x00\x05\x00\x04\x80\x00\x00\x05\x80\x00\x00\x06\x80\x00\x00",
         std.fs.cwd(),
     );
 }
