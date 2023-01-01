@@ -36,7 +36,6 @@ pub const Resource = enum {
     string_num,
     anicursor_num,
     aniicon_num,
-    dlginclude_num,
     fontdir_num,
     manifest_num,
 
@@ -79,7 +78,7 @@ pub const Resource = enum {
             .BITMAP => .bitmap,
             .CURSOR => .cursor_num,
             .DIALOG => .dialog,
-            .DLGINCLUDE => .dlginclude_num,
+            .DLGINCLUDE => .dlginclude,
             .FONT => .font,
             .FONTDIR => .fontdir_num,
             .GROUP_CURSOR => .cursor,

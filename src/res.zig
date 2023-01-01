@@ -62,7 +62,6 @@ pub const RT = enum(u8) {
             .string_num => .STRING,
             .anicursor_num => .ANICURSOR,
             .aniicon_num => .ANIICON,
-            .dlginclude_num => .DLGINCLUDE,
             .fontdir_num => .FONTDIR,
             .manifest_num => .MANIFEST,
         };
