@@ -94,7 +94,7 @@ pub const MemoryFlags = packed struct(u16) {
             return switch (predefined_resource_type.?) {
                 // zig fmt: off
                 .RCDATA, .BITMAP, .HTML, .MANIFEST,
-                .ACCELERATOR, .VERSION, => MemoryFlags{ .value = MOVEABLE | SHARED },
+                .ACCELERATOR, .VERSION, .MESSAGETABLE => MemoryFlags{ .value = MOVEABLE | SHARED },
 
                 .GROUP_ICON, .GROUP_CURSOR,
                 .STRING, .FONT, .DIALOG, .MENU,
