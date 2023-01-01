@@ -125,3 +125,12 @@ test "icon" {
     try std.testing.expectEqual(ImageType.icon, icon.image_type);
     try std.testing.expectEqual(@as(usize, 3), icon.entries.len);
 }
+
+/// From WinGDI.h
+pub const BITMAPCOREHEADER = extern struct {
+    bcSize: u32,
+    bcWidth: i32,
+    bcHeight: i32,
+    bcPlanes: u16,
+    bcBitCount: u16,
+};

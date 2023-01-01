@@ -251,7 +251,7 @@ pub const Compiler = struct {
 
                     const first_icon_id = self.state.icon_id;
                     const entry_type = if (predefined_type == .GROUP_ICON) @enumToInt(res.RT.ICON) else @enumToInt(res.RT.CURSOR);
-                    for (icon_dir.entries) |entry| {
+                    for (icon_dir.entries) |*entry| {
                         const image_header = ResourceHeader{
                             .type_value = .{ .ordinal = entry_type },
                             .name_value = .{ .ordinal = self.state.icon_id },
@@ -260,6 +260,19 @@ pub const Compiler = struct {
                             .language = self.state.language,
                         };
                         try image_header.write(writer);
+
+                        // The values in the icon's BITMAPINFOHEADER always take precedence over
+                        // the values in the IconDir.
+                        // TODO: Test cursors
+                        if (predefined_type == .GROUP_ICON) {
+                            try file.seekTo(entry.data_offset_from_start_of_file);
+                            const bitmapcore = try file.reader().readStruct(ico.BITMAPCOREHEADER);
+                            entry.type_specific_data = .{ .icon = .{
+                                .color_planes = std.mem.littleToNative(u16, bitmapcore.bcPlanes),
+                                .bits_per_pixel = std.mem.littleToNative(u16, bitmapcore.bcBitCount),
+                            } };
+                        }
+
                         try file.seekTo(entry.data_offset_from_start_of_file);
                         try writeResourceData(writer, file.reader(), image_header.data_size);
                         self.state.icon_id += 1;
@@ -2124,10 +2137,6 @@ test "basic icons/cursors" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
-    // TODO: If the .ico is malformed, then things get weird, i.e. if an entry's bits_per_pixel
-    //       or num_colors or data_size is wrong (with respect to the bitmap data?) then the .res
-    //       can get weird values written to the ICONDIR data for things like bits_per_pixel.
-
     // This is a well-formed .ico with a 1x1 bmp icon
     try tmp_dir.dir.writeFile("test.ico", "\x00\x00\x01\x00\x01\x00\x01\x01\x00\x00\x01\x00 \x000\x00\x00\x00\x16\x00\x00\x00(\x00\x00\x00\x01\x00\x00\x00\x02\x00\x00\x00\x01\x00 \x00\x00\x00\x00\x00\x04\x00\x00\x00\x12\x0b\x00\x00\x12\x0b\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff\xff\xff\x00\x00\x00\x00");
 
@@ -2148,6 +2157,17 @@ test "basic icons/cursors" {
     try testCompileWithOutput(
         "1 ICON FIXED test.ico",
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x000\x00\x00\x00 \x00\x00\x00\xff\xff\x03\x00\xff\xff\x01\x00\x00\x00\x00\x00\x00\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00(\x00\x00\x00\x01\x00\x00\x00\x02\x00\x00\x00\x01\x00 \x00\x00\x00\x00\x00\x04\x00\x00\x00\x12\x0b\x00\x00\x12\x0b\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff\xff\xff\x00\x00\x00\x00\x14\x00\x00\x00 \x00\x00\x00\xff\xff\x0e\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x01\x00\x01\x01\x00\x00\x01\x00 \x000\x00\x00\x00\x01\x00",
+        tmp_dir.dir,
+    );
+
+    // This is an .ico with a 1x1 bmp icon that has different bits_per_pixel values in
+    // the IconDir than in the icon data's BITMAPINFOHEADER. In this case, the icon
+    // data is what should be used.
+    try tmp_dir.dir.writeFile("test_mismatched_bits_per_pixel.ico", "\x00\x00\x01\x00\x01\x00\x01\x01\x10\x00\x01\x00\x04\x00.\x00\x00\x00\x16\x00\x00\x00(\x00\x00\x00\x01\x00\x00\x00\x01\x00\x00\x00\x01\x00\x10\x00\x00\x00\x00\x00\x06\x00\x00\x00\x12\x0b\x00\x00\x12\x0b\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\x7f\x00\x00\x00\x00");
+
+    try testCompileWithOutput(
+        "1 ICON test_mismatched_bits_per_pixel.ico",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00.\x00\x00\x00 \x00\x00\x00\xff\xff\x03\x00\xff\xff\x01\x00\x00\x00\x00\x00\x10\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00(\x00\x00\x00\x01\x00\x00\x00\x01\x00\x00\x00\x01\x00\x10\x00\x00\x00\x00\x00\x06\x00\x00\x00\x12\x0b\x00\x00\x12\x0b\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\x7f\x00\x00\x00\x00\x00\x00\x14\x00\x00\x00 \x00\x00\x00\xff\xff\x0e\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x01\x00\x01\x01\x10\x00\x01\x00\x10\x00.\x00\x00\x00\x01\x00",
         tmp_dir.dir,
     );
 }
