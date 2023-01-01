@@ -439,77 +439,77 @@ test "parse quoted ascii string" {
     const arena = arena_allocator.allocator();
 
     try std.testing.expectEqualSlices(u8, "hello", try parseQuotedAsciiString(arena, .{
-        .slice = 
+        .slice =
         \\"hello"
         ,
         .code_page = .windows1252,
     }, .{}));
     // hex with 0 digits
     try std.testing.expectEqualSlices(u8, "\x00", try parseQuotedAsciiString(arena, .{
-        .slice = 
+        .slice =
         \\"\x"
         ,
         .code_page = .windows1252,
     }, .{}));
     // hex max of 2 digits
     try std.testing.expectEqualSlices(u8, "\xFFf", try parseQuotedAsciiString(arena, .{
-        .slice = 
+        .slice =
         \\"\XfFf"
         ,
         .code_page = .windows1252,
     }, .{}));
     // octal with invalid octal digit
     try std.testing.expectEqualSlices(u8, "\x019", try parseQuotedAsciiString(arena, .{
-        .slice = 
+        .slice =
         \\"\19"
         ,
         .code_page = .windows1252,
     }, .{}));
     // escaped quotes
     try std.testing.expectEqualSlices(u8, " \" ", try parseQuotedAsciiString(arena, .{
-        .slice = 
+        .slice =
         \\" "" "
         ,
         .code_page = .windows1252,
     }, .{}));
     // backslash right before escaped quotes
     try std.testing.expectEqualSlices(u8, "\"", try parseQuotedAsciiString(arena, .{
-        .slice = 
+        .slice =
         \\"\"""
         ,
         .code_page = .windows1252,
     }, .{}));
     // octal overflow
     try std.testing.expectEqualSlices(u8, "\x01", try parseQuotedAsciiString(arena, .{
-        .slice = 
+        .slice =
         \\"\401"
         ,
         .code_page = .windows1252,
     }, .{}));
     // escapes
     try std.testing.expectEqualSlices(u8, "\x08\n\r\t\\", try parseQuotedAsciiString(arena, .{
-        .slice = 
+        .slice =
         \\"\a\n\r\t\\"
         ,
         .code_page = .windows1252,
     }, .{}));
     // uppercase escapes
     try std.testing.expectEqualSlices(u8, "\x08\\N\\R\t\\", try parseQuotedAsciiString(arena, .{
-        .slice = 
+        .slice =
         \\"\A\N\R\T\\"
         ,
         .code_page = .windows1252,
     }, .{}));
     // backslash on its own
     try std.testing.expectEqualSlices(u8, "\\", try parseQuotedAsciiString(arena, .{
-        .slice = 
+        .slice =
         \\"\"
         ,
         .code_page = .windows1252,
     }, .{}));
     // unrecognized escapes
     try std.testing.expectEqualSlices(u8, "\\b", try parseQuotedAsciiString(arena, .{
-        .slice = 
+        .slice =
         \\"\b"
         ,
         .code_page = .windows1252,
@@ -616,35 +616,35 @@ test "parse quoted wide string" {
     const arena = arena_allocator.allocator();
 
     try std.testing.expectEqualSentinel(u16, 0, &[_:0]u16{ 'h', 'e', 'l', 'l', 'o' }, try parseQuotedWideString(arena, .{
-        .slice = 
+        .slice =
         \\L"hello"
         ,
         .code_page = .windows1252,
     }, .{}));
     // hex with 0 digits
     try std.testing.expectEqualSentinel(u16, 0, &[_:0]u16{0x0}, try parseQuotedWideString(arena, .{
-        .slice = 
+        .slice =
         \\L"\x"
         ,
         .code_page = .windows1252,
     }, .{}));
     // hex max of 4 digits
     try std.testing.expectEqualSentinel(u16, 0, &[_:0]u16{ 0xFFFF, 'f' }, try parseQuotedWideString(arena, .{
-        .slice = 
+        .slice =
         \\L"\XfFfFf"
         ,
         .code_page = .windows1252,
     }, .{}));
     // octal max of 7 digits
     try std.testing.expectEqualSentinel(u16, 0, &[_:0]u16{ 0x9493, '3', '3' }, try parseQuotedWideString(arena, .{
-        .slice = 
+        .slice =
         \\L"\111222333"
         ,
         .code_page = .windows1252,
     }, .{}));
     // octal overflow
     try std.testing.expectEqualSentinel(u16, 0, &[_:0]u16{0xFF01}, try parseQuotedWideString(arena, .{
-        .slice = 
+        .slice =
         \\L"\777401"
         ,
         .code_page = .windows1252,
@@ -712,7 +712,7 @@ pub fn columnsUntilTabStop(column: usize, tab_columns: usize) usize {
 
 pub const Number = struct {
     value: u32,
-    is_long: bool,
+    is_long: bool = false,
 
     pub fn asWord(self: Number) u16 {
         return @truncate(u16, self.value);

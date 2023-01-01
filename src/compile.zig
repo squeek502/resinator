@@ -85,8 +85,9 @@ pub const Compiler = struct {
             .resource_external => try self.writeResourceExternal(@fieldParentPtr(Node.ResourceExternal, "base", node), writer),
             .resource_raw_data => try self.writeResourceRawData(@fieldParentPtr(Node.ResourceRawData, "base", node), writer),
             .literal => unreachable, // this is context dependent and should be handled by its parent
-            .binary_expression => @panic("TODO"),
-            .grouped_expression => @panic("TODO"),
+            .binary_expression => unreachable,
+            .grouped_expression => unreachable,
+            .not_expression => unreachable,
             .invalid => @panic("TODO"),
             .accelerators => try self.writeAccelerators(@fieldParentPtr(Node.Accelerators, "base", node), writer),
             .accelerator => unreachable, // handled by writeAccelerators
@@ -106,7 +107,7 @@ pub const Compiler = struct {
             .string_table_string => unreachable, // handled by writeStringTable
             .language_statement => self.writeLanguageStatement(@fieldParentPtr(Node.LanguageStatement, "base", node)),
             .font_statement => unreachable,
-            .simple_statement => @panic("TODO"),
+            .simple_statement => unreachable,
         }
     }
 
@@ -371,6 +372,77 @@ pub const Compiler = struct {
         }
     }
 
+    const FlagsNumber = struct {
+        value: u32,
+        not_mask: u32 = 0xFFFFFFFF,
+
+        pub fn evaluateOperator(lhs: FlagsNumber, operator_char: u8, rhs: FlagsNumber) FlagsNumber {
+            const result = switch (operator_char) {
+                '-' => lhs.value -% rhs.value,
+                '+' => lhs.value +% rhs.value,
+                '|' => lhs.value | rhs.value,
+                '&' => lhs.value & rhs.value,
+                else => unreachable, // invalid operator, this would be a lexer/parser bug
+            };
+            const not_mask_result = switch (operator_char) {
+                '|', '+' => lhs.not_mask & rhs.not_mask | rhs.value,
+                '&', '-' => lhs.not_mask & rhs.not_mask & ~rhs.value,
+                else => unreachable, // invalid operator, this would be a lexer/parser bug
+            };
+            return .{
+                .value = result,
+                .not_mask = not_mask_result,
+            };
+        }
+
+        pub fn applyNotMask(self: FlagsNumber) u32 {
+            return self.value & self.not_mask;
+        }
+    };
+
+    pub fn evaluateFlagsExpressionWithDefault(default: u32, expression_node: *Node, source: []const u8, code_page_lookup: *const CodePageLookup) u32 {
+        var result = evaluateFlagsExpression(expression_node, source, code_page_lookup);
+        result.value |= default;
+        return result.applyNotMask();
+    }
+
+    /// Assumes that the node is a number expression (which can contain not_expressions)
+    pub fn evaluateFlagsExpression(expression_node: *Node, source: []const u8, code_page_lookup: *const CodePageLookup) FlagsNumber {
+        switch (expression_node.id) {
+            .literal => {
+                const literal_node = expression_node.cast(.literal).?;
+                std.debug.assert(literal_node.token.id == .number);
+                const bytes = SourceBytes{
+                    .slice = literal_node.token.slice(source),
+                    .code_page = code_page_lookup.getForToken(literal_node.token),
+                };
+                return FlagsNumber{ .value = literals.parseNumberLiteral(bytes).value };
+            },
+            .binary_expression => {
+                const binary_expression_node = expression_node.cast(.binary_expression).?;
+                const lhs = evaluateFlagsExpression(binary_expression_node.left, source, code_page_lookup);
+                const rhs = evaluateFlagsExpression(binary_expression_node.right, source, code_page_lookup);
+                const operator_char = binary_expression_node.operator.slice(source)[0];
+                const result = lhs.evaluateOperator(operator_char, rhs);
+                return result;
+            },
+            .grouped_expression => {
+                const grouped_expression_node = expression_node.cast(.grouped_expression).?;
+                return evaluateFlagsExpression(grouped_expression_node.expression, source, code_page_lookup);
+            },
+            .not_expression => {
+                const not_expression = expression_node.cast(.not_expression).?;
+                const bytes = SourceBytes{
+                    .slice = not_expression.number_token.slice(source),
+                    .code_page = code_page_lookup.getForToken(not_expression.number_token),
+                };
+                const not_number = literals.parseNumberLiteral(bytes);
+                return .{ .value = 0, .not_mask = ~not_number.value };
+            },
+            else => unreachable,
+        }
+    }
+
     pub fn evaluateDataExpression(self: *Compiler, expression_node: *Node) !Data {
         switch (expression_node.id) {
             .literal => {
@@ -421,6 +493,7 @@ pub const Compiler = struct {
                 const result = evaluateNumberExpression(expression_node, self.source, self.code_pages);
                 return .{ .number = result };
             },
+            .not_expression => unreachable,
             else => {
                 std.debug.print("{}\n", .{expression_node.id});
                 @panic("TODO: evaluateDataExpression");
@@ -596,12 +669,11 @@ pub const Compiler = struct {
                     const statement_type = rc.OptionalStatements.dialog_map.get(statement_identifier.slice(self.source)) orelse continue;
                     switch (statement_type) {
                         .style, .exstyle => {
-                            const style = evaluateNumberExpression(simple_statement.value, self.source, self.code_pages);
-                            // STYLE and EXSTYLE are both implicitly long
+                            const style = evaluateFlagsExpressionWithDefault(0, simple_statement.value, self.source, self.code_pages);
                             if (statement_type == .style) {
-                                optional_statement_values.style = style.value;
+                                optional_statement_values.style = style;
                             } else {
-                                optional_statement_values.exstyle = style.value;
+                                optional_statement_values.exstyle = style;
                             }
                         },
                         .caption => {
@@ -681,13 +753,15 @@ pub const Compiler = struct {
         const width = evaluateNumberExpression(node.width, self.source, self.code_pages);
         const height = evaluateNumberExpression(node.height, self.source, self.code_pages);
 
-        // FONT statement implies DS_SETFONT which is 0x40
+        // FONT statement requires DS_SETFONT, and if it's not present DS_SETFRONT must be unset
         if (optional_statement_values.font) |_| {
-            optional_statement_values.style |= 0x40;
+            optional_statement_values.style |= res.DS.SETFONT;
+        } else {
+            optional_statement_values.style &= ~res.DS.SETFONT;
         }
-        // CAPTION statement implies DS_CAPTION which is 0x00C00000
+        // CAPTION statement implies WS_CAPTION
         if (optional_statement_values.caption) |_| {
-            optional_statement_values.style |= 0x00C00000;
+            optional_statement_values.style |= res.WS.CAPTION;
         }
 
         // Header
@@ -760,16 +834,14 @@ pub const Compiler = struct {
             }
             try data_writer.writeByteNTimes(0, num_padding);
 
-            var style: u32 = if (control.style) |style_expression|
-                evaluateNumberExpression(style_expression, self.source, self.code_pages).value
+            var style = if (control.style) |style_expression|
+                // Certain styles are implied by the control type
+                evaluateFlagsExpressionWithDefault(res.ControlClass.getImpliedStyle(control_type), style_expression, self.source, self.code_pages)
             else
-                0;
+                res.ControlClass.getImpliedStyle(control_type);
 
-            // Certain styles are implied by the control type
-            style |= res.ControlClass.getImpliedStyle(control_type);
-
-            const exstyle: u32 = if (control.exstyle) |exstyle_expression|
-                evaluateNumberExpression(exstyle_expression, self.source, self.code_pages).value
+            var exstyle = if (control.exstyle) |exstyle_expression|
+                evaluateFlagsExpressionWithDefault(0, exstyle_expression, self.source, self.code_pages)
             else
                 0;
 
@@ -2318,6 +2390,26 @@ test "dialog, dialogex resource" {
         \\}
     ,
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xa4\x00\x00\x00 \x00\x00\x00\xff\xff\x05\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x88\x80\x03\x00\x01\x00\x02\x00\x03\x00\x04\x00\x00\x00\x00\x00\x00\x00d\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00P\x02\x00\x03\x00\x04\x00\x00\x00\x89\x03\x00\x00\xff\xff\x80\x00m\x00y\x00t\x00e\x00x\x00t\x00\x00\x00\x00\x00d\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00P\x02\x00\x03\x00\x04\x00\x00\x00\x89\x03\x00\x00\xff\xff\x81\x00m\x00y\x00t\x00e\x00x\x00t\x00\x00\x00\x00\x00d\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00P\x02\x00\x03\x00\x04\x00\x00\x00\x89\x03\x00\x00\xff\xff\x85\x00m\x00y\x00t\x00e\x00x\x00t\x00\x00\x00\x00\x00",
+        std.fs.cwd(),
+    );
+}
+
+test "not expressions" {
+    try testCompileWithOutput(
+        \\1 DIALOGEX 1, 2, 3, 4
+        \\STYLE ~0 | NOT 1
+        \\EXSTYLE ~0 | NOT 1
+        \\{
+        \\  AUTOCHECKBOX "",1,1,1,1,1, (NOT -1)
+        \\  AUTOCHECKBOX "",1,1,1,1,1, 1 | NOT ~0 | 1
+        \\  AUTOCHECKBOX "",1,1,1,1,1, 1 | NOT ~0 - 5
+        \\  AUTOCHECKBOX "",1,1,1,1,1, 1 | NOT ~0 & 5
+        \\  AUTOCHECKBOX "",1,1,1,1,1, 1 | NOT ~0 + 5
+        \\  AUTOCHECKBOX "",1,1,1,1,1, 3 | NOT 2 | 4
+        \\  AUTOCHECKBOX "",1,1,1,1,1, NOT 3
+        \\}
+    ,
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00 \x00\x00\x00\xff\xff\x05\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\xff\xff\x00\x00\x00\x00\xfe\xff\xff\xff\xbe\xff\xff\xff\x07\x00\x01\x00\x02\x00\x03\x00\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x01\x00\x01\x00\x01\x00\x01\x00\x00\x00\xff\xff\x80\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x01\x00\x01\x00\x01\x00\x01\x00\x01\x00\x00\x00\xff\xff\x80\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xfb\xff\xff\xff\x01\x00\x01\x00\x01\x00\x01\x00\x01\x00\x00\x00\xff\xff\x80\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x01\x00\x01\x00\x01\x00\x01\x00\x00\x00\xff\xff\x80\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x05\x00\x00\x00\x01\x00\x01\x00\x01\x00\x01\x00\x01\x00\x00\x00\xff\xff\x80\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x05\x00\x01P\x01\x00\x01\x00\x01\x00\x01\x00\x01\x00\x00\x00\xff\xff\x80\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01P\x01\x00\x01\x00\x01\x00\x01\x00\x01\x00\x00\x00\xff\xff\x80\x00\x00\x00\x00\x00",
         std.fs.cwd(),
     );
 }

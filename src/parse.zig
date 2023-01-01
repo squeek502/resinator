@@ -134,7 +134,9 @@ pub const Parser = struct {
                 // Number only
                 .version, .characteristics, .style, .exstyle => {
                     const identifier = self.state.token;
-                    const value = try self.parseExpression(false);
+                    const value = try self.parseExpression(.{
+                        .can_contain_not_expressions = optional_statement_type == .style or optional_statement_type == .exstyle,
+                    });
                     try self.checkNumberExpression(value);
                     const node = try self.state.arena.create(Node.SimpleStatement);
                     node.* = .{
@@ -173,7 +175,7 @@ pub const Parser = struct {
                 // String or number
                 .class => {
                     const identifier = self.state.token;
-                    const value = try self.parseExpression(false);
+                    const value = try self.parseExpression(.{});
                     if (!value.isNumberExpression() and !value.isStringLiteral()) {
                         return self.addErrorDetailsAndFail(ErrorDetails{
                             .err = .expected_something_else,
@@ -212,7 +214,7 @@ pub const Parser = struct {
                 },
                 .font => {
                     const identifier = self.state.token;
-                    const point_size = try self.parseExpression(false);
+                    const point_size = try self.parseExpression(.{});
                     try self.checkNumberExpression(point_size);
 
                     // The comma between point_size and typeface is both optional and
@@ -243,19 +245,19 @@ pub const Parser = struct {
                                 {
                                     if (!(try self.parseOptionalToken(.comma))) break :ex_specific;
 
-                                    ex_specific.weight = try self.parseExpression(false);
+                                    ex_specific.weight = try self.parseExpression(.{});
                                     try self.checkNumberExpression(ex_specific.weight.?);
                                 }
                                 {
                                     if (!(try self.parseOptionalToken(.comma))) break :ex_specific;
 
-                                    ex_specific.italic = try self.parseExpression(false);
+                                    ex_specific.italic = try self.parseExpression(.{});
                                     try self.checkNumberExpression(ex_specific.italic.?);
                                 }
                                 {
                                     if (!(try self.parseOptionalToken(.comma))) break :ex_specific;
 
-                                    ex_specific.char_set = try self.parseExpression(false);
+                                    ex_specific.char_set = try self.parseExpression(.{});
                                     try self.checkNumberExpression(ex_specific.char_set.?);
                                 }
                             },
@@ -317,7 +319,7 @@ pub const Parser = struct {
                         },
                         else => {},
                     }
-                    const id_expression = try self.parseExpression(false);
+                    const id_expression = try self.parseExpression(.{});
                     try self.checkNumberExpression(id_expression);
 
                     const comma_token: ?Token = if (try self.parseOptionalToken(.comma)) self.state.token else null;
@@ -419,7 +421,7 @@ pub const Parser = struct {
                         },
                         else => {},
                     }
-                    const event = try self.parseExpression(false);
+                    const event = try self.parseExpression(.{});
                     if (!event.isNumberExpression() and !event.isStringLiteral()) {
                         return self.addErrorDetailsAndFail(.{
                             .err = .expected_something_else,
@@ -435,7 +437,7 @@ pub const Parser = struct {
                     try self.nextToken(.normal);
                     try self.check(.comma);
 
-                    const idvalue = try self.parseExpression(false);
+                    const idvalue = try self.parseExpression(.{});
                     try self.checkNumberExpression(idvalue);
 
                     var type_and_options = std.ArrayListUnmanaged(Token){};
@@ -483,24 +485,24 @@ pub const Parser = struct {
                 // common resource attributes must all be contiguous and come before optional-statements
                 const common_resource_attributes = try self.parseCommonResourceAttributes();
 
-                const x = try self.parseExpression(false);
+                const x = try self.parseExpression(.{});
                 try self.checkNumberExpression(x);
                 _ = try self.parseOptionalToken(.comma);
 
-                const y = try self.parseExpression(false);
+                const y = try self.parseExpression(.{});
                 try self.checkNumberExpression(y);
                 _ = try self.parseOptionalToken(.comma);
 
-                const width = try self.parseExpression(false);
+                const width = try self.parseExpression(.{});
                 try self.checkNumberExpression(width);
                 _ = try self.parseOptionalToken(.comma);
 
-                const height = try self.parseExpression(false);
+                const height = try self.parseExpression(.{});
                 try self.checkNumberExpression(height);
 
                 const help_id: ?*Node = help_id: {
                     if (resource == .dialogex and try self.parseOptionalToken(.comma)) {
-                        const expression = try self.parseExpression(false);
+                        const expression = try self.parseExpression(.{});
                         try self.checkNumberExpression(expression);
                         break :help_id expression;
                     }
@@ -550,7 +552,9 @@ pub const Parser = struct {
                     const maybe_number_expression_start = try self.lookaheadToken(.normal);
                     switch (maybe_number_expression_start.id) {
                         .number, .open_paren => {
-                            help_id = try self.parseExpression(true);
+                            help_id = try self.parseExpression(.{
+                                .is_known_to_be_number_expression = true,
+                            });
                         },
                         else => {},
                     }
@@ -660,7 +664,7 @@ pub const Parser = struct {
                     return &node.base;
                 }
 
-                var filename_expression = try self.parseExpression(false);
+                var filename_expression = try self.parseExpression(.{});
 
                 const node = try self.state.arena.create(Node.ResourceExternal);
                 node.* = .{
@@ -711,7 +715,7 @@ pub const Parser = struct {
                 },
                 else => {},
             }
-            const expression = try self.parseExpression(false);
+            const expression = try self.parseExpression(.{});
             try raw_data.append(expression);
 
             if (!expression.isExpressionAlwaysSkipped() and !expression.isNumberExpression() and !expression.isStringLiteral()) {
@@ -773,7 +777,7 @@ pub const Parser = struct {
             try self.skipAnyCommas();
         }
 
-        const id = try self.parseExpression(false);
+        const id = try self.parseExpression(.{});
         try self.checkNumberExpression(id);
 
         try self.skipAnyCommas();
@@ -781,7 +785,7 @@ pub const Parser = struct {
         var class: ?*Node = null;
         var style: ?*Node = null;
         if (control == .control) {
-            class = try self.parseExpression(false);
+            class = try self.parseExpression(.{});
             if (class.?.id == .literal) {
                 const class_literal = @fieldParentPtr(Node.Literal, "base", class.?);
                 if (class_literal.token.id == .literal and !rc.ControlClass.map.has(class_literal.token.slice(self.lexer.buffer))) {
@@ -795,38 +799,38 @@ pub const Parser = struct {
                 }
             }
             try self.skipAnyCommas();
-            style = try self.parseExpression(false);
+            style = try self.parseExpression(.{ .can_contain_not_expressions = true });
             try self.checkNumberExpression(style.?);
             try self.skipAnyCommas();
         }
 
-        const x = try self.parseExpression(false);
+        const x = try self.parseExpression(.{});
         try self.checkNumberExpression(x);
         _ = try self.parseOptionalToken(.comma);
-        const y = try self.parseExpression(false);
+        const y = try self.parseExpression(.{});
         try self.checkNumberExpression(y);
         _ = try self.parseOptionalToken(.comma);
-        const width = try self.parseExpression(false);
+        const width = try self.parseExpression(.{});
         try self.checkNumberExpression(width);
         _ = try self.parseOptionalToken(.comma);
-        const height = try self.parseExpression(false);
+        const height = try self.parseExpression(.{});
         try self.checkNumberExpression(height);
 
         if (control != .control) {
             if (try self.parseOptionalToken(.comma)) {
-                style = try self.parseExpression(false);
+                style = try self.parseExpression(.{ .can_contain_not_expressions = true });
                 try self.checkNumberExpression(style.?);
             }
         }
 
         var exstyle: ?*Node = null;
         if (style != null and try self.parseOptionalToken(.comma)) {
-            exstyle = try self.parseExpression(false);
+            exstyle = try self.parseExpression(.{ .can_contain_not_expressions = true });
             try self.checkNumberExpression(exstyle.?);
         }
         var help_id: ?*Node = null;
         if (resource == .dialogex and exstyle != null and try self.parseOptionalToken(.comma)) {
-            help_id = try self.parseExpression(false);
+            help_id = try self.parseExpression(.{});
             try self.checkNumberExpression(help_id.?);
         }
 
@@ -889,7 +893,7 @@ pub const Parser = struct {
                         }
                         try self.skipAnyCommas();
 
-                        const result = try self.parseExpression(false);
+                        const result = try self.parseExpression(.{});
                         try self.checkNumberExpression(result);
 
                         _ = try self.parseOptionalToken(.comma);
@@ -1062,7 +1066,7 @@ pub const Parser = struct {
         if ((try self.lookaheadToken(.normal)).id == .comma) {
             return null;
         }
-        const node = try self.parseExpression(false);
+        const node = try self.parseExpression(.{});
         try self.checkNumberExpression(node);
         return node;
     }
@@ -1080,7 +1084,7 @@ pub const Parser = struct {
                 var parts = std.BoundedArray(*Node, 4){};
 
                 while (parts.len < 4) {
-                    const value = try self.parseExpression(false);
+                    const value = try self.parseExpression(.{});
                     try self.checkNumberExpression(value);
                     parts.addOneAssumeCapacity().* = value;
 
@@ -1097,7 +1101,7 @@ pub const Parser = struct {
                 return &node.base;
             },
             else => {
-                const value = try self.parseExpression(false);
+                const value = try self.parseExpression(.{});
                 try self.checkNumberExpression(value);
 
                 const node = try self.state.arena.create(Node.SimpleStatement);
@@ -1188,7 +1192,7 @@ pub const Parser = struct {
                 => {},
                 else => break,
             }
-            const value = try self.parseExpression(false);
+            const value = try self.parseExpression(.{});
             try values.append(self.state.arena, value);
 
             try self.skipAnyCommas();
@@ -1214,7 +1218,7 @@ pub const Parser = struct {
     fn parseLanguageStatement(self: *Self) Error!*Node {
         const language_token = self.state.token;
 
-        const primary_language = try self.parseExpression(false);
+        const primary_language = try self.parseExpression(.{});
         if (!primary_language.isNumberExpression()) {
             return self.addErrorDetailsAndFail(ErrorDetails{
                 .err = .expected_something_else,
@@ -1229,7 +1233,7 @@ pub const Parser = struct {
         try self.nextToken(.normal);
         try self.check(.comma);
 
-        const sublanguage = try self.parseExpression(false);
+        const sublanguage = try self.parseExpression(.{});
         if (!sublanguage.isNumberExpression()) {
             return self.addErrorDetailsAndFail(ErrorDetails{
                 .err = .expected_something_else,
@@ -1250,10 +1254,15 @@ pub const Parser = struct {
         return &node.base;
     }
 
+    pub const ParseExpressionOptions = struct {
+        is_known_to_be_number_expression: bool = false,
+        can_contain_not_expressions: bool = false,
+    };
+
     /// Expects the current token to have already been dealt with, and that the
     /// expression will start on the next token.
     /// After return, the current token will have been dealt with.
-    fn parseExpression(self: *Self, is_known_to_be_number_expression: bool) Error!*Node {
+    fn parseExpression(self: *Self, options: ParseExpressionOptions) Error!*Node {
         try self.nextToken(.normal);
         const possible_lhs: *Node = lhs: {
             switch (self.state.token.id) {
@@ -1263,6 +1272,17 @@ pub const Parser = struct {
                     return &node.base;
                 },
                 .literal => {
+                    if (options.can_contain_not_expressions and std.ascii.eqlIgnoreCase("NOT", self.state.token.slice(self.lexer.buffer))) {
+                        const not_token = self.state.token;
+                        try self.nextToken(.normal);
+                        try self.check(.number);
+                        const node = try self.state.arena.create(Node.NotExpression);
+                        node.* = .{
+                            .not_token = not_token,
+                            .number_token = self.state.token,
+                        };
+                        break :lhs &node.base;
+                    }
                     const node = try self.state.arena.create(Node.Literal);
                     node.* = .{ .token = self.state.token };
                     return &node.base;
@@ -1275,7 +1295,10 @@ pub const Parser = struct {
                 .open_paren => {
                     const open_paren_token = self.state.token;
 
-                    const expression = try self.parseExpression(true);
+                    const expression = try self.parseExpression(.{
+                        .is_known_to_be_number_expression = true,
+                        .can_contain_not_expressions = options.can_contain_not_expressions,
+                    });
 
                     if (!expression.isNumberExpression()) {
                         return self.addErrorDetailsAndFail(ErrorDetails{
@@ -1304,7 +1327,7 @@ pub const Parser = struct {
                     // A single close paren counts as a valid "expression", but
                     // only when its the first and only token in the expression.
                     // Very strange.
-                    if (!is_known_to_be_number_expression) {
+                    if (!options.is_known_to_be_number_expression) {
                         const node = try self.state.arena.create(Node.Literal);
                         node.* = .{ .token = self.state.token };
                         return &node.base;
@@ -1320,7 +1343,7 @@ pub const Parser = struct {
                 .extra = .{ .expected_types = .{
                     .number = true,
                     .number_expression = true,
-                    .string_literal = !is_known_to_be_number_expression,
+                    .string_literal = !options.is_known_to_be_number_expression,
                 } },
             });
         };
@@ -1331,7 +1354,10 @@ pub const Parser = struct {
             else => return possible_lhs,
         }
 
-        const rhs_node = try self.parseExpression(true);
+        const rhs_node = try self.parseExpression(.{
+            .is_known_to_be_number_expression = true,
+            .can_contain_not_expressions = options.can_contain_not_expressions,
+        });
 
         if (!rhs_node.isNumberExpression()) {
             return self.addErrorDetailsAndFail(ErrorDetails{
@@ -2463,6 +2489,88 @@ test "dialog controls" {
         \\{
         \\    CONTROL "", 900, SOMETHING, 0, 1, 2, 3, 4
         \\}
+    );
+}
+
+test "not expressions" {
+    try testParse(
+        \\1 DIALOGEX 1, 2, 3, 4
+        \\{
+        \\  AUTOCHECKBOX "", 0, 0, 0, 0, 0, NOT 1, NOT 2, 100
+        \\  CONTROL "", 0, BUTTON, NOT 1 | 2, 0, 0, 0, 0, 1 | NOT 2, 100
+        \\  AUTOCHECKBOX "",1,1,1,1,1,1 | NOT ~0 | 1
+        \\}
+    ,
+        \\root
+        \\ dialog 1 DIALOGEX [0 common_resource_attributes]
+        \\  x:
+        \\   literal 1
+        \\  y:
+        \\   literal 2
+        \\  width:
+        \\   literal 3
+        \\  height:
+        \\   literal 4
+        \\ {
+        \\  control_statement AUTOCHECKBOX text: ""
+        \\   id:
+        \\    literal 0
+        \\   x:
+        \\    literal 0
+        \\   y:
+        \\    literal 0
+        \\   width:
+        \\    literal 0
+        \\   height:
+        \\    literal 0
+        \\   style:
+        \\    not_expression NOT 1
+        \\   exstyle:
+        \\    not_expression NOT 2
+        \\   help_id:
+        \\    literal 100
+        \\  control_statement CONTROL text: ""
+        \\   class:
+        \\    literal BUTTON
+        \\   id:
+        \\    literal 0
+        \\   x:
+        \\    literal 0
+        \\   y:
+        \\    literal 0
+        \\   width:
+        \\    literal 0
+        \\   height:
+        \\    literal 0
+        \\   style:
+        \\    binary_expression |
+        \\     not_expression NOT 1
+        \\     literal 2
+        \\   exstyle:
+        \\    binary_expression |
+        \\     literal 1
+        \\     not_expression NOT 2
+        \\   help_id:
+        \\    literal 100
+        \\  control_statement AUTOCHECKBOX text: ""
+        \\   id:
+        \\    literal 1
+        \\   x:
+        \\    literal 1
+        \\   y:
+        \\    literal 1
+        \\   width:
+        \\    literal 1
+        \\   height:
+        \\    literal 1
+        \\   style:
+        \\    binary_expression |
+        \\     literal 1
+        \\     binary_expression |
+        \\      not_expression NOT ~0
+        \\      literal 1
+        \\ }
+        \\
     );
 }
 

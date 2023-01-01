@@ -112,6 +112,7 @@ pub const Node = struct {
         literal,
         binary_expression,
         grouped_expression,
+        not_expression,
         accelerators,
         accelerator,
         dialog,
@@ -141,6 +142,7 @@ pub const Node = struct {
                 .literal => Literal,
                 .binary_expression => BinaryExpression,
                 .grouped_expression => GroupedExpression,
+                .not_expression => NotExpression,
                 .accelerators => Accelerators,
                 .accelerator => Accelerator,
                 .dialog => Dialog,
@@ -210,6 +212,12 @@ pub const Node = struct {
         open_token: Token,
         expression: *Node,
         close_token: Token,
+    };
+
+    pub const NotExpression = struct {
+        base: Node = .{ .id = .not_expression },
+        not_token: Token,
+        number_token: Token,
     };
 
     pub const Accelerators = struct {
@@ -423,7 +431,7 @@ pub const Node = struct {
                     else => false,
                 };
             },
-            .binary_expression, .grouped_expression => return true,
+            .binary_expression, .grouped_expression, .not_expression => return true,
             else => return false,
         }
     }
@@ -479,6 +487,10 @@ pub const Node = struct {
             .grouped_expression => {
                 const casted = @fieldParentPtr(Node.GroupedExpression, "base", node);
                 return casted.open_token;
+            },
+            .not_expression => {
+                const casted = @fieldParentPtr(Node.NotExpression, "base", node);
+                return casted.not_token;
             },
             .accelerators => {
                 const casted = @fieldParentPtr(Node.Accelerators, "base", node);
@@ -601,6 +613,14 @@ pub const Node = struct {
                 try grouped.expression.dump(tree, writer, indent + 1);
                 try writer.writeByteNTimes(' ', indent);
                 try writer.writeAll(grouped.close_token.slice(tree.source));
+                try writer.writeAll("\n");
+            },
+            .not_expression => {
+                const not = @fieldParentPtr(Node.NotExpression, "base", node);
+                try writer.writeAll(" ");
+                try writer.writeAll(not.not_token.slice(tree.source));
+                try writer.writeAll(" ");
+                try writer.writeAll(not.number_token.slice(tree.source));
                 try writer.writeAll("\n");
             },
             .accelerators => {

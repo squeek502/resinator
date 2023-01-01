@@ -981,6 +981,11 @@ pub const WS = struct {
     pub const CHILDWINDOW: u32 = CHILD;
 };
 
+/// Dialog Box Template Styles from WinUser.h
+pub const DS = struct {
+    pub const SETFONT: u32 = 0x40;
+};
+
 /// Button Control Styles from WinUser.h
 /// This is not complete, it only contains what is needed
 pub const BS = struct {
