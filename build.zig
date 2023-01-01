@@ -32,6 +32,13 @@ pub fn build(b: *std.build.Builder) void {
     const test_step = b.step("test", "Run library tests");
     test_step.dependOn(&exe_tests.step);
 
+    const try_all_rcs_exe = b.addExecutable("try_all_rcs", "test/try_all_rcs.zig");
+    try_all_rcs_exe.setTarget(target);
+    try_all_rcs_exe.setBuildMode(mode);
+    const try_all_rcs_compile = b.step("try_all_rcs", "Build/install try_all_rcs exe");
+    const install_try_all_rcs_exe = b.addInstallArtifact(try_all_rcs_exe);
+    try_all_rcs_compile.dependOn(&install_try_all_rcs_exe.step);
+
     const resinator = std.build.Pkg{
         .name = "resinator",
         .source = .{ .path = "src/resinator.zig" },
