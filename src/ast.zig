@@ -127,6 +127,7 @@ pub const Node = struct {
         version_statement,
         block,
         block_value,
+        block_value_value,
         string_table,
         string_table_string,
         language_statement,
@@ -157,6 +158,7 @@ pub const Node = struct {
                 .version_statement => VersionStatement,
                 .block => Block,
                 .block_value => BlockValue,
+                .block_value_value => BlockValueValue,
                 .string_table => StringTable,
                 .string_table_string => StringTableString,
                 .language_statement => LanguageStatement,
@@ -368,7 +370,15 @@ pub const Node = struct {
         /// The VALUE token itself
         identifier: Token,
         key: Token,
+        /// These will be BlockValueValue nodes
         values: []*Node,
+    };
+
+    pub const BlockValueValue = struct {
+        base: Node = .{ .id = .block_value_value },
+        expression: *Node,
+        /// Whether or not the value has a trailing comma is relevant
+        trailing_comma: bool,
     };
 
     pub const StringTable = struct {
@@ -537,6 +547,10 @@ pub const Node = struct {
             .block_value => {
                 const casted = @fieldParentPtr(Node.BlockValue, "base", node);
                 return casted.identifier;
+            },
+            .block_value_value => {
+                const casted = @fieldParentPtr(Node.BlockValueValue, "base", node);
+                return casted.expression.getFirstToken();
             },
             .string_table => {
                 const casted = @fieldParentPtr(Node.StringTable, "base", node);
@@ -831,6 +845,14 @@ pub const Node = struct {
                 for (block_value.values) |value| {
                     try value.dump(tree, writer, indent + 1);
                 }
+            },
+            .block_value_value => {
+                const block_value = @fieldParentPtr(Node.BlockValueValue, "base", node);
+                if (block_value.trailing_comma) {
+                    try writer.writeAll(" ,");
+                }
+                try writer.writeAll("\n");
+                try block_value.expression.dump(tree, writer, indent + 1);
             },
             .string_table => {
                 const string_table = @fieldParentPtr(Node.StringTable, "base", node);

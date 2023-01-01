@@ -1193,12 +1193,19 @@ pub const Parser = struct {
                 else => break,
             }
             const value = try self.parseExpression(.{});
-            try values.append(self.state.arena, value);
 
+            const has_trailing_comma = try self.parseOptionalToken(.comma);
             try self.skipAnyCommas();
+
+            const value_value = try self.state.arena.create(Node.BlockValueValue);
+            value_value.* = .{
+                .expression = value,
+                .trailing_comma = has_trailing_comma,
+            };
+            try values.append(self.state.arena, &value_value.base);
         }
-        if (!had_comma_before_first_value and values.items.len > 0 and values.items[0].isStringLiteral()) {
-            const token = values.items[0].cast(.literal).?.token;
+        if (!had_comma_before_first_value and values.items.len > 0 and values.items[0].cast(.block_value_value).?.expression.isStringLiteral()) {
+            const token = values.items[0].cast(.block_value_value).?.expression.cast(.literal).?.token;
             try self.addErrorDetails(.{
                 .err = .rc_would_miscompile_version_value_padding,
                 .type = .warning,
@@ -2765,19 +2772,28 @@ test "versioninfo" {
         \\  block BLOCK "something"
         \\  BEGIN
         \\   block BLOCK "something else"
-        \\    literal 1
-        \\    literal 2
+        \\    block_value_value ,
+        \\     literal 1
+        \\    block_value_value
+        \\     literal 2
         \\   BEGIN
         \\    block_value VALUE "key"
         \\    block_value VALUE "key"
-        \\     literal 1
-        \\     literal 2
-        \\     literal 3
+        \\     block_value_value ,
+        \\      literal 1
+        \\     block_value_value ,
+        \\      literal 2
+        \\     block_value_value ,
+        \\      literal 3
         \\    block_value VALUE "key"
-        \\     literal 1
-        \\     literal 2
-        \\     literal 3
-        \\     literal "4"
+        \\     block_value_value
+        \\      literal 1
+        \\     block_value_value
+        \\      literal 2
+        \\     block_value_value
+        \\      literal 3
+        \\     block_value_value
+        \\      literal "4"
         \\   END
         \\  END
         \\ }
