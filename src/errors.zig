@@ -320,6 +320,8 @@ pub fn renderErrorMessage(allocator: std.mem.Allocator, writer: anytype, colors:
     const corresponding_span: ?SourceMappings.SourceSpan = if (source_mappings) |mappings| mappings.get(err_details.token.line_number) else null;
     const corresponding_file: ?[]const u8 = if (source_mappings) |mappings| mappings.files.get(corresponding_span.?.filename_offset) else null;
 
+    const err_line = if (corresponding_span) |span| span.start_line else err_details.token.line_number;
+
     colors.set(writer, .bold);
     if (corresponding_file) |file| {
         try writer.writeAll(file);
@@ -329,7 +331,7 @@ pub fn renderErrorMessage(allocator: std.mem.Allocator, writer: anytype, colors:
         colors.set(writer, .reset);
         colors.set(writer, .bold);
     }
-    try writer.print(":{d}:{d}: ", .{ err_details.token.line_number, column });
+    try writer.print(":{d}:{d}: ", .{ err_line, column });
     switch (err_details.type) {
         .err => {
             colors.set(writer, .red);
@@ -399,7 +401,7 @@ pub fn renderErrorMessage(allocator: std.mem.Allocator, writer: anytype, colors:
             colors.set(writer, .reset);
             colors.set(writer, .bold);
         }
-        try writer.print(":{d}:{d}: ", .{ err_details.token.line_number, column });
+        try writer.print(":{d}:{d}: ", .{ err_line, column });
         colors.set(writer, .cyan);
         try writer.writeAll("note: ");
         colors.set(writer, .reset);
