@@ -433,6 +433,11 @@ pub fn parseQuotedStringAsWideString(allocator: std.mem.Allocator, bytes: Source
     return parseQuotedString(.wide, allocator, bytes, options);
 }
 
+pub fn parseQuotedStringAsAsciiString(allocator: std.mem.Allocator, bytes: SourceBytes, options: StringParseOptions) ![]u8 {
+    std.debug.assert(bytes.slice.len >= 2); // ""
+    return parseQuotedString(.ascii, allocator, bytes, options);
+}
+
 test "parse quoted ascii string" {
     var arena_allocator = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_allocator.deinit();

@@ -202,6 +202,35 @@ pub const Compiler = struct {
     }
 
     pub fn writeResourceExternal(self: *Compiler, node: *Node.ResourceExternal, writer: anytype) !void {
+        const id_bytes = SourceBytes{
+            .slice = node.id.slice(self.source),
+            .code_page = self.code_pages.getForToken(node.id),
+        };
+        const type_bytes = SourceBytes{
+            .slice = node.type.slice(self.source),
+            .code_page = self.code_pages.getForToken(node.type),
+        };
+        // Init header with data size zero for now, will need to fill it in later
+        var header = try ResourceHeader.init(self.allocator, id_bytes, type_bytes, 0, self.state.language);
+        defer header.deinit(self.allocator);
+
+        const maybe_predefined_type = header.predefinedResourceType();
+
+        // DLGINCLUDE has special handling that doesn't actually need the file to exist
+        if (maybe_predefined_type != null and maybe_predefined_type.? == .DLGINCLUDE) {
+            const filename_token = node.filename.cast(.literal).?.token;
+            const parsed_filename = try self.parseQuotedStringAsAsciiString(filename_token);
+            defer self.allocator.free(parsed_filename);
+
+            header.applyMemoryFlags(node.common_resource_attributes, self.source);
+            header.data_size = @intCast(u32, parsed_filename.len + 1);
+            try header.write(writer);
+            try writer.writeAll(parsed_filename);
+            try writer.writeByte(0);
+            try writeDataPadding(writer, header.data_size);
+            return;
+        }
+
         const filename = try self.evaluateFilenameExpression(node.filename);
         defer filename.deinit(self.allocator);
 
@@ -225,19 +254,7 @@ pub const Compiler = struct {
         };
         defer file.close();
 
-        const id_bytes = SourceBytes{
-            .slice = node.id.slice(self.source),
-            .code_page = self.code_pages.getForToken(node.id),
-        };
-        const type_bytes = SourceBytes{
-            .slice = node.type.slice(self.source),
-            .code_page = self.code_pages.getForToken(node.type),
-        };
-        // Init header with data size zero for now, will need to fill it in later
-        var header = try ResourceHeader.init(self.allocator, id_bytes, type_bytes, 0, self.state.language);
-        defer header.deinit(self.allocator);
-
-        if (header.predefinedResourceType()) |predefined_type| {
+        if (maybe_predefined_type) |predefined_type| {
             switch (predefined_type) {
                 .GROUP_ICON, .GROUP_CURSOR => {
                     const icon_dir = try ico.read(self.allocator, file.reader());
@@ -1599,6 +1616,19 @@ pub const Compiler = struct {
         );
     }
 
+    /// Helper that calls parseQuotedStringAsAsciiString with the relevant context
+    /// Resulting slice is allocated by `self.allocator`.
+    pub fn parseQuotedStringAsAsciiString(self: *Compiler, token: Token) ![]u8 {
+        return literals.parseQuotedStringAsAsciiString(
+            self.allocator,
+            self.sourceBytesForToken(token),
+            .{
+                .start_column = token.calculateColumn(self.source, 8, null),
+                .diagnostics = .{ .diagnostics = self.diagnostics, .token = token },
+            },
+        );
+    }
+
     fn addErrorDetails(self: *Compiler, details: ErrorDetails) Allocator.Error!void {
         try self.diagnostics.append(details);
     }
@@ -2652,6 +2682,17 @@ test "dangling invalid node" {
         \\
     ,
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+        std.fs.cwd(),
+    );
+}
+
+test "dlginclude" {
+    try testCompileWithOutput(
+        \\#pragma code_page(65001)
+        \\1 DLGINCLUDE "something€𐍈ह.h"
+        \\2 DLGINCLUDE FIXED L"Something€𐍈ह.h"
+    ,
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x10\x00\x00\x00 \x00\x00\x00\xff\xff\x11\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00something\x80???.h\x00\x10\x00\x00\x00 \x00\x00\x00\xff\xff\x11\x00\xff\xff\x02\x00\x00\x00\x00\x00 \x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00Something\x80???.h\x00",
         std.fs.cwd(),
     );
 }

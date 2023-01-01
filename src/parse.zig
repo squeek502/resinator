@@ -645,6 +645,29 @@ pub const Parser = struct {
                 };
                 return &node.base;
             },
+            .dlginclude => {
+                const common_resource_attributes = try self.parseCommonResourceAttributes();
+
+                var filename_expression = try self.parseExpression(.{});
+                if (!filename_expression.isStringLiteral()) {
+                    return self.addErrorDetailsAndFail(ErrorDetails{
+                        .err = .expected_something_else,
+                        .token = filename_expression.getFirstToken(),
+                        .extra = .{ .expected_types = .{
+                            .string_literal = true,
+                        } },
+                    });
+                }
+
+                const node = try self.state.arena.create(Node.ResourceExternal);
+                node.* = .{
+                    .id = id_token,
+                    .type = type_token,
+                    .common_resource_attributes = common_resource_attributes,
+                    .filename = filename_expression,
+                };
+                return &node.base;
+            },
             .stringtable => unreachable,
             // Just try everything as a 'generic' resource (raw data or external file)
             // TODO: More fine-grained switch cases as necessary
@@ -2831,6 +2854,21 @@ test "dangling id at end of file" {
         \\  eof:
         \\
     );
+}
+
+test "dlginclude" {
+    try testParse(
+        \\1 DLGINCLUDE "something.h"
+        \\2 DLGINCLUDE FIXED L"Something.h"
+    ,
+        \\root
+        \\ resource_external 1 DLGINCLUDE [0 common_resource_attributes]
+        \\  literal "something.h"
+        \\ resource_external 2 DLGINCLUDE [1 common_resource_attributes]
+        \\  literal L"Something.h"
+        \\
+    );
+    try testParseError("expected quoted string literal; got 'something.h'", "1 DLGINCLUDE something.h");
 }
 
 test "parse errors" {

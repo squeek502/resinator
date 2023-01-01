@@ -11,6 +11,9 @@ pub const Resource = enum {
     cursor,
     dialog,
     dialogex,
+    /// As far as I can tell, this is undocumented; the most I could find was this:
+    /// https://www.betaarchive.com/wiki/index.php/Microsoft_KB_Archive/91697
+    dlginclude,
     font,
     html,
     icon,
@@ -43,6 +46,7 @@ pub const Resource = enum {
         .{ "CURSOR", .cursor },
         .{ "DIALOG", .dialog },
         .{ "DIALOGEX", .dialogex },
+        .{ "DLGINCLUDE", .dlginclude },
         .{ "FONT", .font },
         .{ "HTML", .html },
         .{ "ICON", .icon },
