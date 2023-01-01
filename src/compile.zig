@@ -20,6 +20,7 @@ const utils = @import("utils.zig");
 const NameOrOrdinal = res.NameOrOrdinal;
 const CodePage = @import("code_pages.zig").CodePage;
 const CodePageLookup = @import("ast.zig").CodePageLookup;
+const windows1252 = @import("windows1252.zig");
 
 pub fn compile(allocator: Allocator, source: []const u8, writer: anytype, cwd: std.fs.Dir, diagnostics: *Diagnostics) !void {
     // TODO: Take this as a parameter
@@ -1859,8 +1860,8 @@ pub const StringTable = struct {
                                 .diagnostics = .{ .diagnostics = compiler.diagnostics, .token = string_token },
                             });
                             defer compiler.allocator.free(parsed);
-                            // TODO: Should this be UTF-8? parseQuotedAsciiString returns a Windows-1252 encoded string.
-                            break :utf16 try std.unicode.utf8ToUtf16LeWithNull(compiler.allocator, parsed);
+                            // TODO: This needs more testing to make sure that this is always the right conversion to do.
+                            break :utf16 try windows1252.windows1252ToUtf16AllocZ(compiler.allocator, parsed);
                         },
                         .quoted_wide_string => break :utf16 try literals.parseQuotedWideString(compiler.allocator, bytes, .{
                             .start_column = column,
@@ -2377,6 +2378,13 @@ test "basic stringtable" {
         \\
     ,
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00$\x00\x00\x00 \x00\x00\x00\xff\xff\x06\x00\xff\xff!\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00a\x00\x01\x00c\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\"\x00\x00\x00 \x00\x00\x00\xff\xff\x06\x00\xff\xff\x01\x00\x00\x00\x00\x00 \x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00b\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+        std.fs.cwd(),
+    );
+
+    // Some Windows-1252 -> UTF-16 conversion testing
+    try testCompileWithOutput(
+        "STRINGTABLE { 1 \"hello \x93world\x94 i guess\" }",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00J\x00\x00\x00 \x00\x00\x00\xff\xff\x06\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x15\x00h\x00e\x00l\x00l\x00o\x00 \x00\x1c w\x00o\x00r\x00l\x00d\x00\x1d  \x00i\x00 \x00g\x00u\x00e\x00s\x00s\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
         std.fs.cwd(),
     );
 }

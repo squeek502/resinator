@@ -20,6 +20,17 @@ pub fn windows1252ToUtf8Stream(writer: anytype, reader: anytype) !usize {
     }
 }
 
+/// Returns the number of code units written to the writer
+pub fn windows1252ToUtf16AllocZ(allocator: std.mem.Allocator, win1252_str: []const u8) ![:0]u16 {
+    // Guaranteed to need exactly the same number of code units as Windows-1252 bytes
+    var utf16_slice = try allocator.allocSentinel(u16, win1252_str.len, 0);
+    errdefer allocator.free(utf16_slice);
+    for (win1252_str) |c, i| {
+        utf16_slice[i] = toCodepoint(c);
+    }
+    return utf16_slice;
+}
+
 /// https://www.unicode.org/Public/MAPPINGS/VENDORS/MICSFT/WindowsBestFit/bestfit1252.txt
 pub fn toCodepoint(c: u8) u16 {
     return switch (c) {
