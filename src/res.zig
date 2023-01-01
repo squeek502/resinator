@@ -97,11 +97,11 @@ pub const MemoryFlags = packed struct(u16) {
                 // zig fmt: off
                 .RCDATA, .BITMAP, .HTML, .MANIFEST,
                 .ACCELERATOR, .VERSION, .MESSAGETABLE,
-                .DLGINIT => MemoryFlags{ .value = MOVEABLE | SHARED },
+                .DLGINIT, .TOOLBAR => MemoryFlags{ .value = MOVEABLE | SHARED },
 
                 .GROUP_ICON, .GROUP_CURSOR,
                 .STRING, .FONT, .DIALOG, .MENU,
-                .DLGINCLUDE, .TOOLBAR, => MemoryFlags{ .value = MOVEABLE | SHARED | DISCARDABLE },
+                .DLGINCLUDE, => MemoryFlags{ .value = MOVEABLE | SHARED | DISCARDABLE },
 
                 .ICON, .CURSOR => MemoryFlags{ .value = MOVEABLE | DISCARDABLE },
                 .FONTDIR => MemoryFlags{ .value = MOVEABLE | PRELOAD },
