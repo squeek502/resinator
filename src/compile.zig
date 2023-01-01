@@ -303,10 +303,14 @@ pub const Compiler = struct {
                         try file.seekTo(entry.data_offset_from_start_of_file);
                         const bitmapcore = try file.reader().readStruct(ico.BITMAPCOREHEADER);
                         if (icon_dir.image_type == .icon) {
-                            entry.type_specific_data.icon.color_planes = std.mem.littleToNative(u16, bitmapcore.bcPlanes);
-                            entry.type_specific_data.icon.bits_per_pixel = std.mem.littleToNative(u16, bitmapcore.bcBitCount);
+                            // TODO: This feels slightly hacky
+                            if (!bitmapcore.isPng()) {
+                                entry.type_specific_data.icon.color_planes = std.mem.littleToNative(u16, bitmapcore.bcPlanes);
+                                entry.type_specific_data.icon.bits_per_pixel = std.mem.littleToNative(u16, bitmapcore.bcBitCount);
+                            }
                         } else {
                             // Only cursors get the width/height from BITMAPINFOHEADER
+                            // TODO: PNG in cursors?
                             entry.width = @intCast(u16, bitmapcore.bcWidth);
                             entry.height = @intCast(u16, bitmapcore.bcHeight);
                             entry.type_specific_data.cursor.hotspot_x = std.mem.littleToNative(u16, bitmapcore.bcPlanes);

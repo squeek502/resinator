@@ -144,4 +144,9 @@ pub const BITMAPCOREHEADER = extern struct {
     bcHeight: i32,
     bcPlanes: u16,
     bcBitCount: u16,
+
+    pub fn isPng(self: *const BITMAPCOREHEADER) bool {
+        const png_signature = "\x89PNG\r\n\x1a\n";
+        return std.mem.startsWith(u8, std.mem.asBytes(self), png_signature);
+    }
 };
