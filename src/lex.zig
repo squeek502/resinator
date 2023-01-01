@@ -168,6 +168,7 @@ pub const Lexer = struct {
         start,
         literal,
         preprocessor,
+        semicolon,
     };
 
     pub fn nextWhitespaceDelimeterOnly(self: *Self) LexError!Token {
@@ -209,6 +210,14 @@ pub const Lexer = struct {
                         }
                         self.at_start_of_line = false;
                     },
+                    // Semi-colon acts as a line-terminator, but in this lexing mode
+                    // that's only true if it's at the start of a line.
+                    ';' => {
+                        if (self.at_start_of_line) {
+                            state = .semicolon;
+                        }
+                        self.at_start_of_line = false;
+                    },
                     else => {
                         state = .literal;
                         self.at_start_of_line = false;
@@ -230,10 +239,18 @@ pub const Lexer = struct {
                     },
                     else => {},
                 },
+                .semicolon => switch (c) {
+                    '\r', '\n' => {
+                        result.start = self.index + 1;
+                        state = .start;
+                        result.line_number = self.incrementLineNumber(&last_line_ending_index);
+                    },
+                    else => {},
+                },
             }
         } else { // got EOF
             switch (state) {
-                .start => {},
+                .start, .semicolon => {},
                 .literal => {
                     result.id = .literal;
                 },

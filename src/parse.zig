@@ -2974,6 +2974,8 @@ test "semicolons" {
         \\  1;100
         \\  2
         \\}
+        \\; This is basically a comment
+        \\
     ,
         \\root
         \\ string_table STRINGTABLE [0 common_resource_attributes]
