@@ -288,6 +288,23 @@ pub const Parser = struct {
         // TODO: Is this actually guaranteed? Should it be?
         std.debug.assert(first_token.id == .literal);
 
+        // The Win32 RC compiler allows for a 'dangling' literal at the end of a file,
+        // and there is actually a .rc file with a such a dangling literal in the
+        // Windows-classic-samples set of projects. So, we have special compatibility
+        // for this particular case.
+        const maybe_eof = try self.lookaheadToken(.whitespace_delimiter_only);
+        if (maybe_eof.id == .eof) {
+            // TODO: emit warning
+            var context = try self.state.arena.alloc(Token, 2);
+            context[0] = first_token;
+            context[1] = maybe_eof;
+            const invalid_node = try self.state.arena.create(Node.Invalid);
+            invalid_node.* = .{
+                .context = context,
+            };
+            return &invalid_node.base;
+        }
+
         if (rc.TopLevelKeywords.map.get(first_token.slice(self.lexer.buffer))) |keyword| switch (keyword) {
             .language => {
                 const language_statement = try self.parseLanguageStatement();
@@ -2801,10 +2818,24 @@ test "versioninfo" {
     );
 }
 
+test "dangling id at end of file" {
+    try testParse(
+        \\1 RCDATA {}
+        \\END
+        \\
+    ,
+        \\root
+        \\ resource_raw_data 1 RCDATA [0 common_resource_attributes] raw data: 0
+        \\ invalid context.len: 2
+        \\  literal:END
+        \\  eof:
+        \\
+    );
+}
+
 test "parse errors" {
     try testParseError("unfinished raw data block at '<eof>', expected closing '}' or 'END'", "id RCDATA { 1");
     try testParseError("unfinished string literal at '<eof>', expected closing '\"'", "id RCDATA \"unfinished string");
-    try testParseError("expected '<literal>', got '<eof>'", "id");
     try testParseError("expected ')', got '}'", "id RCDATA { (1 }");
     try testParseError("character '\\x1A' is not allowed", "id RCDATA { \"\x1A\" }");
     try testParseError("character '\\x01' is not allowed outside of string literals", "id RCDATA { \x01 }");

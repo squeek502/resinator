@@ -429,7 +429,7 @@ pub const Node = struct {
 
     pub const Invalid = struct {
         base: Node = .{ .id = .invalid },
-        context: []*Node,
+        context: []Token,
     };
 
     pub fn isNumberExpression(node: *const Node) bool {
@@ -572,7 +572,10 @@ pub const Node = struct {
                 const casted = @fieldParentPtr(Node.SimpleStatement, "base", node);
                 return casted.identifier;
             },
-            .invalid => @panic("TODO getFirstToken for invalid node"),
+            .invalid => {
+                const casted = @fieldParentPtr(Node.Invalid, "base", node);
+                return casted.context[0];
+            },
         }
     }
 
@@ -905,8 +908,10 @@ pub const Node = struct {
             .invalid => {
                 const invalid = @fieldParentPtr(Node.Invalid, "base", node);
                 try writer.print(" context.len: {}\n", .{invalid.context.len});
-                for (invalid.context) |context_node| {
-                    try context_node.dump(tree, writer, indent + 1);
+                for (invalid.context) |context_token| {
+                    try writer.writeByteNTimes(' ', indent + 1);
+                    try writer.print("{s}:{s}", .{ @tagName(context_token.id), context_token.slice(tree.source) });
+                    try writer.writeByte('\n');
                 }
             },
         }
