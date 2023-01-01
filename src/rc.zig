@@ -14,6 +14,8 @@ pub const Resource = enum {
     /// As far as I can tell, this is undocumented; the most I could find was this:
     /// https://www.betaarchive.com/wiki/index.php/Microsoft_KB_Archive/91697
     dlginclude,
+    /// Undocumented, basically works exactly like RCDATA
+    dlginit,
     font,
     html,
     icon,
@@ -48,6 +50,7 @@ pub const Resource = enum {
         .{ "DIALOG", .dialog },
         .{ "DIALOGEX", .dialogex },
         .{ "DLGINCLUDE", .dlginclude },
+        .{ "DLGINIT", .dlginit },
         .{ "FONT", .font },
         .{ "HTML", .html },
         .{ "ICON", .icon },
@@ -82,6 +85,7 @@ pub const Resource = enum {
             .CURSOR => .cursor_num,
             .DIALOG => .dialog,
             .DLGINCLUDE => .dlginclude,
+            .DLGINIT => .dlginit,
             .FONT => .font,
             .FONTDIR => .fontdir_num,
             .GROUP_CURSOR => .cursor,
@@ -109,6 +113,7 @@ pub const Resource = enum {
             .rcdata,
             .vxd, // Obsolete
             .manifest_num,
+            .dlginit,
             => true,
             else => false,
         };

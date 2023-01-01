@@ -18,6 +18,7 @@ pub const RT = enum(u8) {
     CURSOR = 1,
     DIALOG = 5,
     DLGINCLUDE = 17,
+    DLGINIT = 240,
     FONT = 8,
     FONTDIR = 7,
     GROUP_CURSOR = 1 + 11, // CURSOR + 11
@@ -44,6 +45,7 @@ pub const RT = enum(u8) {
             .dialog => .DIALOG,
             .dialogex => .DIALOG,
             .dlginclude => .DLGINCLUDE,
+            .dlginit => .DLGINIT,
             .font => .FONT,
             .html => .HTML,
             .icon => .GROUP_ICON,
@@ -94,7 +96,8 @@ pub const MemoryFlags = packed struct(u16) {
             return switch (predefined_resource_type.?) {
                 // zig fmt: off
                 .RCDATA, .BITMAP, .HTML, .MANIFEST,
-                .ACCELERATOR, .VERSION, .MESSAGETABLE => MemoryFlags{ .value = MOVEABLE | SHARED },
+                .ACCELERATOR, .VERSION, .MESSAGETABLE,
+                .DLGINIT => MemoryFlags{ .value = MOVEABLE | SHARED },
 
                 .GROUP_ICON, .GROUP_CURSOR,
                 .STRING, .FONT, .DIALOG, .MENU,
@@ -327,6 +330,7 @@ pub const NameOrOrdinal = union(enum) {
                     .CURSOR,
                     .DIALOG,
                     .DLGINCLUDE,
+                    .DLGINIT,
                     .FONT,
                     .FONTDIR,
                     .GROUP_CURSOR,
