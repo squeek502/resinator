@@ -171,25 +171,56 @@ pub const Compiler = struct {
         }
     }
 
+    /// https://learn.microsoft.com/en-us/windows/win32/menurc/searching-for-files
+    fn searchForFile(self: *Compiler, path: []const u8) !std.fs.File {
+        // TODO: How does the Win32 RC compiler handle things like invalid icons, does it
+        //       error immediately or keep searching until it finds a valid one?
+        const file = self.cwd.openFile(path, .{}) catch |first_err| {
+            // TODO: /x option to not search INCLUDE, /i option to add search paths
+            const INCLUDE = std.process.getEnvVarOwned(self.allocator, "INCLUDE") catch "";
+            defer self.allocator.free(INCLUDE);
+
+            var buf = std.ArrayList(u8).init(self.allocator);
+            defer buf.deinit();
+
+            var it = std.mem.tokenize(u8, INCLUDE, ";");
+            while (it.next()) |search_path| {
+                buf.clearRetainingCapacity();
+                try buf.appendSlice(search_path);
+                try buf.append(std.fs.path.sep);
+                try buf.appendSlice(path);
+                const normalized_len = std.os.windows.normalizePath(u8, buf.items) catch continue;
+                buf.shrinkRetainingCapacity(normalized_len);
+
+                return self.cwd.openFile(buf.items, .{}) catch continue;
+            }
+
+            return first_err;
+        };
+        return file;
+    }
+
     pub fn writeResourceExternal(self: *Compiler, node: *Node.ResourceExternal, writer: anytype) !void {
         const filename = try self.evaluateFilenameExpression(node.filename);
         defer filename.deinit(self.allocator);
 
-        // TODO: emit error on file not found
-        const file = self.cwd.openFile(filename.utf8, .{}) catch |err| {
-            const filename_string_index = @intCast(
-                ErrorDetails.FileOpenError.FilenameStringIndex,
-                try self.diagnostics.putString(filename.utf8),
-            );
-            return self.addErrorDetailsAndFail(.{
-                .err = .file_open_error,
-                // TODO get the most relevant token for filename, e.g. in an expression like (1+-1), get the -1 token
-                .token = node.filename.getFirstToken(),
-                .extra = .{ .file_open_error = .{
-                    .err = ErrorDetails.FileOpenError.enumFromError(err),
-                    .filename_string_index = filename_string_index,
-                } },
-            });
+        const file = self.searchForFile(filename.utf8) catch |err| switch (err) {
+            error.OutOfMemory => |e| return e,
+            else => |e| {
+                const filename_string_index = @intCast(
+                    ErrorDetails.FileOpenError.FilenameStringIndex,
+                    try self.diagnostics.putString(filename.utf8),
+                );
+                return self.addErrorDetailsAndFail(.{
+                    .err = .file_open_error,
+                    // TODO get the most relevant token for filename, e.g. in an expression like (1+-1), get the -1 token
+                    .token = node.filename.getFirstToken(),
+                    .extra = .{ .file_open_error = .{
+                        .err = ErrorDetails.FileOpenError.enumFromError(e),
+                        .filename_string_index = filename_string_index,
+                    } },
+                });
+            },
         };
         defer file.close();
 
