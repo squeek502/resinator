@@ -1401,7 +1401,8 @@ pub const Compiler = struct {
                 const parsed_key = try self.parseQuotedStringAsWideString(block_or_value.key);
                 defer self.allocator.free(parsed_key);
 
-                try writer.writeAll(std.mem.sliceAsBytes(parsed_key[0 .. parsed_key.len + 1]));
+                const parsed_key_to_first_null = std.mem.sliceTo(parsed_key, 0);
+                try writer.writeAll(std.mem.sliceAsBytes(parsed_key_to_first_null[0 .. parsed_key_to_first_null.len + 1]));
 
                 var has_number_value: bool = false;
                 for (block_or_value.values) |value_value_node_uncasted| {
@@ -1436,15 +1437,17 @@ pub const Compiler = struct {
                         const literal_node = value_node.cast(.literal).?;
                         const parsed_value = try self.parseQuotedStringAsWideString(literal_node.token);
                         defer self.allocator.free(parsed_value);
-                        try writer.writeAll(std.mem.sliceAsBytes(parsed_value));
+
+                        const parsed_to_first_null = std.mem.sliceTo(parsed_value, 0);
+                        try writer.writeAll(std.mem.sliceAsBytes(parsed_to_first_null));
                         // Strings use UTF-16 code-unit count including the null-terminator
-                        values_size_win32_rc += parsed_value.len;
+                        values_size_win32_rc += parsed_to_first_null.len;
                         // but the null-terminator is only included if there's a trailing comma
                         // or this is the last value, and if there's an explicit null-terminator
                         // then we don't need to add it
                         const is_last = i == block_or_value.values.len - 1;
-                        const already_null_terminated = parsed_value.len > 0 and parsed_value[parsed_value.len - 1] == 0;
-                        if (!already_null_terminated and (is_last or value_value_node.trailing_comma)) {
+                        const is_empty = parsed_to_first_null.len == 0;
+                        if (!is_empty and (is_last or value_value_node.trailing_comma)) {
                             try writer.writeIntLittle(u16, 0);
                             values_size_win32_rc += 1;
                         }
@@ -2677,15 +2680,17 @@ test "versioninfo resource" {
         std.fs.cwd(),
     );
 
-    // If there's an explicit null-terminator, then that takes the place of the
-    // appended one
+    // Null-terminator handling
     try testCompileWithOutput(
         \\test VERSIONINFO
         \\BEGIN
         \\  VALUE "OriginalFilename","CauSamplePlugin.dll\0"
+        \\  VALUE "CompanyNamea", "\0aaaa\0"
+        \\  VALUE "FileDescription\0asajnf", "VCExplore MFC Application\0"
+        \\  VALUE "FileVersion", "1, 0, 0, 1\0"
         \\END
     ,
-        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xac\x00\x00\x00(\x00\x00\x00\xff\xff\x10\x00T\x00E\x00S\x00T\x00\x00\x00\x00\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\xac\x004\x00\x00\x00V\x00S\x00_\x00V\x00E\x00R\x00S\x00I\x00O\x00N\x00_\x00I\x00N\x00F\x00O\x00\x00\x00\x00\x00\xbd\x04\xef\xfe\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00P\x00\x14\x00\x01\x00O\x00r\x00i\x00g\x00i\x00n\x00a\x00l\x00F\x00i\x00l\x00e\x00n\x00a\x00m\x00e\x00\x00\x00C\x00a\x00u\x00S\x00a\x00m\x00p\x00l\x00e\x00P\x00l\x00u\x00g\x00i\x00n\x00.\x00d\x00l\x00l\x00\x00\x00",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00^\x01\x00\x00(\x00\x00\x00\xff\xff\x10\x00T\x00E\x00S\x00T\x00\x00\x00\x00\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00^\x014\x00\x00\x00V\x00S\x00_\x00V\x00E\x00R\x00S\x00I\x00O\x00N\x00_\x00I\x00N\x00F\x00O\x00\x00\x00\x00\x00\xbd\x04\xef\xfe\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00P\x00\x14\x00\x01\x00O\x00r\x00i\x00g\x00i\x00n\x00a\x00l\x00F\x00i\x00l\x00e\x00n\x00a\x00m\x00e\x00\x00\x00C\x00a\x00u\x00S\x00a\x00m\x00p\x00l\x00e\x00P\x00l\x00u\x00g\x00i\x00n\x00.\x00d\x00l\x00l\x00\x00\x00 \x00\x00\x00\x01\x00C\x00o\x00m\x00p\x00a\x00n\x00y\x00N\x00a\x00m\x00e\x00a\x00\x00\x00\\\x00\x1a\x00\x01\x00F\x00i\x00l\x00e\x00D\x00e\x00s\x00c\x00r\x00i\x00p\x00t\x00i\x00o\x00n\x00\x00\x00\x00\x00V\x00C\x00E\x00x\x00p\x00l\x00o\x00r\x00e\x00 \x00M\x00F\x00C\x00 \x00A\x00p\x00p\x00l\x00i\x00c\x00a\x00t\x00i\x00o\x00n\x00\x00\x006\x00\x0b\x00\x01\x00F\x00i\x00l\x00e\x00V\x00e\x00r\x00s\x00i\x00o\x00n\x00\x00\x00\x00\x001\x00,\x00 \x000\x00,\x00 \x000\x00,\x00 \x001\x00\x00\x00\x00\x00",
         std.fs.cwd(),
     );
 }
