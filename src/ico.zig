@@ -1,3 +1,9 @@
+//! https://devblogs.microsoft.com/oldnewthing/20120720-00/?p=7083
+//! https://learn.microsoft.com/en-us/previous-versions/ms997538(v=msdn.10)
+//! https://learn.microsoft.com/en-us/windows/win32/menurc/newheader
+//! https://learn.microsoft.com/en-us/windows/win32/menurc/resdir
+//! https://learn.microsoft.com/en-us/windows/win32/menurc/localheader
+
 const std = @import("std");
 
 pub fn read(allocator: std.mem.Allocator, reader: anytype) !IconDir {
@@ -81,8 +87,10 @@ pub const IconDir = struct {
 };
 
 pub const Entry = struct {
-    width: u8,
-    height: u8,
+    // Icons are limited to u8 sizes, cursors can have u16,
+    // so we store as u16 and truncate when needed.
+    width: u16,
+    height: u16,
     num_colors: u8,
     type_specific_data: union(ImageType) {
         icon: struct {
@@ -98,21 +106,24 @@ pub const Entry = struct {
     data_offset_from_start_of_file: u32,
 
     pub fn writeResData(self: Entry, writer: anytype, id: u16) !void {
-        try writer.writeIntLittle(u8, self.width);
-        try writer.writeIntLittle(u8, self.height);
-        try writer.writeIntLittle(u8, self.num_colors);
-        try writer.writeIntLittle(u8, 0); // reserved
         switch (self.type_specific_data) {
             .icon => |icon_data| {
+                try writer.writeIntLittle(u8, @truncate(u8, self.width));
+                try writer.writeIntLittle(u8, @truncate(u8, self.height));
+                try writer.writeIntLittle(u8, self.num_colors);
+                try writer.writeIntLittle(u8, 0); // reserved
                 try writer.writeIntLittle(u16, icon_data.color_planes);
                 try writer.writeIntLittle(u16, icon_data.bits_per_pixel);
+                try writer.writeIntLittle(u32, self.data_size_in_bytes);
             },
             .cursor => |cursor_data| {
+                try writer.writeIntLittle(u16, self.width);
+                try writer.writeIntLittle(u16, self.height);
                 try writer.writeIntLittle(u16, cursor_data.hotspot_x);
                 try writer.writeIntLittle(u16, cursor_data.hotspot_y);
+                try writer.writeIntLittle(u32, self.data_size_in_bytes + 4);
             },
         }
-        try writer.writeIntLittle(u32, self.data_size_in_bytes);
         try writer.writeIntLittle(u16, id);
     }
 };
