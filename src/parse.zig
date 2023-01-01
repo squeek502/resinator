@@ -2963,6 +2963,32 @@ test "toolbar" {
     );
 }
 
+test "semicolons" {
+    try testParse(
+        \\STRINGTABLE
+        \\BEGIN
+        \\  512; this is all ignored
+        \\  "what"
+        \\END
+        \\1; RC;DATA {
+        \\  1;100
+        \\  2
+        \\}
+    ,
+        \\root
+        \\ string_table STRINGTABLE [0 common_resource_attributes]
+        \\ BEGIN
+        \\  string_table_string
+        \\   literal 512
+        \\   "what"
+        \\ END
+        \\ resource_raw_data 1; RC;DATA [0 common_resource_attributes] raw data: 2
+        \\  literal 1
+        \\  literal 2
+        \\
+    );
+}
+
 test "parse errors" {
     try testParseError("unfinished raw data block at '<eof>', expected closing '}' or 'END'", "id RCDATA { 1");
     try testParseError("unfinished string literal at '<eof>', expected closing '\"'", "id RCDATA \"unfinished string");

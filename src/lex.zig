@@ -260,6 +260,7 @@ pub const Lexer = struct {
         literal,
         number_literal,
         preprocessor,
+        semicolon,
         // end
         e,
         en,
@@ -369,6 +370,10 @@ pub const Lexer = struct {
                         }
                         self.at_start_of_line = false;
                     },
+                    ';' => {
+                        state = .semicolon;
+                        self.at_start_of_line = false;
+                    },
                     '{', '}' => {
                         self.index += 1;
                         result.id = if (c == '{') .begin else .end;
@@ -395,6 +400,16 @@ pub const Lexer = struct {
                 .preprocessor => switch (c) {
                     '\r', '\n' => {
                         try self.evaluatePreprocessorCommand(result.start, self.index);
+                        result.start = self.index + 1;
+                        state = .start;
+                        result.line_number = self.incrementLineNumber(&last_line_ending_index);
+                    },
+                    else => {},
+                },
+                // Semi-colon acts as a line-terminator--everything is skipped until
+                // the next line.
+                .semicolon => switch (c) {
+                    '\r', '\n' => {
                         result.start = self.index + 1;
                         state = .start;
                         result.line_number = self.incrementLineNumber(&last_line_ending_index);
@@ -578,7 +593,7 @@ pub const Lexer = struct {
             }
         } else { // got EOF
             switch (state) {
-                .start => {},
+                .start, .semicolon => {},
                 .literal_or_quoted_wide_string, .literal, .e, .en, .b, .be, .beg, .begi => {
                     result.id = .literal;
                 },
