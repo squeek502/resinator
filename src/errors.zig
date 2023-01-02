@@ -173,6 +173,8 @@ pub const ErrorDetails = struct {
         resource_type_cant_use_raw_data,
         /// `resource` is populated
         id_must_be_ordinal,
+        /// `resource` is populated
+        name_or_id_not_allowed,
         string_resource_as_numeric_type,
         ascii_character_not_equivalent_to_virtual_key_code,
         empty_menu_not_allowed,
@@ -254,6 +256,9 @@ pub const ErrorDetails = struct {
             },
             .id_must_be_ordinal => {
                 try writer.print("id of resource type '{s}' must be an ordinal (u16), got '{s}'", .{ @tagName(self.extra.resource), self.token.nameForErrorDisplay(source) });
+            },
+            .name_or_id_not_allowed => {
+                try writer.print("name or id is not allowed for resource type '{s}'", .{@tagName(self.extra.resource)});
             },
             .string_resource_as_numeric_type => switch (self.type) {
                 .err, .warning => try writer.writeAll("the number 6 (RT_STRING) cannot be used as a resource type"),

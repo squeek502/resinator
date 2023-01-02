@@ -707,7 +707,13 @@ pub const Parser = struct {
                 };
                 return &node.base;
             },
-            .stringtable => unreachable,
+            .stringtable => {
+                return self.addErrorDetailsAndFail(.{
+                    .err = .name_or_id_not_allowed,
+                    .token = id_token,
+                    .extra = .{ .resource = resource },
+                });
+            },
             // Just try everything as a 'generic' resource (raw data or external file)
             // TODO: More fine-grained switch cases as necessary
             else => {
@@ -3006,6 +3012,7 @@ test "parse errors" {
     try testParseError("expected number, number expression, or quoted string literal; got 'hello'", "1 ACCELERATORS { hello, 1 }");
     try testParseError("expected number or number expression; got '\"hello\"'", "1 ACCELERATORS { 1, \"hello\" }");
     try testParseError("the number 6 (RT_STRING) cannot be used as a resource type", "1 6 {}");
+    try testParseError("name or id is not allowed for resource type 'stringtable'", "1 STRINGTABLE { 1 \"\" }");
 }
 
 fn testParseError(expected_error_str: []const u8, source: []const u8) !void {
