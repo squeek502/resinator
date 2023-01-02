@@ -270,9 +270,10 @@ pub const Compiler = struct {
                     // TODO: Could emit a warning if `icon_dir.image_type` doesn't match the predefined type.
                     //       The Windows RC compiler doesn't, but it seems like it'd be helpful.
 
-                    // Memory flags only affect the RT_ICON, not the RT_GROUP_ICON
+                    // Memory flags affect the RT_ICON and the RT_GROUP_ICON differently
                     var icon_memory_flags = MemoryFlags.defaults(res.RT.ICON);
                     applyToMemoryFlags(&icon_memory_flags, node.common_resource_attributes, self.source);
+                    applyToGroupMemoryFlags(&header.memory_flags, node.common_resource_attributes, self.source);
 
                     const first_icon_id = self.state.icon_id;
                     const entry_type = if (predefined_type == .GROUP_ICON) @enumToInt(res.RT.ICON) else @enumToInt(res.RT.CURSOR);
@@ -304,6 +305,7 @@ pub const Compiler = struct {
                         const bitmapcore = try file.reader().readStruct(ico.BITMAPCOREHEADER);
                         if (icon_dir.image_type == .icon) {
                             // TODO: This feels slightly hacky
+                            // TODO: Add tests for this behavior
                             if (!bitmapcore.isPng()) {
                                 entry.type_specific_data.icon.color_planes = std.mem.littleToNative(u16, bitmapcore.bcPlanes);
                                 entry.type_specific_data.icon.bits_per_pixel = std.mem.littleToNative(u16, bitmapcore.bcBitCount);
@@ -1598,6 +1600,57 @@ pub const Compiler = struct {
         for (tokens) |token| {
             const attribute = rc.CommonResourceAttributes.map.get(token.slice(source)).?;
             flags.set(attribute);
+        }
+    }
+
+    /// RT_GROUP_ICON and RT_GROUP_CURSOR have their own special rules for memory flags
+    fn applyToGroupMemoryFlags(flags: *MemoryFlags, tokens: []Token, source: []const u8) void {
+        // There's probably a cleaner implementation of this, but this will result in the same
+        // flags as the Win32 RC compiler for all 986,410 K-permutations of memory flags
+        // for an ICON resource.
+        //
+        // This was arrived at by iterating over the permutations and creating a
+        // list where each line looks something like this:
+        // MOVEABLE PRELOAD -> 0x1050 (MOVEABLE|PRELOAD|DISCARDABLE)
+        //
+        // and then noticing a few things:
+
+        // 1. Any permutation that does not have PRELOAD in it just uses the
+        //    default flags.
+        const initial_flags = flags.*;
+        var flags_set = std.enums.EnumSet(rc.CommonResourceAttributes).initEmpty();
+        for (tokens) |token| {
+            const attribute = rc.CommonResourceAttributes.map.get(token.slice(source)).?;
+            flags_set.insert(attribute);
+        }
+        if (!flags_set.contains(.preload)) return;
+
+        // 2. Any permutation of flags where applying only the PRELOAD and LOADONCALL flags
+        //    results in no actual change by the end will just use the default flags.
+        //    For example, `PRELOAD LOADONCALL` will result in default flags, but
+        //    `LOADONCALL PRELOAD` will have PRELOAD set after they are both applied in order.
+        for (tokens) |token| {
+            const attribute = rc.CommonResourceAttributes.map.get(token.slice(source)).?;
+            switch (attribute) {
+                .preload, .loadoncall => flags.set(attribute),
+                else => {},
+            }
+        }
+        if (flags.value == initial_flags.value) return;
+
+        // 3. If none of DISCARDABLE, SHARED, or PURE is specified, then PRELOAD
+        //    implies `flags &= ~SHARED` and LOADONCALL implies `flags |= SHARED`
+        const shared_set = comptime blk: {
+            var set = std.enums.EnumSet(rc.CommonResourceAttributes).initEmpty();
+            set.insert(.discardable);
+            set.insert(.shared);
+            set.insert(.pure);
+            break :blk set;
+        };
+        const discardable_shared_or_pure_specified = flags_set.intersectWith(shared_set).count() != 0;
+        for (tokens) |token| {
+            const attribute = rc.CommonResourceAttributes.map.get(token.slice(source)).?;
+            flags.setGroup(attribute, !discardable_shared_or_pure_specified);
         }
     }
 

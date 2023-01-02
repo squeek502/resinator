@@ -3,7 +3,13 @@ const resinator = @import("resinator");
 const Allocator = std.mem.Allocator;
 
 pub fn expectSameResOutput(allocator: Allocator, source: []const u8, buffer: *std.ArrayList(u8)) !void {
-    const expected_res: ?[]const u8 = resinator.compile.getExpectedFromWindowsRC(allocator, source) catch |err| switch (err) {
+    const cwd_path = try std.fs.cwd().realpathAlloc(allocator, ".");
+    defer allocator.free(cwd_path);
+    return expectSameResOutputWithDir(allocator, source, buffer, std.fs.cwd(), cwd_path);
+}
+
+pub fn expectSameResOutputWithDir(allocator: Allocator, source: []const u8, buffer: *std.ArrayList(u8), cwd: std.fs.Dir, cwd_path: []const u8) !void {
+    const expected_res: ?[]const u8 = resinator.compile.getExpectedFromWindowsRCWithDir(allocator, source, cwd, cwd_path) catch |err| switch (err) {
         error.ExitCodeFailure, error.ProcessTerminated => null,
         else => |e| return e,
     };
@@ -13,9 +19,9 @@ pub fn expectSameResOutput(allocator: Allocator, source: []const u8, buffer: *st
     defer diagnostics.deinit();
 
     buffer.shrinkRetainingCapacity(0);
-    resinator.compile.compile(allocator, source, buffer.writer(), std.fs.cwd(), &diagnostics) catch |err| switch (err) {
+    resinator.compile.compile(allocator, source, buffer.writer(), cwd, &diagnostics) catch |err| switch (err) {
         error.ParseError, error.CompileError => {
-            diagnostics.renderToStdErr(std.fs.cwd(), source, null);
+            diagnostics.renderToStdErr(cwd, source, null);
             // Allow disallowed codepoint-related errors from resinator if RC succeeds
             const first_error_is_codepoint_related = diagnostics.errors.items[0].err == .illegal_byte_order_mark or diagnostics.errors.items[0].err == .illegal_private_use_character;
             if (first_error_is_codepoint_related) {

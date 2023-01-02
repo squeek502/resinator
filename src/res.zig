@@ -127,6 +127,20 @@ pub const MemoryFlags = packed struct(u16) {
             .discardable => self.value |= DISCARDABLE | MOVEABLE | PURE,
         }
     }
+
+    pub fn setGroup(self: *MemoryFlags, attribute: CommonResourceAttributes, implied_shared_or_pure: bool) void {
+        switch (attribute) {
+            .preload => {
+                self.value |= PRELOAD;
+                if (implied_shared_or_pure) self.value &= ~SHARED;
+            },
+            .loadoncall => {
+                self.value &= ~PRELOAD;
+                if (implied_shared_or_pure) self.value |= SHARED;
+            },
+            else => self.set(attribute),
+        }
+    }
 };
 
 /// https://learn.microsoft.com/en-us/windows/win32/intl/language-identifiers
