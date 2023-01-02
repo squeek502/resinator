@@ -39,7 +39,7 @@ pub fn expectSameResOutput(allocator: Allocator, filename: []const u8, cwd: std.
     defer if (expected_res != null) allocator.free(expected_res.?);
 
     const actual_res: ?[]const u8 = getActualFromResinatorWithDir(allocator, filename, cwd, cwd_path) catch |err| switch (err) {
-        error.ExitCodeFailure, error.ProcessTerminated => null,
+        error.ExitCodeFailure => null,
         else => |e| return e,
     };
     defer if (actual_res != null) allocator.free(actual_res.?);
@@ -83,7 +83,11 @@ pub fn getActualFromResinatorWithDir(allocator: Allocator, filename: []const u8,
                 std.debug.print("exit code: {}\n", .{result.term});
                 std.debug.print("stdout: {s}\n", .{result.stdout});
                 std.debug.print("stderr: {s}\n", .{result.stderr});
-                return error.ExitCodeFailure;
+                if (code == 1) {
+                    return error.ExitCodeFailure;
+                } else {
+                    return error.ProbablePanic;
+                }
             }
         },
         .Signal, .Stopped, .Unknown => {
