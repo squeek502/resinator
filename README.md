@@ -79,6 +79,8 @@ The plan is to use fuzz testing with the `rc` tool as an oracle to ensure that `
 - In `resinator`, embedded 'carriage return' characters (that are not part of a `CRLF` pair) can lead to files being parsed differently than the Windows RC compiler would parse them.
   + The `clang` preprocessor treats carriage return characters (`'\r'`) as a line separator when unpaired, and always converts them to new lines (`'\n'`). The Windows RC tool instead seemingly ignores/skips all `\r` characters.
   + For example, `RC<\r>DATA` will be compiled by the Windows RC tool as if it were `RCDATA`, but `clang`'s preprocessor will convert it to `RC<\n>DATA` which `resinator` will parse as separate `RC` and `DATA` tokens.
+- `.rc` files that use splices (`\` at the end of a line) within strings that include whitespace after the splice will be handled differently.
+  + The Win32 RC compiler's preprocessor seems to collapse whitespace after a splice that's within a string, while `clang`'s preprocessor does not. An example of a file for which this behavior difference can be reproduced can be found [here](https://github.com/microsoft/Windows-classic-samples/blob/7cbd99ac1d2b4a0beffbaba29ea63d024ceff700/Samples/Win7Samples/winui/shell/appshellintegration/NonDefaultDropMenuVerb/NonDefaultDropMenuVerb.rc#L10-L20).
 
 ## Status
 
