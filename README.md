@@ -84,10 +84,9 @@ The plan is to use fuzz testing with the `rc` tool as an oracle to ensure that `
 
 ## Status
 
-- Lexer
-  + Mostly working for what's been implemented so far. Still possible that this will significantly change pending future discoveries about `.rc` files.
-- Parsing
-  + Converts the token list into an AST. Supports a few of the simpler resource types (RCDATA, ICON, CURSOR, user-defined), but doesn't handle malformed resources all that well.
-- Compiling
-  + Converts the AST into the binary `.res` file. Supports most of the resources that the parser supports (RCDATA, ICON, CURSOR, etc).
-    + ICON and CURSOR `.ico` parsing is supported, but may not be fully correct yet.
+Pretty much all known/documented resource types are supported (pending further investigation). `resinator` can successfully compile every `.rc` file in the [Windows-classic-samples repo](https://github.com/microsoft/Windows-classic-samples) byte-for-byte identically to the Win32 RC compiler (this may not be technically true, there are some `.rc` files that need intermediate generated files that aren't fully tested yet).
+
+Plans for the future:
+- Address the huge amount of TODO's that have accumulated
+- Fuzz test like crazy
+- [*huge* maybe] Investigate trying to implement a preprocessor that would work with UTF-16 files.
