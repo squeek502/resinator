@@ -15,6 +15,9 @@ pub fn main() !void {
         const ext = std.fs.path.extension(entry.basename);
         if (!std.ascii.eqlIgnoreCase(ext, ".rc")) continue;
 
+        // File that compiles differently due to preprocessor differences
+        if (std.mem.eql(u8, "NonDefaultDropMenuVerb.rc", entry.basename)) continue;
+
         const dir_path = std.fs.path.dirname(entry.path).?;
 
         std.debug.print("{s}\n", .{entry.path});
