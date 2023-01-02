@@ -336,6 +336,7 @@ pub const NameOrOrdinal = union(enum) {
     pub fn predefinedResourceType(self: NameOrOrdinal) ?RT {
         switch (self) {
             .ordinal => |ordinal| {
+                if (ordinal >= 256) return null;
                 switch (@intToEnum(RT, ordinal)) {
                     .ACCELERATOR,
                     .ANICURSOR,
