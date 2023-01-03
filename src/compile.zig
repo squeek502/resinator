@@ -14,6 +14,7 @@ const MemoryFlags = @import("res.zig").MemoryFlags;
 const rc = @import("rc.zig");
 const res = @import("res.zig");
 const ico = @import("ico.zig");
+const ani = @import("ani.zig");
 const WORD = std.os.windows.WORD;
 const DWORD = std.os.windows.DWORD;
 const utils = @import("utils.zig");
@@ -259,6 +260,31 @@ pub const Compiler = struct {
         if (maybe_predefined_type) |predefined_type| {
             switch (predefined_type) {
                 .GROUP_ICON, .GROUP_CURSOR => {
+                    // Check for animated icon first
+                    if (ani.isAnimatedIcon(file.reader())) {
+                        // Animated icons are just put into the resource unmodified,
+                        // and the resource type changes to ANIICON/ANICURSOR
+
+                        const new_predefined_type: res.RT = switch (predefined_type) {
+                            .GROUP_ICON => .ANIICON,
+                            .GROUP_CURSOR => .ANICURSOR,
+                            else => unreachable,
+                        };
+                        header.type_value.ordinal = @enumToInt(new_predefined_type);
+                        header.memory_flags = MemoryFlags.defaults(new_predefined_type);
+                        header.applyMemoryFlags(node.common_resource_attributes, self.source);
+                        header.data_size = @intCast(u32, try file.getEndPos());
+
+                        try header.write(writer);
+                        try file.seekTo(0);
+                        try writeResourceData(writer, file.reader(), header.data_size);
+                        return;
+                    }
+
+                    // isAnimatedIcon moved the file cursor so reset to the start
+                    try file.seekTo(0);
+
+                    // TODO: Emit an error message on invalid icon instead of `try`
                     const icon_dir = try ico.read(self.allocator, file.reader());
                     defer icon_dir.deinit();
 
@@ -2882,5 +2908,22 @@ test "resource type >= 256" {
     ,
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x01\x01\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00",
         std.fs.cwd(),
+    );
+}
+
+test "aniicon, anicursor" {
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    // This is the most basic possible animated icon that will be
+    // seen as an animated icon
+    try tmp_dir.dir.writeFile("test.ani", "RIFF\x2C\x00\x00\x00ACONanih\x24\x00\x00\x00" ++ ([4]u8{ 0, 0, 0, 0 } ** 8) ++ "\x01\x00\x00\x00");
+
+    try testCompileWithOutput(
+        \\1 ICON test.ani
+        \\2 CURSOR test.ani
+    ,
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x008\x00\x00\x00 \x00\x00\x00\xff\xff\x16\x00\xff\xff\x01\x00\x00\x00\x00\x00\x10\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00RIFF,\x00\x00\x00ACONanih$\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x008\x00\x00\x00 \x00\x00\x00\xff\xff\x15\x00\xff\xff\x02\x00\x00\x00\x00\x00\x10\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00RIFF,\x00\x00\x00ACONanih$\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00",
+        tmp_dir.dir,
     );
 }

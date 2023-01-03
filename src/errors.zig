@@ -73,6 +73,7 @@ pub const ErrorDetails = struct {
         expected: Token.Id,
         number: u32,
         expected_types: ExpectedTypes,
+        // TODO: Add 'nameForErrorDisplay' to Resource for better error messages
         resource: rc.Resource,
         string_and_language: StringAndLanguage,
         file_open_error: FileOpenError,

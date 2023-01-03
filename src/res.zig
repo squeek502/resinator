@@ -103,7 +103,7 @@ pub const MemoryFlags = packed struct(u16) {
                 .STRING, .FONT, .DIALOG, .MENU,
                 .DLGINCLUDE, => MemoryFlags{ .value = MOVEABLE | SHARED | DISCARDABLE },
 
-                .ICON, .CURSOR => MemoryFlags{ .value = MOVEABLE | DISCARDABLE },
+                .ICON, .CURSOR, .ANIICON, .ANICURSOR => MemoryFlags{ .value = MOVEABLE | DISCARDABLE },
                 .FONTDIR => MemoryFlags{ .value = MOVEABLE | PRELOAD },
                 // zig fmt: on
                 else => {
