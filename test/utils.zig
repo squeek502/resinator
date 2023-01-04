@@ -28,6 +28,9 @@ pub fn expectSameResOutputWithDir(allocator: Allocator, source: []const u8, buff
                 .illegal_byte_order_mark,
                 .illegal_private_use_character,
                 => return,
+                .icon_read_error => if (first_err.extra.icon_read_error.err == .ImpossibleDataSize) {
+                    return;
+                },
                 else => {},
             }
             if (expected_res == null) {
