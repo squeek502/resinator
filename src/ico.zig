@@ -62,7 +62,7 @@ pub fn readAnyError(allocator: std.mem.Allocator, reader: anytype, max_size: u64
         entry.width = try reader.readByte();
         entry.height = try reader.readByte();
         entry.num_colors = try reader.readByte();
-        _ = try reader.readByte(); // reserved
+        entry.reserved = try reader.readByte();
         switch (image_type) {
             .icon => {
                 entry.type_specific_data = .{ .icon = .{
@@ -126,6 +126,9 @@ pub const Entry = struct {
     width: u16,
     height: u16,
     num_colors: u8,
+    /// This should always be zero, but whatever value it is gets
+    /// carried over so we need to store it
+    reserved: u8,
     type_specific_data: union(ImageType) {
         icon: struct {
             color_planes: u16,
@@ -145,7 +148,7 @@ pub const Entry = struct {
                 try writer.writeIntLittle(u8, @truncate(u8, self.width));
                 try writer.writeIntLittle(u8, @truncate(u8, self.height));
                 try writer.writeIntLittle(u8, self.num_colors);
-                try writer.writeIntLittle(u8, 0); // reserved
+                try writer.writeIntLittle(u8, self.reserved);
                 try writer.writeIntLittle(u16, icon_data.color_planes);
                 try writer.writeIntLittle(u16, icon_data.bits_per_pixel);
                 try writer.writeIntLittle(u32, self.data_size_in_bytes);
