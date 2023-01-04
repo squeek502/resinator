@@ -51,9 +51,6 @@ pub const StringType = enum { ascii, wide };
 ///       This parse function handles this case the same as the Windows RC compiler, but
 ///       \" within a string literal is treated as an error by the lexer, so the relevant
 ///       branches should never actually be hit during this function.
-///
-/// This function expects the leading L of wide strings to be omitted from the `bytes.slice`,
-/// i.e. `bytes.slice` should always start and end with "
 pub const IterativeStringParser = struct {
     source: []const u8,
     code_page: CodePage,
