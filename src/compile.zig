@@ -357,6 +357,7 @@ pub const Compiler = struct {
                                 try self.addErrorDetails(.{
                                     .err = .rc_would_error_on_icon_dir,
                                     .type = .note,
+                                    .print_source_line = false,
                                     .token = node.filename.getFirstToken(),
                                     .extra = .{ .icon_dir = .{ .icon_type = .icon, .icon_format = .riff, .index = @intCast(u16, entry_i) } },
                                 });
