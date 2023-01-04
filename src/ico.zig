@@ -149,4 +149,8 @@ pub const BITMAPCOREHEADER = extern struct {
         const png_signature = "\x89PNG\r\n\x1a\n";
         return std.mem.startsWith(u8, std.mem.asBytes(self), png_signature);
     }
+
+    pub fn isRiff(self: *const BITMAPCOREHEADER) bool {
+        return std.mem.startsWith(u8, std.mem.asBytes(self), "RIFF");
+    }
 };

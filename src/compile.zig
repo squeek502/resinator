@@ -290,11 +290,24 @@ pub const Compiler = struct {
 
                     // Note: The Win32 RC compiler will compile the resource as whatever type is
                     //       in the icon_dir regardless of the type of resource specified in the .rc.
-                    //       This likely leads to unusable .res files when the types mismatch but
-                    //       that needs to be tested/confirmed.
-                    //
-                    // TODO: Could emit a warning if `icon_dir.image_type` doesn't match the predefined type.
-                    //       The Windows RC compiler doesn't, but it seems like it'd be helpful.
+                    //       This leads to unusable .res files when the types mismatch, so
+                    //       we error instead.
+                    const res_types_match = switch (predefined_type) {
+                        .GROUP_ICON => icon_dir.image_type == .icon,
+                        .GROUP_CURSOR => icon_dir.image_type == .cursor,
+                        else => unreachable,
+                    };
+                    if (!res_types_match) {
+                        return self.addErrorDetailsAndFail(.{
+                            .err = .icon_dir_and_resource_type_mismatch,
+                            .token = node.filename.getFirstToken(),
+                            .extra = .{ .resource = switch (predefined_type) {
+                                .GROUP_ICON => .icon,
+                                .GROUP_CURSOR => .cursor,
+                                else => unreachable,
+                            } },
+                        });
+                    }
 
                     // Memory flags affect the RT_ICON and the RT_GROUP_ICON differently
                     var icon_memory_flags = MemoryFlags.defaults(res.RT.ICON);
@@ -303,7 +316,7 @@ pub const Compiler = struct {
 
                     const first_icon_id = self.state.icon_id;
                     const entry_type = if (predefined_type == .GROUP_ICON) @enumToInt(res.RT.ICON) else @enumToInt(res.RT.CURSOR);
-                    for (icon_dir.entries) |*entry| {
+                    for (icon_dir.entries) |*entry, entry_i| {
                         var full_data_size = entry.data_size_in_bytes;
                         if (icon_dir.image_type == .cursor) full_data_size += 4;
 
@@ -330,19 +343,58 @@ pub const Compiler = struct {
                         try file.seekTo(entry.data_offset_from_start_of_file);
                         const bitmapcore = try file.reader().readStruct(ico.BITMAPCOREHEADER);
                         if (icon_dir.image_type == .icon) {
-                            // TODO: This feels slightly hacky
-                            // TODO: Add tests for this behavior
-                            if (!bitmapcore.isPng()) {
+                            if (bitmapcore.isRiff()) {
+                                // The Win32 RC compiler treats this as an error, but icon dirs
+                                // with RIFF encoded icons within them work ~okay (they work
+                                // in some places but not others, they may not animate, etc) if they are
+                                // allowed to be compiled.
+                                try self.addErrorDetails(.{
+                                    .err = .rc_would_error_on_icon_dir,
+                                    .type = .warning,
+                                    .token = node.filename.getFirstToken(),
+                                    .extra = .{ .icon_dir = .{ .icon_type = .icon, .icon_format = .riff, .index = @intCast(u16, entry_i) } },
+                                });
+                                try self.addErrorDetails(.{
+                                    .err = .rc_would_error_on_icon_dir,
+                                    .type = .note,
+                                    .token = node.filename.getFirstToken(),
+                                    .extra = .{ .icon_dir = .{ .icon_type = .icon, .icon_format = .riff, .index = @intCast(u16, entry_i) } },
+                                });
+                            }
+                            // TODO: This feels slightly hacky, might be better to get the format as an enum and switch
+                            if (!bitmapcore.isPng() and !bitmapcore.isRiff()) {
                                 entry.type_specific_data.icon.color_planes = std.mem.littleToNative(u16, bitmapcore.bcPlanes);
                                 entry.type_specific_data.icon.bits_per_pixel = std.mem.littleToNative(u16, bitmapcore.bcBitCount);
                             }
                         } else {
-                            // Only cursors get the width/height from BITMAPINFOHEADER
-                            // TODO: PNG in cursors?
-                            entry.width = @intCast(u16, bitmapcore.bcWidth);
-                            entry.height = @intCast(u16, bitmapcore.bcHeight);
-                            entry.type_specific_data.cursor.hotspot_x = std.mem.littleToNative(u16, bitmapcore.bcPlanes);
-                            entry.type_specific_data.cursor.hotspot_y = std.mem.littleToNative(u16, bitmapcore.bcBitCount);
+                            if (bitmapcore.isRiff()) {
+                                // The Win32 RC compiler errors in this case too, but we only error
+                                // here because the cursor would fail to be loaded at runtime if we
+                                // compiled it.
+                                return self.addErrorDetailsAndFail(.{
+                                    .err = .format_not_supported_in_icon_dir,
+                                    .token = node.filename.getFirstToken(),
+                                    .extra = .{ .icon_dir = .{ .icon_type = .cursor, .icon_format = .riff, .index = @intCast(u16, entry_i) } },
+                                });
+                            }
+
+                            if (bitmapcore.isPng()) {
+                                // The Win32 RC compiler treats this as an error, but cursor dirs
+                                // with PNG encoded icons within them work fine if they are
+                                // allowed to be compiled.
+                                try self.addErrorDetails(.{
+                                    .err = .rc_would_error_on_icon_dir,
+                                    .type = .warning,
+                                    .token = node.filename.getFirstToken(),
+                                    .extra = .{ .icon_dir = .{ .icon_type = .cursor, .icon_format = .png, .index = @intCast(u16, entry_i) } },
+                                });
+                            } else {
+                                // Only cursors get the width/height from BITMAPINFOHEADER (icons don't)
+                                entry.width = @intCast(u16, bitmapcore.bcWidth);
+                                entry.height = @intCast(u16, bitmapcore.bcHeight);
+                                entry.type_specific_data.cursor.hotspot_x = std.mem.littleToNative(u16, bitmapcore.bcPlanes);
+                                entry.type_specific_data.cursor.hotspot_y = std.mem.littleToNative(u16, bitmapcore.bcBitCount);
+                            }
                         }
 
                         try file.seekTo(entry.data_offset_from_start_of_file);
@@ -2123,6 +2175,10 @@ fn testCompileWithOutput(source: []const u8, expected_output: []const u8, cwd: s
 }
 
 fn testCompileError(expected_error_str: []const u8, source: []const u8) !void {
+    return testCompileErrorWithDir(expected_error_str, source, std.fs.cwd());
+}
+
+fn testCompileErrorWithDir(expected_error_str: []const u8, source: []const u8, cwd: std.fs.Dir) !void {
     const allocator = std.testing.allocator;
 
     var buffer = std.ArrayList(u8).init(std.testing.allocator);
@@ -2131,7 +2187,7 @@ fn testCompileError(expected_error_str: []const u8, source: []const u8) !void {
     var diagnostics = Diagnostics.init(allocator);
     defer diagnostics.deinit();
 
-    compile(std.testing.allocator, source, buffer.writer(), std.fs.cwd(), &diagnostics) catch |err| switch (err) {
+    compile(std.testing.allocator, source, buffer.writer(), cwd, &diagnostics) catch |err| switch (err) {
         error.ParseError, error.CompileError => {
             if (diagnostics.errors.items.len < 1) return error.NoDiagnostics;
             if (diagnostics.errors.items[0].type != .err) @panic("TODO handle compile error test with a non-error as the first error");
@@ -2146,6 +2202,30 @@ fn testCompileError(expected_error_str: []const u8, source: []const u8) !void {
     std.debug.print("expected compile error, got .res:\n", .{});
     std.testing.expectEqualSlices(u8, "", buffer.items) catch {};
     return error.UnexpectedSuccess;
+}
+
+fn testCompileWarningWithDir(expected_warning_str: []const u8, source: []const u8, cwd: std.fs.Dir) !void {
+    const allocator = std.testing.allocator;
+
+    var buffer = std.ArrayList(u8).init(std.testing.allocator);
+    defer buffer.deinit();
+
+    var diagnostics = Diagnostics.init(allocator);
+    defer diagnostics.deinit();
+
+    compile(std.testing.allocator, source, buffer.writer(), cwd, &diagnostics) catch |err| switch (err) {
+        error.ParseError, error.CompileError => {
+            diagnostics.renderToStdErr(cwd, source, null);
+            return err;
+        },
+        else => return err,
+    };
+    if (diagnostics.errors.items.len < 1) return error.NoDiagnostics;
+    if (diagnostics.errors.items[0].type != .warning) @panic("TODO handle compile warning test with a non-warning as the first error");
+    var buf: [256]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buf);
+    try diagnostics.errors.items[0].render(fbs.writer(), source, diagnostics.strings.items);
+    try std.testing.expectEqualStrings(expected_warning_str, fbs.getWritten());
 }
 
 pub fn getExpectedFromWindowsRCWithDir(allocator: Allocator, source: []const u8, cwd: std.fs.Dir, cwd_path: []const u8) ![]const u8 {
@@ -2349,10 +2429,12 @@ test "basic icons" {
         tmp_dir.dir,
     );
 
-    // Cursors are just .ico files with a different image type, but they still compile even with the ICON image type
-    try testCompileWithOutput(
+    // Cursors are just .ico files with a different image type
+    // The Win32 RC compiler will compile them even if the types mismatch, but the .res
+    // will fail to load the CURSOR/ICON at runtime, so we error instead.
+    try testCompileErrorWithDir(
+        "resource type 'cursor' does not match type 'icon' specified in the file",
         "1 CURSOR test.ico",
-        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x000\x00\x00\x00 \x00\x00\x00\xff\xff\x01\x00\xff\xff\x01\x00\x00\x00\x00\x00\x10\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00(\x00\x00\x00\x01\x00\x00\x00\x02\x00\x00\x00\x01\x00 \x00\x00\x00\x00\x00\x04\x00\x00\x00\x12\x0b\x00\x00\x12\x0b\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff\xff\xff\x00\x00\x00\x00\x14\x00\x00\x00 \x00\x00\x00\xff\xff\x0c\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x01\x00\x01\x01\x00\x00\x01\x00 \x000\x00\x00\x00\x01\x00",
         tmp_dir.dir,
     );
 
@@ -2385,6 +2467,56 @@ test "cursors" {
     try testCompileWithOutput(
         "1 CURSOR test.cur",
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x004\x01\x00\x00 \x00\x00\x00\xff\xff\x01\x00\xff\xff\x01\x00\x00\x00\x00\x00\x10\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x02\x00(\x00\x00\x00 \x00\x00\x00@\x00\x00\x00\x01\x00\x01\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x008\x00\x00\x000\x00\x00\x00p\x00\x00\x00`\x00\x00\x00\xe0\x00\x00\x00\xc0\x00\x00\x11\xc0\x00\x00\x19\x80\x00\x00\x1f\x80\x00\x00\x1f\xfc\x00\x00\x1f\xc0\x00\x00\x1f\xc0\x00\x00\x1f\xc0\x00\x00\x1f\xc0\x00\x00\x1f\x80\x00\x00\x1f\x00\x00\x00\x1e\x00\x00\x00\x1c\x00\x00\x00\x18\x00\x00\x00\x10\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff\xff\xff\xff\xff\xff\xff\xff\xfe\x07\xff\xff\xfe\x07\xff\xff\xfe\x07\xff\xff\xfe\x07\xff\xff\xfe\x07\xff\xff\x83\xff\xff\xff\x83\xff\xff\xff\x02\x07\xff\xff\x06\x07\xff\xfe\x06\x07\xff\xce\x0e\x07\xff\xc4\x0e\x07\xff\xc0\x1e\x03\xff\xc0\x1f\x01\xff\xc0\x01\x80\xff\xc0\x01\xc0\x7f\xc0\x01\xe0?\xc0\x01\xf0?\xc0\x01\xf0?\xc0\x00\xe0?\xc0\x00\x00?\xc0 \x00\x7f\xc0p\x00\xff\xc0\xf8\x01\xff\xc1\xfc\x03\xff\xc3\xff\xff\xff\xc7\xff\xff\xff\xcf\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xb4\x00\x00\x00 \x00\x00\x00\xff\xff\x01\x00\xff\xff\x02\x00\x00\x00\x00\x00\x10\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x01\x00(\x00\x00\x00\x10\x00\x00\x00 \x00\x00\x00\x01\x00\x01\x00\x00\x00\x00\x00\x80\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff\xff\x00\x07\x80\x00\x00\x04\xf8\x00\x00\x84\xc8\x00\x00\xc9H\x00\x00\xa9x\x00\x00\x92H\x00\x00\x83\xc8\x00\x00\x80d\x00\x00\x80\xd2\x00\x00\x81)\x00\x00\x839\x00\x00\x85\x01\x00\x00\x88\x82\x00\x00\x90|\x00\x00\xa0\x00\x00\x00\xc0\x00\x00\x00\xf8\x7f\x00\x00\xf8\x07\x00\x00x\x07\x00\x000\x87\x00\x00\x10\x87\x00\x00\x01\x87\x00\x00\x00\x07\x00\x00\x00\x03\x00\x00\x00!\x00\x00\x00\x10\x00\x00\x00\x00\x00\x00\x02\x00\x00\x00\x07\x01\x00\x00\x0f\x83\x00\x00\x1f\xff\x00\x00?\xff\x00\x00\"\x00\x00\x00 \x00\x00\x00\xff\xff\x0c\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x02\x00 \x00@\x00\x01\x00\x01\x004\x01\x00\x00\x01\x00\x10\x00 \x00\x01\x00\x01\x00\xb4\x00\x00\x00\x02\x00\x00\x00",
+        tmp_dir.dir,
+    );
+}
+
+// This is the most basic possible animated icon that will be
+// seen as an animated icon
+const test_riff_data = "RIFF\x2C\x00\x00\x00ACONanih\x24\x00\x00\x00" ++ ([4]u8{ 0, 0, 0, 0 } ** 8) ++ "\x01\x00\x00\x00";
+// A 1x1 png
+const test_png_data = "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x01\x00\x00\x00\x007n\xf9$\x00\x00\x00\nIDAT\x08\xd7ch\x00\x00\x00\x82\x00\x81\xddCj\xf4\x00\x00\x00\x00IEND\xaeB`\x82";
+
+test "uncommon icons/cursors" {
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    comptime std.debug.assert(test_riff_data.len == 0x38);
+
+    // A basic resource group with 1 resource; type is CURSOR to start with
+    var resdir_riff = "\x00\x00\x02\x00\x01\x00\x00\x00\x00\x00\x15\x00\x15\x00\x38\x00\x00\x00\x16\x00\x00\x00".*;
+    try tmp_dir.dir.writeFile("riff_in_dir.cur", resdir_riff ++ test_riff_data);
+    // switch type to ICON
+    resdir_riff[2] = 1;
+    try tmp_dir.dir.writeFile("riff_in_dir.ico", resdir_riff ++ test_riff_data);
+
+    // now png
+    var resdir_png = "\x00\x00\x01\x00\x01\x00\x01\x01\x00\x00\x01\x00 \x00C\x00\x00\x00\x16\x00\x00\x00".*;
+    try tmp_dir.dir.writeFile("png_in_dir.ico", resdir_png ++ test_png_data);
+    resdir_png[2] = 2; // cursor
+    try tmp_dir.dir.writeFile("png_in_dir.cur", resdir_png ++ test_png_data);
+
+    try testCompileErrorWithDir(
+        "resource with format 'riff' (at index 0) is not allowed in cursor resource groups",
+        "1 CURSOR riff_in_dir.cur",
+        tmp_dir.dir,
+    );
+
+    try testCompileWarningWithDir(
+        "the resource at index 0 of this icon has the format 'riff'; this would be an error in the Win32 RC compiler",
+        "1 ICON riff_in_dir.ico",
+        tmp_dir.dir,
+    );
+
+    try testCompileWarningWithDir(
+        "the resource at index 0 of this cursor has the format 'png'; this would be an error in the Win32 RC compiler",
+        "1 CURSOR png_in_dir.cur",
+        tmp_dir.dir,
+    );
+
+    try testCompileWithOutput(
+        "1 ICON png_in_dir.ico",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00C\x00\x00\x00 \x00\x00\x00\xff\xff\x03\x00\xff\xff\x01\x00\x00\x00\x00\x00\x10\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x01\x00\x00\x00\x007n\xf9$\x00\x00\x00\nIDAT\x08\xd7ch\x00\x00\x00\x82\x00\x81\xddCj\xf4\x00\x00\x00\x00IEND\xaeB`\x82\x00\x14\x00\x00\x00 \x00\x00\x00\xff\xff\x0e\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x01\x00\x01\x01\x00\x00\x01\x00 \x00C\x00\x00\x00\x01\x00",
         tmp_dir.dir,
     );
 }
@@ -2915,9 +3047,7 @@ test "aniicon, anicursor" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
-    // This is the most basic possible animated icon that will be
-    // seen as an animated icon
-    try tmp_dir.dir.writeFile("test.ani", "RIFF\x2C\x00\x00\x00ACONanih\x24\x00\x00\x00" ++ ([4]u8{ 0, 0, 0, 0 } ** 8) ++ "\x01\x00\x00\x00");
+    try tmp_dir.dir.writeFile("test.ani", test_riff_data);
 
     try testCompileWithOutput(
         \\1 ICON test.ani

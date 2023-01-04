@@ -69,6 +69,12 @@ The plan is to use fuzz testing with the `rc` tool as an oracle to ensure that `
     - The parsing rules of `NOT` expressions change depending on the particular parameter they are being used in, e.g. `1 | NOT 2` is an error if used in the `type` parameter of a `MENUEX`'s `MENUITEM`, but perfectly fine if used in the `style` or `exstyle` parameters of a `DIALOG`/`DIALOGEX` control.
     - The parsing rules of `NOT` expressions are generally bizarre and the Windows RC compiler both allows for seemingly nonsensical expressions and evaluates seemingly normal expressions in nonsensical ways. For example:
       + `7 NOT NOT 4 NOT 2 NOT NOT 1`, `NOT (1 | 2)`, and `NOT () 2` are all allowed and all evaluate to `2`
+- `resinator` will error if the resource type (`ICON`/`CURSOR`) doesn't match with the resource type specified in the `.ico`/`.cur` file
+  + The Win32 RC compiler will happily compile such a mismatch, but the resulting `.res` will always fail to load the `CURSOR`/`ICON` at runtime, since it will compile the data as if it were the type specified in the file, but compile the resource as if it were the type specified in the `.rc` script.
+- `resinator` will allow `PNG` encoded icons within `CURSOR` resource groups
+  + The Win32 RC compiler will fail to compile such cursors, but there doesn't seem to be any reason why that is the case as far as I can tell--they can be loaded at runtime just fine in my (albeit limited) testing. Note also that `PNG` encoded icons are allowed within `ICON` resources by the Win32 RC compiler, and `CURSOR` resource groups have the same format.
+- *[Not final, somewhat likely to change]* `resinator` will allow `RIFF` encoded animated icons within `ICON` (but not `CURSOR`) resource groups
+  + The Win32 RC compiler will fail to compile such icons, but there seems to be some support for loading them at runtime if they are written to the `.res`; however, they don't work everywhere. This needs to be looked into more, but most likely this will just be made into a compile error since it's fully unknown territory--there's nothing anywhere that mentions combining `RIFF` animated icons and `RT_GROUP_ICON`.
 
 ### Unavoidable divergences from the MSVC++ `rc` tool
 

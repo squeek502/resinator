@@ -77,6 +77,7 @@ pub const ErrorDetails = struct {
         resource: rc.Resource,
         string_and_language: StringAndLanguage,
         file_open_error: FileOpenError,
+        icon_dir: IconDirContext,
     } = .{ .none = {} },
 
     comptime {
@@ -103,6 +104,13 @@ pub const ErrorDetails = struct {
                 inline else => |e| @field(ErrorDetails.FileOpenError.FileOpenErrorEnum, @errorName(e)),
             };
         }
+    };
+
+    pub const IconDirContext = packed struct(u32) {
+        icon_type: enum(u1) { cursor, icon },
+        icon_format: enum(u2) { unknown, riff, png },
+        index: u16,
+        _: u13 = undefined,
     };
 
     pub const ExpectedTypes = packed struct(u32) {
@@ -191,6 +199,12 @@ pub const ErrorDetails = struct {
         accelerator_type_required,
         rc_would_miscompile_control_padding,
         rc_would_miscompile_control_class_ordinal,
+        /// `icon_dir` is populated
+        rc_would_error_on_icon_dir,
+        /// `icon_dir` is populated
+        format_not_supported_in_icon_dir,
+        /// `resource` is populated and contains the expected type
+        icon_dir_and_resource_type_mismatch,
 
         // Literals
         /// `number` is populated
@@ -303,6 +317,22 @@ pub const ErrorDetails = struct {
             .rc_would_miscompile_control_class_ordinal => switch (self.type) {
                 .err, .warning => return writer.print("the control class of this CONTROL would be miscompiled by the Win32 RC compiler", .{}),
                 .note => return writer.print("to avoid the potential miscompilation, consider specifying the control class using a string (BUTTON, EDIT, etc) instead of a number", .{}),
+            },
+            .rc_would_error_on_icon_dir => switch (self.type) {
+                .err, .warning => return writer.print("the resource at index {} of this {s} has the format '{s}'; this would be an error in the Win32 RC compiler", .{ self.extra.icon_dir.index, @tagName(self.extra.icon_dir.icon_type), @tagName(self.extra.icon_dir.icon_format) }),
+                .note => {
+                    // The only note supported is one specific to exactly this combination
+                    if (!(self.extra.icon_dir.icon_type == .icon and self.extra.icon_dir.icon_format == .riff)) unreachable;
+                    try writer.print("animated RIFF icons within resource groups may not be well supported, consider using an animated icon file (.ani) instead", .{});
+                },
+            },
+            .format_not_supported_in_icon_dir => {
+                try writer.print("resource with format '{s}' (at index {}) is not allowed in {s} resource groups", .{ @tagName(self.extra.icon_dir.icon_format), self.extra.icon_dir.index, @tagName(self.extra.icon_dir.icon_type) });
+            },
+            .icon_dir_and_resource_type_mismatch => {
+                const unexpected_type: rc.Resource = if (self.extra.resource == .icon) .cursor else .icon;
+                // TODO: Better wording
+                try writer.print("resource type '{s}' does not match type '{s}' specified in the file", .{ @tagName(self.extra.resource), @tagName(unexpected_type) });
             },
             .rc_would_miscompile_codepoint_byte_swap => switch (self.type) {
                 .err, .warning => return writer.print("codepoint U+{X} within a string literal would be miscompiled by the Win32 RC compiler (the bytes of the UTF-16 code unit would be swapped)", .{self.extra.number}),
