@@ -284,8 +284,18 @@ pub const Compiler = struct {
                     // isAnimatedIcon moved the file cursor so reset to the start
                     try file.seekTo(0);
 
-                    // TODO: Emit an error message on invalid icon instead of `try`
-                    const icon_dir = try ico.read(self.allocator, file.reader());
+                    const icon_dir = ico.read(self.allocator, file.reader(), try file.getEndPos()) catch |err| switch (err) {
+                        error.OutOfMemory => |e| return e,
+                        else => |e| {
+                            return self.iconReadError(
+                                e,
+                                filename.utf8,
+                                // TODO get the most relevant token for filename, e.g. in an expression like (1+-1), get the -1 token
+                                node.filename.getFirstToken(),
+                                predefined_type,
+                            );
+                        },
+                    };
                     defer icon_dir.deinit();
 
                     // Note: The Win32 RC compiler will compile the resource as whatever type is
@@ -338,64 +348,123 @@ pub const Compiler = struct {
                             try writer.writeIntLittle(u16, entry.type_specific_data.cursor.hotspot_y);
                         }
 
-                        // The values in the icon's BITMAPINFOHEADER always take precedence over
-                        // the values in the IconDir, but not in the LOCALHEADER (see above).
                         try file.seekTo(entry.data_offset_from_start_of_file);
-                        const bitmapcore = try file.reader().readStruct(ico.BITMAPCOREHEADER);
-                        if (icon_dir.image_type == .icon) {
-                            if (bitmapcore.isRiff()) {
-                                // The Win32 RC compiler treats this as an error, but icon dirs
-                                // with RIFF encoded icons within them work ~okay (they work
-                                // in some places but not others, they may not animate, etc) if they are
-                                // allowed to be compiled.
-                                try self.addErrorDetails(.{
-                                    .err = .rc_would_error_on_icon_dir,
-                                    .type = .warning,
-                                    .token = node.filename.getFirstToken(),
-                                    .extra = .{ .icon_dir = .{ .icon_type = .icon, .icon_format = .riff, .index = @intCast(u16, entry_i) } },
-                                });
-                                try self.addErrorDetails(.{
-                                    .err = .rc_would_error_on_icon_dir,
-                                    .type = .note,
-                                    .print_source_line = false,
-                                    .token = node.filename.getFirstToken(),
-                                    .extra = .{ .icon_dir = .{ .icon_type = .icon, .icon_format = .riff, .index = @intCast(u16, entry_i) } },
-                                });
-                            }
-                            // TODO: This feels slightly hacky, might be better to get the format as an enum and switch
-                            if (!bitmapcore.isPng() and !bitmapcore.isRiff()) {
-                                entry.type_specific_data.icon.color_planes = std.mem.littleToNative(u16, bitmapcore.bcPlanes);
-                                entry.type_specific_data.icon.bits_per_pixel = std.mem.littleToNative(u16, bitmapcore.bcBitCount);
-                            }
-                        } else {
-                            if (bitmapcore.isRiff()) {
-                                // The Win32 RC compiler errors in this case too, but we only error
-                                // here because the cursor would fail to be loaded at runtime if we
-                                // compiled it.
-                                return self.addErrorDetailsAndFail(.{
-                                    .err = .format_not_supported_in_icon_dir,
-                                    .token = node.filename.getFirstToken(),
-                                    .extra = .{ .icon_dir = .{ .icon_type = .cursor, .icon_format = .riff, .index = @intCast(u16, entry_i) } },
-                                });
-                            }
+                        const header_bytes = file.reader().readBytesNoEof(16) catch {
+                            return self.iconReadError(
+                                error.UnexpectedEOF,
+                                filename.utf8,
+                                // TODO get the most relevant token for filename, e.g. in an expression like (1+-1), get the -1 token
+                                node.filename.getFirstToken(),
+                                predefined_type,
+                            );
+                        };
 
-                            if (bitmapcore.isPng()) {
-                                // The Win32 RC compiler treats this as an error, but cursor dirs
-                                // with PNG encoded icons within them work fine if they are
-                                // allowed to be compiled.
-                                try self.addErrorDetails(.{
-                                    .err = .rc_would_error_on_icon_dir,
-                                    .type = .warning,
-                                    .token = node.filename.getFirstToken(),
-                                    .extra = .{ .icon_dir = .{ .icon_type = .cursor, .icon_format = .png, .index = @intCast(u16, entry_i) } },
-                                });
-                            } else {
-                                // Only cursors get the width/height from BITMAPINFOHEADER (icons don't)
-                                entry.width = @intCast(u16, bitmapcore.bcWidth);
-                                entry.height = @intCast(u16, bitmapcore.bcHeight);
-                                entry.type_specific_data.cursor.hotspot_x = std.mem.littleToNative(u16, bitmapcore.bcPlanes);
-                                entry.type_specific_data.cursor.hotspot_y = std.mem.littleToNative(u16, bitmapcore.bcBitCount);
-                            }
+                        const image_format = ico.ImageFormat.detect(&header_bytes);
+                        if (!image_format.validate(&header_bytes)) {
+                            return self.iconReadError(
+                                error.InvalidHeader,
+                                filename.utf8,
+                                // TODO get the most relevant token for filename, e.g. in an expression like (1+-1), get the -1 token
+                                node.filename.getFirstToken(),
+                                predefined_type,
+                            );
+                        }
+                        switch (image_format) {
+                            .riff => switch (icon_dir.image_type) {
+                                .icon => {
+                                    // The Win32 RC compiler treats this as an error, but icon dirs
+                                    // with RIFF encoded icons within them work ~okay (they work
+                                    // in some places but not others, they may not animate, etc) if they are
+                                    // allowed to be compiled.
+                                    try self.addErrorDetails(.{
+                                        .err = .rc_would_error_on_icon_dir,
+                                        .type = .warning,
+                                        .token = node.filename.getFirstToken(),
+                                        .extra = .{ .icon_dir = .{ .icon_type = .icon, .icon_format = .riff, .index = @intCast(u16, entry_i) } },
+                                    });
+                                    try self.addErrorDetails(.{
+                                        .err = .rc_would_error_on_icon_dir,
+                                        .type = .note,
+                                        .print_source_line = false,
+                                        .token = node.filename.getFirstToken(),
+                                        .extra = .{ .icon_dir = .{ .icon_type = .icon, .icon_format = .riff, .index = @intCast(u16, entry_i) } },
+                                    });
+                                },
+                                .cursor => {
+                                    // The Win32 RC compiler errors in this case too, but we only error
+                                    // here because the cursor would fail to be loaded at runtime if we
+                                    // compiled it.
+                                    return self.addErrorDetailsAndFail(.{
+                                        .err = .format_not_supported_in_icon_dir,
+                                        .token = node.filename.getFirstToken(),
+                                        .extra = .{ .icon_dir = .{ .icon_type = .cursor, .icon_format = .riff, .index = @intCast(u16, entry_i) } },
+                                    });
+                                },
+                            },
+                            .png => switch (icon_dir.image_type) {
+                                .icon => {},
+                                .cursor => {
+                                    // The Win32 RC compiler treats this as an error, but cursor dirs
+                                    // with PNG encoded icons within them work fine if they are
+                                    // allowed to be compiled.
+                                    try self.addErrorDetails(.{
+                                        .err = .rc_would_error_on_icon_dir,
+                                        .type = .warning,
+                                        .token = node.filename.getFirstToken(),
+                                        .extra = .{ .icon_dir = .{ .icon_type = .cursor, .icon_format = .png, .index = @intCast(u16, entry_i) } },
+                                    });
+                                },
+                            },
+                            .dib => {
+                                const bitmap_header = @ptrCast(*const ico.BitmapHeader, @alignCast(@alignOf(ico.BitmapHeader), &header_bytes));
+                                const bitmap_version = ico.BitmapHeader.Version.get(std.mem.littleToNative(u32, bitmap_header.bcSize));
+
+                                // The Win32 RC compiler only allows headers with
+                                // `bcSize == sizeof(BITMAPINFOHEADER)`, but it seems unlikely
+                                // that there's a good reason for that outside of too-old
+                                // bitmap headers.
+                                // TODO: Need to test V4 and V5 bitmaps to check they actually work
+                                if (bitmap_version == .@"win2.0") {
+                                    return self.addErrorDetailsAndFail(.{
+                                        .err = .rc_would_error_on_bitmap_version,
+                                        .token = node.filename.getFirstToken(),
+                                        .extra = .{ .icon_dir = .{
+                                            .icon_type = if (icon_dir.image_type == .icon) .icon else .cursor,
+                                            .icon_format = image_format,
+                                            .index = @intCast(u16, entry_i),
+                                            .bitmap_version = bitmap_version,
+                                        } },
+                                    });
+                                } else if (bitmap_version != .@"nt3.1") {
+                                    try self.addErrorDetails(.{
+                                        .err = .rc_would_error_on_bitmap_version,
+                                        .type = .warning,
+                                        .token = node.filename.getFirstToken(),
+                                        .extra = .{ .icon_dir = .{
+                                            .icon_type = if (icon_dir.image_type == .icon) .icon else .cursor,
+                                            .icon_format = image_format,
+                                            .index = @intCast(u16, entry_i),
+                                            .bitmap_version = bitmap_version,
+                                        } },
+                                    });
+                                }
+
+                                switch (icon_dir.image_type) {
+                                    .icon => {
+                                        // The values in the icon's BITMAPINFOHEADER always take precedence over
+                                        // the values in the IconDir, but not in the LOCALHEADER (see above).
+                                        entry.type_specific_data.icon.color_planes = std.mem.littleToNative(u16, bitmap_header.bcPlanes);
+                                        entry.type_specific_data.icon.bits_per_pixel = std.mem.littleToNative(u16, bitmap_header.bcBitCount);
+                                    },
+                                    .cursor => {
+                                        // Only cursors get the width/height from BITMAPINFOHEADER (icons don't)
+                                        entry.width = @intCast(u16, bitmap_header.bcWidth);
+                                        entry.height = @intCast(u16, bitmap_header.bcHeight);
+                                        entry.type_specific_data.cursor.hotspot_x = std.mem.littleToNative(u16, bitmap_header.bcPlanes);
+                                        entry.type_specific_data.cursor.hotspot_y = std.mem.littleToNative(u16, bitmap_header.bcBitCount);
+                                    },
+                                }
+                            },
                         }
 
                         try file.seekTo(entry.data_offset_from_start_of_file);
@@ -475,6 +544,32 @@ pub const Compiler = struct {
         header.data_size = @intCast(u32, try file.getEndPos());
         try header.write(writer);
         try writeResourceData(writer, file.reader(), header.data_size);
+    }
+
+    fn iconReadError(
+        self: *Compiler,
+        err: ico.ReadError,
+        filename: []const u8,
+        token: Token,
+        predefined_type: res.RT,
+    ) error{ CompileError, OutOfMemory } {
+        const filename_string_index = @intCast(
+            ErrorDetails.IconReadError.FilenameStringIndex,
+            try self.diagnostics.putString(filename),
+        );
+        return self.addErrorDetailsAndFail(.{
+            .err = .icon_read_error,
+            .token = token,
+            .extra = .{ .icon_read_error = .{
+                .err = ErrorDetails.IconReadError.enumFromError(err),
+                .icon_type = switch (predefined_type) {
+                    .GROUP_ICON => .icon,
+                    .GROUP_CURSOR => .cursor,
+                    else => unreachable,
+                },
+                .filename_string_index = filename_string_index,
+            } },
+        });
     }
 
     pub const DataType = enum {
@@ -2477,49 +2572,113 @@ test "cursors" {
 const test_riff_data = "RIFF\x2C\x00\x00\x00ACONanih\x24\x00\x00\x00" ++ ([4]u8{ 0, 0, 0, 0 } ** 8) ++ "\x01\x00\x00\x00";
 // A 1x1 png
 const test_png_data = "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x01\x00\x00\x00\x007n\xf9$\x00\x00\x00\nIDAT\x08\xd7ch\x00\x00\x00\x82\x00\x81\xddCj\xf4\x00\x00\x00\x00IEND\xaeB`\x82";
+// A 1x1 DIB
+const test_dib_data = "(\x00\x00\x00\x01\x00\x00\x00\x01\x00\x00\x00\x01\x00\x10\x00\x00\x00\x00\x00\x06\x00\x00\x00\x12\x0b\x00\x00\x12\x0b\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\x7f\x00\x00\x00\x00";
 
 test "uncommon icons/cursors" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
-    comptime std.debug.assert(test_riff_data.len == 0x38);
+    {
+        comptime std.debug.assert(test_riff_data.len == 0x38);
 
-    // A basic resource group with 1 resource; type is CURSOR to start with
-    var resdir_riff = "\x00\x00\x02\x00\x01\x00\x00\x00\x00\x00\x15\x00\x15\x00\x38\x00\x00\x00\x16\x00\x00\x00".*;
-    try tmp_dir.dir.writeFile("riff_in_dir.cur", resdir_riff ++ test_riff_data);
-    // switch type to ICON
-    resdir_riff[2] = 1;
-    try tmp_dir.dir.writeFile("riff_in_dir.ico", resdir_riff ++ test_riff_data);
+        // A basic resource group with 1 resource; type is CURSOR to start with
+        var resdir_riff = "\x00\x00\x02\x00\x01\x00\x00\x00\x00\x00\x15\x00\x15\x00\x38\x00\x00\x00\x16\x00\x00\x00".*;
+        try tmp_dir.dir.writeFile("riff_in_dir.cur", resdir_riff ++ test_riff_data);
+        // switch type to ICON
+        resdir_riff[2] = 1;
+        try tmp_dir.dir.writeFile("riff_in_dir.ico", resdir_riff ++ test_riff_data);
 
-    // now png
-    var resdir_png = "\x00\x00\x01\x00\x01\x00\x01\x01\x00\x00\x01\x00 \x00C\x00\x00\x00\x16\x00\x00\x00".*;
-    try tmp_dir.dir.writeFile("png_in_dir.ico", resdir_png ++ test_png_data);
-    resdir_png[2] = 2; // cursor
-    try tmp_dir.dir.writeFile("png_in_dir.cur", resdir_png ++ test_png_data);
+        try testCompileErrorWithDir(
+            "resource with format 'riff' (at index 0) is not allowed in cursor resource groups",
+            "1 CURSOR riff_in_dir.cur",
+            tmp_dir.dir,
+        );
 
-    try testCompileErrorWithDir(
-        "resource with format 'riff' (at index 0) is not allowed in cursor resource groups",
-        "1 CURSOR riff_in_dir.cur",
-        tmp_dir.dir,
-    );
+        try testCompileWarningWithDir(
+            "the resource at index 0 of this icon has the format 'riff'; this would be an error in the Win32 RC compiler",
+            "1 ICON riff_in_dir.ico",
+            tmp_dir.dir,
+        );
+    }
 
-    try testCompileWarningWithDir(
-        "the resource at index 0 of this icon has the format 'riff'; this would be an error in the Win32 RC compiler",
-        "1 ICON riff_in_dir.ico",
-        tmp_dir.dir,
-    );
+    {
+        // now png
+        var resdir_png = "\x00\x00\x01\x00\x01\x00\x01\x01\x00\x00\x01\x00 \x00C\x00\x00\x00\x16\x00\x00\x00".*;
+        try tmp_dir.dir.writeFile("png_in_dir.ico", resdir_png ++ test_png_data);
+        resdir_png[2] = 2; // cursor
+        try tmp_dir.dir.writeFile("png_in_dir.cur", resdir_png ++ test_png_data);
 
-    try testCompileWarningWithDir(
-        "the resource at index 0 of this cursor has the format 'png'; this would be an error in the Win32 RC compiler",
-        "1 CURSOR png_in_dir.cur",
-        tmp_dir.dir,
-    );
+        try testCompileWarningWithDir(
+            "the resource at index 0 of this cursor has the format 'png'; this would be an error in the Win32 RC compiler",
+            "1 CURSOR png_in_dir.cur",
+            tmp_dir.dir,
+        );
 
-    try testCompileWithOutput(
-        "1 ICON png_in_dir.ico",
-        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00C\x00\x00\x00 \x00\x00\x00\xff\xff\x03\x00\xff\xff\x01\x00\x00\x00\x00\x00\x10\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x01\x00\x00\x00\x007n\xf9$\x00\x00\x00\nIDAT\x08\xd7ch\x00\x00\x00\x82\x00\x81\xddCj\xf4\x00\x00\x00\x00IEND\xaeB`\x82\x00\x14\x00\x00\x00 \x00\x00\x00\xff\xff\x0e\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x01\x00\x01\x01\x00\x00\x01\x00 \x00C\x00\x00\x00\x01\x00",
-        tmp_dir.dir,
-    );
+        try testCompileWithOutput(
+            "1 ICON png_in_dir.ico",
+            "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00C\x00\x00\x00 \x00\x00\x00\xff\xff\x03\x00\xff\xff\x01\x00\x00\x00\x00\x00\x10\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x01\x00\x00\x00\x007n\xf9$\x00\x00\x00\nIDAT\x08\xd7ch\x00\x00\x00\x82\x00\x81\xddCj\xf4\x00\x00\x00\x00IEND\xaeB`\x82\x00\x14\x00\x00\x00 \x00\x00\x00\xff\xff\x0e\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x01\x00\x01\x01\x00\x00\x01\x00 \x00C\x00\x00\x00\x01\x00",
+            tmp_dir.dir,
+        );
+    }
+
+    {
+        // now DIBs with uncommon versions
+        var resdir_dib = "\x00\x00\x01\x00\x01\x00\x01\x01\x10\x00\x01\x00\x04\x00.\x00\x00\x00\x16\x00\x00\x00".* ++ test_dib_data.*;
+        // set the version to win2.0 by setting the header size to 12
+        resdir_dib[0x16] = 12;
+        try tmp_dir.dir.writeFile("old_version.ico", &resdir_dib);
+        resdir_dib[2] = 2; // cursor
+        try tmp_dir.dir.writeFile("old_version.cur", &resdir_dib);
+
+        try testCompileErrorWithDir(
+            "the DIB at index 0 of this icon is of version 'Windows 2.0 (BITMAPCOREHEADER)'; this version is no longer allowed and should be upgraded to 'Windows NT, 3.1x (BITMAPINFOHEADER)'",
+            "1 ICON old_version.ico",
+            tmp_dir.dir,
+        );
+
+        try testCompileErrorWithDir(
+            "the DIB at index 0 of this cursor is of version 'Windows 2.0 (BITMAPCOREHEADER)'; this version is no longer allowed and should be upgraded to 'Windows NT, 3.1x (BITMAPINFOHEADER)'",
+            "1 CURSOR old_version.cur",
+            tmp_dir.dir,
+        );
+
+        resdir_dib[0x16] = 124; // V5
+        resdir_dib[2] = 1; // icon
+        try tmp_dir.dir.writeFile("v5.ico", &resdir_dib);
+        resdir_dib[2] = 2; // cursor
+        try tmp_dir.dir.writeFile("v5.cur", &resdir_dib);
+
+        try testCompileWarningWithDir(
+            "the DIB at index 0 of this icon is of version 'Windows NT 5.0, 98 (BITMAPV5HEADER)'; this would be an error in the Win32 RC compiler",
+            "1 ICON v5.ico",
+            tmp_dir.dir,
+        );
+
+        try testCompileWarningWithDir(
+            "the DIB at index 0 of this cursor is of version 'Windows NT 5.0, 98 (BITMAPV5HEADER)'; this would be an error in the Win32 RC compiler",
+            "1 CURSOR v5.cur",
+            tmp_dir.dir,
+        );
+
+        resdir_dib[0x16] = 77; // unknown
+        resdir_dib[2] = 1; // icon
+        try tmp_dir.dir.writeFile("unknown.ico", &resdir_dib);
+        resdir_dib[2] = 2; // cursor
+        try tmp_dir.dir.writeFile("unknown.cur", &resdir_dib);
+
+        try testCompileWarningWithDir(
+            "the DIB at index 0 of this icon is of version 'unknown'; this would be an error in the Win32 RC compiler",
+            "1 ICON unknown.ico",
+            tmp_dir.dir,
+        );
+
+        try testCompileWarningWithDir(
+            "the DIB at index 0 of this cursor is of version 'unknown'; this would be an error in the Win32 RC compiler",
+            "1 CURSOR unknown.cur",
+            tmp_dir.dir,
+        );
+    }
 }
 
 test "basic bitmap" {

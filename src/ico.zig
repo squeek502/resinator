@@ -6,7 +6,37 @@
 
 const std = @import("std");
 
-pub fn read(allocator: std.mem.Allocator, reader: anytype) !IconDir {
+pub const ReadError = std.mem.Allocator.Error || error{ InvalidHeader, InvalidImageType, ImpossibleDataSize, UnexpectedEOF, ReadError };
+
+pub fn read(allocator: std.mem.Allocator, reader: anytype, max_size: u64) ReadError!IconDir {
+    // Some Reader implementations have an empty ReadError error set which would
+    // cause 'unreachable else' if we tried to use an else in the switch, so we
+    // need to detect this case and not try to translate to ReadError
+    const empty_reader_errorset = @typeInfo(@TypeOf(reader).Error).ErrorSet == null or @typeInfo(@TypeOf(reader).Error).ErrorSet.?.len == 0;
+    if (empty_reader_errorset) {
+        return readAnyError(allocator, reader, max_size) catch |err| switch (err) {
+            error.EndOfStream => error.UnexpectedEOF,
+            else => |e| return e,
+        };
+    } else {
+        return readAnyError(allocator, reader, max_size) catch |err| switch (err) {
+            error.OutOfMemory,
+            error.InvalidHeader,
+            error.InvalidImageType,
+            error.ImpossibleDataSize,
+            => |e| return e,
+            error.EndOfStream => error.UnexpectedEOF,
+            // The remaining errors are dependent on the `reader`, so
+            // we just translate them all to generic ReadError
+            else => error.ReadError,
+        };
+    }
+}
+
+// TODO: This seems like a somewhat strange pattern, could be a better way
+//       to do this. Maybe it makes more sense to handle the translation
+//       at the call site instead of having a helper function here.
+pub fn readAnyError(allocator: std.mem.Allocator, reader: anytype, max_size: u64) !IconDir {
     const reserved = try reader.readIntLittle(u16);
     if (reserved != 0) {
         return error.InvalidHeader;
@@ -49,6 +79,10 @@ pub fn read(allocator: std.mem.Allocator, reader: anytype) !IconDir {
         }
         entry.data_size_in_bytes = try reader.readIntLittle(u32);
         entry.data_offset_from_start_of_file = try reader.readIntLittle(u32);
+        // Validate that the offset/data size is feasible
+        if (@as(u64, entry.data_offset_from_start_of_file) + entry.data_size_in_bytes > max_size) {
+            return error.ImpossibleDataSize;
+        }
         try entries.append(entry);
     }
 
@@ -129,28 +163,95 @@ pub const Entry = struct {
 };
 
 test "icon" {
-    var fbs = std.io.fixedBufferStream("\x00\x00\x01\x00\x03\x00\x10\x10\x00\x00\x01\x00\x20\x00\x68\x04\x00\x00\x36\x00\x00\x00\x20\x20\x00\x00\x01\x00\x20\x00\xA8\x10\x00\x00\x9E\x04\x00\x00\x30\x30\x00\x00\x01\x00\x20\x00\xA8\x25\x00\x00\x46\x15\x00\x00");
-    const icon = try read(std.testing.allocator, fbs.reader());
+    const data = "\x00\x00\x01\x00\x01\x00\x10\x10\x00\x00\x01\x00\x10\x00\x00\x00\x00\x00\x16\x00\x00\x00";
+    var fbs = std.io.fixedBufferStream(data);
+    const icon = try read(std.testing.allocator, fbs.reader(), data.len);
     defer icon.deinit();
 
     try std.testing.expectEqual(ImageType.icon, icon.image_type);
-    try std.testing.expectEqual(@as(usize, 3), icon.entries.len);
+    try std.testing.expectEqual(@as(usize, 1), icon.entries.len);
 }
 
-/// From WinGDI.h
-pub const BITMAPCOREHEADER = extern struct {
+test "icon too many images" {
+    const data = "\x00\x00\x01\x00\x02\x00\x10\x10\x00\x00\x01\x00\x10\x00\x00\x00\x00\x00\x16\x00\x00\x00";
+    var fbs = std.io.fixedBufferStream(data);
+    try std.testing.expectError(error.UnexpectedEOF, read(std.testing.allocator, fbs.reader(), data.len));
+}
+
+test "icon data size past EOF" {
+    const data = "\x00\x00\x01\x00\x01\x00\x10\x10\x00\x00\x01\x00\x10\x00\x00\x01\x00\x00\x16\x00\x00\x00";
+    var fbs = std.io.fixedBufferStream(data);
+    try std.testing.expectError(error.ImpossibleDataSize, read(std.testing.allocator, fbs.reader(), data.len));
+}
+
+test "icon data offset past EOF" {
+    const data = "\x00\x00\x01\x00\x01\x00\x10\x10\x00\x00\x01\x00\x10\x00\x00\x00\x00\x00\x17\x00\x00\x00";
+    var fbs = std.io.fixedBufferStream(data);
+    try std.testing.expectError(error.ImpossibleDataSize, read(std.testing.allocator, fbs.reader(), data.len));
+}
+
+pub const ImageFormat = enum {
+    dib,
+    png,
+    riff,
+
+    const riff_header = std.mem.readIntNative(u32, "RIFF");
+    const png_signature = std.mem.readIntNative(u64, "\x89PNG\r\n\x1a\n");
+    const ihdr_code = std.mem.readIntNative(u32, "IHDR");
+    const acon_form_type = std.mem.readIntNative(u32, "ACON");
+
+    pub fn detect(header_bytes: *const [16]u8) ImageFormat {
+        if (std.mem.readIntNative(u32, header_bytes[0..4]) == riff_header) return .riff;
+        if (std.mem.readIntNative(u64, header_bytes[0..8]) == png_signature) return .png;
+        return .dib;
+    }
+
+    pub fn validate(format: ImageFormat, header_bytes: *const [16]u8) bool {
+        return switch (format) {
+            .png => std.mem.readIntNative(u32, header_bytes[12..16]) == ihdr_code,
+            .riff => std.mem.readIntNative(u32, header_bytes[8..12]) == acon_form_type,
+            .dib => true,
+        };
+    }
+};
+
+/// Contains only the fields of BITMAPINFOHEADER (WinGDI.h) that are both:
+/// - relevant to what we need, and
+/// - are shared between all versions of BITMAPINFOHEADER (V4, V5).
+pub const BitmapHeader = extern struct {
     bcSize: u32,
     bcWidth: i32,
     bcHeight: i32,
     bcPlanes: u16,
     bcBitCount: u16,
 
-    pub fn isPng(self: *const BITMAPCOREHEADER) bool {
-        const png_signature = "\x89PNG\r\n\x1a\n";
-        return std.mem.startsWith(u8, std.mem.asBytes(self), png_signature);
-    }
+    /// The values are the size of the header (found in bcSize)
+    /// https://en.wikipedia.org/wiki/BMP_file_format#DIB_header_(bitmap_information_header)
+    pub const Version = enum {
+        unknown,
+        @"win2.0", // Windows 2.0 or later
+        @"nt3.1", // Windows NT, 3.1x or later
+        @"nt4.0", // Windows NT 4.0, 95 or later
+        @"nt5.0", // Windows NT 5.0, 98 or later
 
-    pub fn isRiff(self: *const BITMAPCOREHEADER) bool {
-        return std.mem.startsWith(u8, std.mem.asBytes(self), "RIFF");
-    }
+        pub fn get(header_size: u32) Version {
+            return switch (header_size) {
+                12 => .@"win2.0",
+                40 => .@"nt3.1",
+                108 => .@"nt4.0",
+                124 => .@"nt5.0",
+                else => .unknown,
+            };
+        }
+
+        pub fn nameForErrorDisplay(version: Version) []const u8 {
+            return switch (version) {
+                .unknown => "unknown",
+                .@"win2.0" => "Windows 2.0 (BITMAPCOREHEADER)",
+                .@"nt3.1" => "Windows NT, 3.1x (BITMAPINFOHEADER)",
+                .@"nt4.0" => "Windows NT 4.0, 95 (BITMAPV4HEADER)",
+                .@"nt5.0" => "Windows NT 5.0, 98 (BITMAPV5HEADER)",
+            };
+        }
+    };
 };

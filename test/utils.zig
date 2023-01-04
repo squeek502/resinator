@@ -22,10 +22,13 @@ pub fn expectSameResOutputWithDir(allocator: Allocator, source: []const u8, buff
     resinator.compile.compile(allocator, source, buffer.writer(), cwd, &diagnostics) catch |err| switch (err) {
         error.ParseError, error.CompileError => {
             diagnostics.renderToStdErr(cwd, source, null);
-            // Allow disallowed codepoint-related errors from resinator if RC succeeds
-            const first_error_is_codepoint_related = diagnostics.errors.items[0].err == .illegal_byte_order_mark or diagnostics.errors.items[0].err == .illegal_private_use_character;
-            if (first_error_is_codepoint_related) {
-                return;
+            // Allow certain errors from resinator if RC succeeds
+            const first_err = diagnostics.errors.items[0];
+            switch (first_err.err) {
+                .illegal_byte_order_mark,
+                .illegal_private_use_character,
+                => return,
+                else => {},
             }
             if (expected_res == null) {
                 return;
@@ -38,11 +41,23 @@ pub fn expectSameResOutputWithDir(allocator: Allocator, source: []const u8, buff
     };
 
     if (expected_res == null) {
+        diagnostics.renderToStdErr(cwd, source, null);
+        if (diagnostics.errors.items.len > 0) {
+            const first_err = diagnostics.errors.items[0];
+            switch (first_err.err) {
+                .rc_would_error_on_bitmap_version => {
+                    return;
+                },
+                else => {},
+            }
+        }
+
         std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
         return error.ExpectedErrorButDidntGetOne;
     }
 
     std.testing.expectEqualSlices(u8, expected_res.?, buffer.items) catch |err| {
+        diagnostics.renderToStdErr(cwd, source, null);
         std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
         return err;
     };

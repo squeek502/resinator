@@ -4,6 +4,7 @@ const SourceMappings = @import("source_mapping.zig").SourceMappings;
 const utils = @import("utils.zig");
 const rc = @import("rc.zig");
 const res = @import("res.zig");
+const ico = @import("ico.zig");
 
 pub const Diagnostics = struct {
     errors: std.ArrayListUnmanaged(ErrorDetails) = .{},
@@ -77,6 +78,7 @@ pub const ErrorDetails = struct {
         resource: rc.Resource,
         string_and_language: StringAndLanguage,
         file_open_error: FileOpenError,
+        icon_read_error: IconReadError,
         icon_dir: IconDirContext,
     } = .{ .none = {} },
 
@@ -106,11 +108,29 @@ pub const ErrorDetails = struct {
         }
     };
 
+    pub const IconReadError = packed struct(u32) {
+        err: IconReadErrorEnum,
+        icon_type: enum(u1) { cursor, icon },
+        filename_string_index: FilenameStringIndex,
+
+        pub const FilenameStringIndex = std.meta.Int(.unsigned, 32 - @bitSizeOf(IconReadErrorEnum) - 1);
+        pub const IconReadErrorEnum = std.meta.FieldEnum(ico.ReadError);
+
+        pub fn enumFromError(err: ico.ReadError) IconReadErrorEnum {
+            return switch (err) {
+                inline else => |e| @field(ErrorDetails.IconReadError.IconReadErrorEnum, @errorName(e)),
+            };
+        }
+    };
+
     pub const IconDirContext = packed struct(u32) {
         icon_type: enum(u1) { cursor, icon },
-        icon_format: enum(u2) { unknown, riff, png },
+        icon_format: ico.ImageFormat,
         index: u16,
-        _: u13 = undefined,
+        bitmap_version: ico.BitmapHeader.Version = .unknown,
+        _: Padding = undefined,
+
+        pub const Padding = std.meta.Int(.unsigned, 15 - @bitSizeOf(ico.BitmapHeader.Version) - @bitSizeOf(ico.ImageFormat));
     };
 
     pub const ExpectedTypes = packed struct(u32) {
@@ -205,6 +225,10 @@ pub const ErrorDetails = struct {
         format_not_supported_in_icon_dir,
         /// `resource` is populated and contains the expected type
         icon_dir_and_resource_type_mismatch,
+        /// `icon_read_error` is populated
+        icon_read_error,
+        /// `icon_dir` is populated
+        rc_would_error_on_bitmap_version,
 
         // Literals
         /// `number` is populated
@@ -333,6 +357,23 @@ pub const ErrorDetails = struct {
                 const unexpected_type: rc.Resource = if (self.extra.resource == .icon) .cursor else .icon;
                 // TODO: Better wording
                 try writer.print("resource type '{s}' does not match type '{s}' specified in the file", .{ @tagName(self.extra.resource), @tagName(unexpected_type) });
+            },
+            .icon_read_error => {
+                try writer.print("unable to read {s} file '{s}': {s}", .{ @tagName(self.extra.icon_read_error.icon_type), strings[self.extra.icon_read_error.filename_string_index], @tagName(self.extra.icon_read_error.err) });
+            },
+            .rc_would_error_on_bitmap_version => switch (self.type) {
+                .err => try writer.print("the DIB at index {} of this {s} is of version '{s}'; this version is no longer allowed and should be upgraded to '{s}'", .{
+                    self.extra.icon_dir.index,
+                    @tagName(self.extra.icon_dir.icon_type),
+                    self.extra.icon_dir.bitmap_version.nameForErrorDisplay(),
+                    ico.BitmapHeader.Version.@"nt3.1".nameForErrorDisplay(),
+                }),
+                .warning => try writer.print("the DIB at index {} of this {s} is of version '{s}'; this would be an error in the Win32 RC compiler", .{
+                    self.extra.icon_dir.index,
+                    @tagName(self.extra.icon_dir.icon_type),
+                    self.extra.icon_dir.bitmap_version.nameForErrorDisplay(),
+                }),
+                .note => unreachable,
             },
             .rc_would_miscompile_codepoint_byte_swap => switch (self.type) {
                 .err, .warning => return writer.print("codepoint U+{X} within a string literal would be miscompiled by the Win32 RC compiler (the bytes of the UTF-16 code unit would be swapped)", .{self.extra.number}),
