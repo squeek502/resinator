@@ -83,6 +83,21 @@ pub fn readAnyError(allocator: std.mem.Allocator, reader: anytype, max_size: u64
         if (@as(u64, entry.data_offset_from_start_of_file) + entry.data_size_in_bytes > max_size) {
             return error.ImpossibleDataSize;
         }
+        // and that the data size is large enough for at least the header of an image
+        // Note: This avoids needing to deal with a miscompilation from the Win32 RC
+        //       compiler when the data size of an image is specified as zero but there
+        //       is data to-be-read at the offset. The Win32 RC compiler will output
+        //       an ICON/CURSOR resource with a bogus size in its header but with no actual
+        //       data bytes in it, leading to an invalid .res. Similarly, if, for example,
+        //       there is valid PNG data at the image's offset, but the size is specified
+        //       as fewer bytes than the PNG header, then the Win32 RC compiler will still
+        //       treat it as a PNG (e.g. unconditionally set num_planes to 1) but the data
+        //       of the resource will only be 1 byte so treating it as a PNG doesn't make
+        //       sense (especially not when you have to read past the data size to determine
+        //       that it's a PNG).
+        if (entry.data_size_in_bytes < 16) {
+            return error.ImpossibleDataSize;
+        }
         try entries.append(entry);
     }
 
@@ -166,7 +181,7 @@ pub const Entry = struct {
 };
 
 test "icon" {
-    const data = "\x00\x00\x01\x00\x01\x00\x10\x10\x00\x00\x01\x00\x10\x00\x00\x00\x00\x00\x16\x00\x00\x00";
+    const data = "\x00\x00\x01\x00\x01\x00\x10\x10\x00\x00\x01\x00\x10\x00\x10\x00\x00\x00\x16\x00\x00\x00" ++ [_]u8{0} ** 16;
     var fbs = std.io.fixedBufferStream(data);
     const icon = try read(std.testing.allocator, fbs.reader(), data.len);
     defer icon.deinit();
@@ -176,19 +191,28 @@ test "icon" {
 }
 
 test "icon too many images" {
-    const data = "\x00\x00\x01\x00\x02\x00\x10\x10\x00\x00\x01\x00\x10\x00\x00\x00\x00\x00\x16\x00\x00\x00";
+    // Note that with verifying that all data sizes are within the file bounds and >= 16,
+    // it's not possible to hit EOF when looking for more RESDIR structures, since they are
+    // themselves 16 bytes long, so we'll always hit ImpossibleDataSize instead.
+    const data = "\x00\x00\x01\x00\x02\x00\x10\x10\x00\x00\x01\x00\x10\x00\x10\x00\x00\x00\x16\x00\x00\x00" ++ [_]u8{0} ** 16;
     var fbs = std.io.fixedBufferStream(data);
-    try std.testing.expectError(error.UnexpectedEOF, read(std.testing.allocator, fbs.reader(), data.len));
+    try std.testing.expectError(error.ImpossibleDataSize, read(std.testing.allocator, fbs.reader(), data.len));
 }
 
 test "icon data size past EOF" {
-    const data = "\x00\x00\x01\x00\x01\x00\x10\x10\x00\x00\x01\x00\x10\x00\x00\x01\x00\x00\x16\x00\x00\x00";
+    const data = "\x00\x00\x01\x00\x01\x00\x10\x10\x00\x00\x01\x00\x10\x00\x10\x01\x00\x00\x16\x00\x00\x00" ++ [_]u8{0} ** 16;
     var fbs = std.io.fixedBufferStream(data);
     try std.testing.expectError(error.ImpossibleDataSize, read(std.testing.allocator, fbs.reader(), data.len));
 }
 
 test "icon data offset past EOF" {
-    const data = "\x00\x00\x01\x00\x01\x00\x10\x10\x00\x00\x01\x00\x10\x00\x00\x00\x00\x00\x17\x00\x00\x00";
+    const data = "\x00\x00\x01\x00\x01\x00\x10\x10\x00\x00\x01\x00\x10\x00\x10\x00\x00\x00\x17\x00\x00\x00" ++ [_]u8{0} ** 16;
+    var fbs = std.io.fixedBufferStream(data);
+    try std.testing.expectError(error.ImpossibleDataSize, read(std.testing.allocator, fbs.reader(), data.len));
+}
+
+test "icon data size too small" {
+    const data = "\x00\x00\x01\x00\x01\x00\x10\x10\x00\x00\x01\x00\x10\x00\x0F\x00\x00\x00\x16\x00\x00\x00";
     var fbs = std.io.fixedBufferStream(data);
     try std.testing.expectError(error.ImpossibleDataSize, read(std.testing.allocator, fbs.reader(), data.len));
 }
