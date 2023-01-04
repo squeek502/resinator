@@ -224,17 +224,17 @@ pub const ControlClass = struct {
     /// string literals ("BUTTON", or even "\x42UTTON")
     pub fn fromWideString(str: []const u16) ?res.ControlClass {
         const utf16Literal = std.unicode.utf8ToUtf16LeStringLiteral;
-        return if (std.os.windows.eqlIgnoreCaseWTF16(str, utf16Literal("BUTTON")))
+        return if (utils.ascii.eqlIgnoreCaseW(str, utf16Literal("BUTTON")))
             .button
-        else if (std.os.windows.eqlIgnoreCaseWTF16(str, utf16Literal("EDIT")))
+        else if (utils.ascii.eqlIgnoreCaseW(str, utf16Literal("EDIT")))
             .edit
-        else if (std.os.windows.eqlIgnoreCaseWTF16(str, utf16Literal("STATIC")))
+        else if (utils.ascii.eqlIgnoreCaseW(str, utf16Literal("STATIC")))
             .static
-        else if (std.os.windows.eqlIgnoreCaseWTF16(str, utf16Literal("LISTBOX")))
+        else if (utils.ascii.eqlIgnoreCaseW(str, utf16Literal("LISTBOX")))
             .listbox
-        else if (std.os.windows.eqlIgnoreCaseWTF16(str, utf16Literal("SCROLLBAR")))
+        else if (utils.ascii.eqlIgnoreCaseW(str, utf16Literal("SCROLLBAR")))
             .scrollbar
-        else if (std.os.windows.eqlIgnoreCaseWTF16(str, utf16Literal("COMBOBOX")))
+        else if (utils.ascii.eqlIgnoreCaseW(str, utf16Literal("COMBOBOX")))
             .combobox
         else
             null;

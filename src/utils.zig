@@ -56,6 +56,21 @@ pub fn headerSlurpingReader(comptime size: usize, reader: anytype) HeaderSlurpin
     return .{ .child_reader = reader };
 }
 
+pub const ascii = struct {
+    /// Compares ASCII values case-insensitively, non-ASCII values are compared directly
+    pub fn eqlIgnoreCaseW(a: []const u16, b: []const u16) bool {
+        if (a.len != b.len) return false;
+        for (a) |a_c, i| {
+            if (a_c < 128) {
+                if (std.ascii.toLower(@intCast(u8, a_c)) != std.ascii.toLower(@intCast(u8, b[i]))) return false;
+            } else {
+                if (a_c != b[i]) return false;
+            }
+        }
+        return true;
+    }
+};
+
 /// std.ComptimeStringMap, but case-insensitive and therefore only works for ASCII strings
 pub fn ComptimeCaseInsensitiveStringMap(comptime V: type, comptime kvs_list: anytype) type {
     const precomputed = comptime blk: {
