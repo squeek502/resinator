@@ -402,7 +402,10 @@ pub const Compiler = struct {
                                 },
                             },
                             .png => switch (icon_dir.image_type) {
-                                .icon => {},
+                                .icon => {
+                                    // PNG always seems to have 1 for color planes no matter what
+                                    entry.type_specific_data.icon.color_planes = 1;
+                                },
                                 .cursor => {
                                     // The Win32 RC compiler treats this as an error, but cursor dirs
                                     // with PNG encoded icons within them work fine if they are
@@ -2604,7 +2607,7 @@ test "uncommon icons/cursors" {
 
     {
         // now png
-        var resdir_png = "\x00\x00\x01\x00\x01\x00\x01\x01\x00\x00\x01\x00 \x00C\x00\x00\x00\x16\x00\x00\x00".*;
+        var resdir_png = "\x00\x00\x01\x00\x01\x00\x01\x01\x00\x00\x02\x00 \x00C\x00\x00\x00\x16\x00\x00\x00".*;
         try tmp_dir.dir.writeFile("png_in_dir.ico", resdir_png ++ test_png_data);
         resdir_png[2] = 2; // cursor
         try tmp_dir.dir.writeFile("png_in_dir.cur", resdir_png ++ test_png_data);
