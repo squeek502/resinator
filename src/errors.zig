@@ -5,6 +5,7 @@ const utils = @import("utils.zig");
 const rc = @import("rc.zig");
 const res = @import("res.zig");
 const ico = @import("ico.zig");
+const bmp = @import("bmp.zig");
 
 pub const Diagnostics = struct {
     errors: std.ArrayListUnmanaged(ErrorDetails) = .{},
@@ -55,6 +56,13 @@ pub const Diagnostics = struct {
             renderErrorMessage(self.allocator, stderr, colors, cwd, err_details, source, self.strings.items, source_mappings) catch return;
         }
     }
+
+    pub fn contains(self: *const Diagnostics, err: ErrorDetails.Error) bool {
+        for (self.errors.items) |details| {
+            if (details.err == err) return true;
+        }
+        return false;
+    }
 };
 
 /// Contains enough context to append errors/warnings/notes etc
@@ -80,6 +88,7 @@ pub const ErrorDetails = struct {
         file_open_error: FileOpenError,
         icon_read_error: IconReadError,
         icon_dir: IconDirContext,
+        bmp_read_error: BitmapReadError,
     } = .{ .none = {} },
 
     comptime {
@@ -131,6 +140,27 @@ pub const ErrorDetails = struct {
         _: Padding = undefined,
 
         pub const Padding = std.meta.Int(.unsigned, 15 - @bitSizeOf(ico.BitmapHeader.Version) - @bitSizeOf(ico.ImageFormat));
+    };
+
+    pub const BitmapReadError = packed struct(u32) {
+        err: BitmapReadErrorEnum,
+        filename_string_index: FilenameStringIndex,
+
+        pub const FilenameStringIndex = std.meta.Int(.unsigned, 32 - @bitSizeOf(BitmapReadErrorEnum));
+        pub const BitmapReadErrorEnum = std.meta.FieldEnum(bmp.ReadError);
+
+        pub fn enumFromError(err: bmp.ReadError) BitmapReadErrorEnum {
+            return switch (err) {
+                inline else => |e| @field(ErrorDetails.BitmapReadError.BitmapReadErrorEnum, @errorName(e)),
+            };
+        }
+    };
+
+    pub const BitmapUnsupportedDIB = packed struct(u32) {
+        dib_version: ico.BitmapHeader.Version,
+        filename_string_index: FilenameStringIndex,
+
+        pub const FilenameStringIndex = std.meta.Int(.unsigned, 32 - @bitSizeOf(ico.BitmapHeader.Version));
     };
 
     pub const ExpectedTypes = packed struct(u32) {
@@ -229,6 +259,22 @@ pub const ErrorDetails = struct {
         icon_read_error,
         /// `icon_dir` is populated
         rc_would_error_on_bitmap_version,
+        /// `bmp_read_error` is populated
+        bmp_read_error,
+        /// `number` is populated and contains a string index for which the string contains
+        /// the bytes of a `u64` (native endian). The `u64` contains the number of ignored bytes.
+        bmp_ignored_palette_bytes,
+        /// `number` is populated and contains a string index for which the string contains
+        /// the bytes of a `u64` (native endian). The `u64` contains the number of missing bytes.
+        bmp_missing_palette_bytes,
+        /// `number` is populated and contains a string index for which the string contains
+        /// the bytes of a `u64` (native endian). The `u64` contains the number of miscompiled bytes.
+        rc_would_miscompile_bmp_palette_padding,
+        /// `number` is populated and contains a string index for which the string contains
+        /// the bytes of two `u64`s (native endian). The first contains the number of missing
+        /// palette bytes and the second contains the max number of missing palette bytes.
+        /// If type is `.note`, then `extra` is `none`.
+        bmp_too_many_missing_palette_bytes,
 
         // Literals
         /// `number` is populated
@@ -374,6 +420,34 @@ pub const ErrorDetails = struct {
                     self.extra.icon_dir.bitmap_version.nameForErrorDisplay(),
                 }),
                 .note => unreachable,
+            },
+            .bmp_read_error => {
+                try writer.print("invalid bitmap file '{s}': {s}", .{ strings[self.extra.bmp_read_error.filename_string_index], @tagName(self.extra.bmp_read_error.err) });
+            },
+            .bmp_ignored_palette_bytes => {
+                const bytes = strings[self.extra.number];
+                const ignored_bytes = std.mem.readIntNative(u64, bytes[0..8]);
+                try writer.print("bitmap has {d} extra bytes preceding the pixel data which will be ignored", .{ignored_bytes});
+            },
+            .bmp_missing_palette_bytes => {
+                const bytes = strings[self.extra.number];
+                const missing_bytes = std.mem.readIntNative(u64, bytes[0..8]);
+                try writer.print("bitmap has {d} missing color palette bytes which will be padded with zeroes", .{missing_bytes});
+            },
+            .rc_would_miscompile_bmp_palette_padding => {
+                const bytes = strings[self.extra.number];
+                const miscompiled_bytes = std.mem.readIntNative(u64, bytes[0..8]);
+                try writer.print("the missing color palette bytes would be miscompiled by the Win32 RC compiler (the added padding bytes would include {d} bytes of the pixel data)", .{miscompiled_bytes});
+            },
+            .bmp_too_many_missing_palette_bytes => switch (self.type) {
+                .err, .warning => {
+                    const bytes = strings[self.extra.number];
+                    const missing_bytes = std.mem.readIntNative(u64, bytes[0..8]);
+                    const max_missing_bytes = std.mem.readIntNative(u64, bytes[8..16]);
+                    try writer.print("bitmap has {} missing color palette bytes which exceeds the maximum of {}", .{ missing_bytes, max_missing_bytes });
+                },
+                // TODO: command line option
+                .note => try writer.writeAll("the maximum number of missing color palette bytes is configurable via <<TODO command line option>>"),
             },
             .rc_would_miscompile_codepoint_byte_swap => switch (self.type) {
                 .err, .warning => return writer.print("codepoint U+{X} within a string literal would be miscompiled by the Win32 RC compiler (the bytes of the UTF-16 code unit would be swapped)", .{self.extra.number}),

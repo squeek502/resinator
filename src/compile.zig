@@ -15,6 +15,7 @@ const rc = @import("rc.zig");
 const res = @import("res.zig");
 const ico = @import("ico.zig");
 const ani = @import("ani.zig");
+const bmp = @import("bmp.zig");
 const WORD = std.os.windows.WORD;
 const DWORD = std.os.windows.DWORD;
 const utils = @import("utils.zig");
@@ -498,12 +499,107 @@ pub const Compiler = struct {
                 .BITMAP => {
                     header.applyMemoryFlags(node.common_resource_attributes, self.source);
                     const file_size = try file.getEndPos();
-                    const bmp_header_size = 14;
-                    // TODO: error on invalid bmps
-                    header.data_size = @intCast(u32, file_size) - bmp_header_size;
+
+                    const bitmap_info = bmp.read(file.reader(), file_size) catch |err| {
+                        const filename_string_index = @intCast(
+                            ErrorDetails.BitmapReadError.FilenameStringIndex,
+                            try self.diagnostics.putString(filename.utf8),
+                        );
+                        return self.addErrorDetailsAndFail(.{
+                            .err = .bmp_read_error,
+                            .token = node.filename.getFirstToken(),
+                            .extra = .{ .bmp_read_error = .{
+                                .err = ErrorDetails.BitmapReadError.enumFromError(err),
+                                .filename_string_index = filename_string_index,
+                            } },
+                        });
+                    };
+
+                    if (bitmap_info.getActualPaletteByteLen() > bitmap_info.getExpectedPaletteByteLen()) {
+                        const num_ignored_bytes = bitmap_info.getActualPaletteByteLen() - bitmap_info.getExpectedPaletteByteLen();
+                        var number_as_bytes: [8]u8 = undefined;
+                        std.mem.writeIntNative(u64, &number_as_bytes, num_ignored_bytes);
+                        const value_string_index = @intCast(u32, try self.diagnostics.putString(&number_as_bytes));
+                        try self.addErrorDetails(.{
+                            .err = .bmp_ignored_palette_bytes,
+                            .type = .warning,
+                            .token = node.filename.getFirstToken(),
+                            .extra = .{ .number = value_string_index },
+                        });
+                    } else if (bitmap_info.getActualPaletteByteLen() < bitmap_info.getExpectedPaletteByteLen()) {
+                        const num_padding_bytes = bitmap_info.getExpectedPaletteByteLen() - bitmap_info.getActualPaletteByteLen();
+
+                        // TODO: Make this configurable (command line option)
+                        const max_missing_bytes = 4096;
+                        if (num_padding_bytes > max_missing_bytes) {
+                            var numbers_as_bytes: [16]u8 = undefined;
+                            std.mem.writeIntNative(u64, numbers_as_bytes[0..8], num_padding_bytes);
+                            std.mem.writeIntNative(u64, numbers_as_bytes[8..16], max_missing_bytes);
+                            const values_string_index = @intCast(
+                                u32,
+                                try self.diagnostics.putString(&numbers_as_bytes),
+                            );
+                            try self.addErrorDetails(.{
+                                .err = .bmp_too_many_missing_palette_bytes,
+                                .token = node.filename.getFirstToken(),
+                                .extra = .{ .number = values_string_index },
+                            });
+                            return self.addErrorDetailsAndFail(.{
+                                .err = .bmp_too_many_missing_palette_bytes,
+                                .type = .note,
+                                .print_source_line = false,
+                                .token = node.filename.getFirstToken(),
+                            });
+                        }
+
+                        var number_as_bytes: [8]u8 = undefined;
+                        std.mem.writeIntNative(u64, &number_as_bytes, num_padding_bytes);
+                        const value_string_index = @intCast(u32, try self.diagnostics.putString(&number_as_bytes));
+                        try self.addErrorDetails(.{
+                            .err = .bmp_missing_palette_bytes,
+                            .type = .warning,
+                            .token = node.filename.getFirstToken(),
+                            .extra = .{ .number = value_string_index },
+                        });
+                        const pixel_data_len = bitmap_info.getPixelDataLen(file_size);
+                        if (pixel_data_len > 0) {
+                            const miscompiled_bytes = @min(pixel_data_len, num_padding_bytes);
+                            std.mem.writeIntNative(u64, &number_as_bytes, miscompiled_bytes);
+                            const miscompiled_bytes_string_index = @intCast(u32, try self.diagnostics.putString(&number_as_bytes));
+                            try self.addErrorDetails(.{
+                                .err = .rc_would_miscompile_bmp_palette_padding,
+                                .type = .warning,
+                                .token = node.filename.getFirstToken(),
+                                .extra = .{ .number = miscompiled_bytes_string_index },
+                            });
+                        }
+                    }
+
+                    // TODO: It might be possible that the calculation done in this function
+                    //       could underflow if the underlying file is modified while reading
+                    //       it, but need to think about it more to determine if that's a
+                    //       real possibility
+                    const bmp_bytes_to_write = @intCast(u32, bitmap_info.getExpectedByteLen(file_size));
+
+                    header.data_size = bmp_bytes_to_write;
                     try header.write(writer);
-                    try file.seekTo(bmp_header_size);
-                    try writeResourceData(writer, file.reader(), header.data_size);
+                    try file.seekTo(bmp.file_header_len);
+                    const file_reader = file.reader();
+                    try writeResourceDataNoPadding(writer, file_reader, bitmap_info.dib_header_size);
+                    if (bitmap_info.getBitmasksByteLen() > 0) {
+                        try writeResourceDataNoPadding(writer, file_reader, bitmap_info.getBitmasksByteLen());
+                    }
+                    if (bitmap_info.getExpectedPaletteByteLen() > 0) {
+                        try writeResourceDataNoPadding(writer, file_reader, @intCast(u32, bitmap_info.getActualPaletteByteLen()));
+                        const padding_bytes = bitmap_info.getMissingPaletteByteLen();
+                        if (padding_bytes > 0) {
+                            try writer.writeByteNTimes(0, padding_bytes);
+                        }
+                    }
+                    try file.seekTo(bitmap_info.pixel_data_offset);
+                    const pixel_bytes = @intCast(u32, file_size - bitmap_info.pixel_data_offset);
+                    try writeResourceDataNoPadding(writer, file_reader, pixel_bytes);
+                    try writeDataPadding(writer, bmp_bytes_to_write);
                     return;
                 },
                 .FONT => {
@@ -2311,7 +2407,7 @@ fn testCompileErrorWithDir(expected_error_str: []const u8, source: []const u8, c
     return error.UnexpectedSuccess;
 }
 
-fn testCompileWarningWithDir(expected_warning_str: []const u8, source: []const u8, cwd: std.fs.Dir) !void {
+fn testCompileWarningWithDir(expected_warning_str: []const u8, source: []const u8, maybe_expected_output: ?[]const u8, cwd: std.fs.Dir) !void {
     const allocator = std.testing.allocator;
 
     var buffer = std.ArrayList(u8).init(std.testing.allocator);
@@ -2333,6 +2429,10 @@ fn testCompileWarningWithDir(expected_warning_str: []const u8, source: []const u
     var fbs = std.io.fixedBufferStream(&buf);
     try diagnostics.errors.items[0].render(fbs.writer(), source, diagnostics.strings.items);
     try std.testing.expectEqualStrings(expected_warning_str, fbs.getWritten());
+
+    if (maybe_expected_output) |expected_output| {
+        try std.testing.expectEqualSlices(u8, expected_output, buffer.items);
+    }
 }
 
 pub fn getExpectedFromWindowsRCWithDir(allocator: Allocator, source: []const u8, cwd: std.fs.Dir, cwd_path: []const u8) ![]const u8 {
@@ -2610,6 +2710,7 @@ test "uncommon icons/cursors" {
         try testCompileWarningWithDir(
             "the resource at index 0 of this icon has the format 'riff'; this would be an error in the Win32 RC compiler",
             "1 ICON riff_in_dir.ico",
+            null,
             tmp_dir.dir,
         );
     }
@@ -2624,6 +2725,7 @@ test "uncommon icons/cursors" {
         try testCompileWarningWithDir(
             "the resource at index 0 of this cursor has the format 'png'; this would be an error in the Win32 RC compiler",
             "1 CURSOR png_in_dir.cur",
+            null,
             tmp_dir.dir,
         );
 
@@ -2664,12 +2766,14 @@ test "uncommon icons/cursors" {
         try testCompileWarningWithDir(
             "the DIB at index 0 of this icon is of version 'Windows NT 5.0, 98 (BITMAPV5HEADER)'; this would be an error in the Win32 RC compiler",
             "1 ICON v5.ico",
+            null,
             tmp_dir.dir,
         );
 
         try testCompileWarningWithDir(
             "the DIB at index 0 of this cursor is of version 'Windows NT 5.0, 98 (BITMAPV5HEADER)'; this would be an error in the Win32 RC compiler",
             "1 CURSOR v5.cur",
+            null,
             tmp_dir.dir,
         );
 
@@ -2682,12 +2786,14 @@ test "uncommon icons/cursors" {
         try testCompileWarningWithDir(
             "the DIB at index 0 of this icon is of version 'unknown'; this would be an error in the Win32 RC compiler",
             "1 ICON unknown.ico",
+            null,
             tmp_dir.dir,
         );
 
         try testCompileWarningWithDir(
             "the DIB at index 0 of this cursor is of version 'unknown'; this would be an error in the Win32 RC compiler",
             "1 CURSOR unknown.cur",
+            null,
             tmp_dir.dir,
         );
     }
@@ -2703,6 +2809,49 @@ test "basic bitmap" {
     try testCompileWithOutput(
         "1 BITMAP test.bmp",
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00.\x00\x00\x00 \x00\x00\x00\xff\xff\x02\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00(\x00\x00\x00\x01\x00\x00\x00\x01\x00\x00\x00\x01\x00\x10\x00\x00\x00\x00\x00\x06\x00\x00\x00\x12\x0b\x00\x00\x12\x0b\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\x7f\x00\x00\x00\x00\x00\x00",
+        tmp_dir.dir,
+    );
+
+    try tmp_dir.dir.writeFile("test_extra_palette_bytes.bmp", "BM<\x00\x00\x00\x00\x00\x00\x00:\x00\x00\x00(\x00\x00\x00\x01\x00\x00\x00\x01\x00\x00\x00\x01\x00\x10\x00\x00\x00\x00\x00\x06\x00\x00\x00\x12\x0b\x00\x00\x12\x0b\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\x7f\x00\x00\x00\x00");
+
+    try testCompileWarningWithDir(
+        "bitmap has 4 extra bytes preceding the pixel data which will be ignored",
+        "1 BITMAP test_extra_palette_bytes.bmp",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00.\x00\x00\x00 \x00\x00\x00\xff\xff\x02\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00(\x00\x00\x00\x01\x00\x00\x00\x01\x00\x00\x00\x01\x00\x10\x00\x00\x00\x00\x00\x06\x00\x00\x00\x12\x0b\x00\x00\x12\x0b\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\x7f\x00\x00\x00\x00\x00\x00",
+        tmp_dir.dir,
+    );
+
+    try tmp_dir.dir.writeFile("test_missing_palette_bytes.bmp", "BM<\x00\x00\x00\x00\x00\x00\x006\x00\x00\x00(\x00\x00\x00\x01\x00\x00\x00\x01\x00\x00\x00\x01\x00\x10\x00\x00\x00\x00\x00\x06\x00\x00\x00\x12\x0b\x00\x00\x12\x0b\x00\x00\x04\x00\x00\x00\x00\x00\x00\x00\xff\x7f\x00\x00\x00\x00");
+
+    // Note: The expected output here is different from what you'd get from the Win32 RC compiler,
+    //       since the Win32 RC compiler miscompiles this particular case and puts the pixel
+    //       data into the padding bytes of the color palette.
+    try testCompileWarningWithDir(
+        "bitmap has 16 missing color palette bytes which will be padded with zeroes",
+        "1 BITMAP test_missing_palette_bytes.bmp",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00>\x00\x00\x00 \x00\x00\x00\xff\xff\x02\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00(\x00\x00\x00\x01\x00\x00\x00\x01\x00\x00\x00\x01\x00\x10\x00\x00\x00\x00\x00\x06\x00\x00\x00\x12\x0b\x00\x00\x12\x0b\x00\x00\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\x7f\x00\x00\x00\x00\x00\x00",
+        tmp_dir.dir,
+    );
+
+    try tmp_dir.dir.writeFile("test_win2.0_missing_palette_bytes.bmp", "BMJX\x02\x00\x00\x00\x00\x00G\x00\x00\x00\x0c\x00\x00\x00\x80\x02\xe0\x01\x01\x00\x04\x00\x00\x00\x00\x80\x00\x00\x00\x80\x00\x80\x80\x00\x00\x00\x80\x80\x00\x80\x00\x80\x80\x80\x80\x80\xcc\xcc\xcc\xff\x00\x00\x00\xff\x00\xff\xff\x00\x00\x00\xff\xff\x00\xff\x00\xff\xff");
+    try testCompileWarningWithDir(
+        "bitmap has 3 missing color palette bytes which will be padded with zeroes",
+        "1 BITMAP test_win2.0_missing_palette_bytes.bmp",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00<\x00\x00\x00 \x00\x00\x00\xff\xff\x02\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x0c\x00\x00\x00\x80\x02\xe0\x01\x01\x00\x04\x00\x00\x00\x00\x80\x00\x00\x00\x80\x00\x80\x80\x00\x00\x00\x80\x80\x00\x80\x00\x80\x80\x80\x80\x80\xcc\xcc\xcc\xff\x00\x00\x00\xff\x00\xff\xff\x00\x00\x00\xff\xff\x00\xff\x00\xff\xff\x00\x00\x00",
+        tmp_dir.dir,
+    );
+
+    try tmp_dir.dir.writeFile("test_too_many_colors_for_bit_depth.bmp", "BM<\x00\x00\x00\x00\x00\x00\x006\x00\x00\x00(\x00\x00\x00\x01\x00\x00\x00\x01\x00\x00\x00\x01\x00\x10\x00\x00\x00\x00\x00\x06\x00\x00\x00\x12\x0b\x00\x00\x12\x0b\x00\x00\xff\xff\xff\xff\x00\x00\x00\x00\xff\x7f\x00\x00\x00\x00");
+    try testCompileErrorWithDir(
+        "invalid bitmap file 'test_too_many_colors_for_bit_depth.bmp': TooManyColorsInPalette",
+        "1 BITMAP test_too_many_colors_for_bit_depth.bmp",
+        tmp_dir.dir,
+    );
+
+    try tmp_dir.dir.writeFile("test_too_many_missing_palette_bytes.bmp", "BM<\x00\x00\x00\x00\x00\x00\x006\x00\x00\x00(\x00\x00\x00\x01\x00\x00\x00\x01\x00\x00\x00\x01\x00\x20\x00\x00\x00\x00\x00\x06\x00\x00\x00\x12\x0b\x00\x00\x12\x0b\x00\x00\xff\xff\xff\xff\x00\x00\x00\x00\xff\x7f\x00\x00\x00\x00");
+    try testCompileErrorWithDir(
+        "bitmap has 17179869180 missing color palette bytes which exceeds the maximum of 4096",
+        "1 BITMAP test_too_many_missing_palette_bytes.bmp",
         tmp_dir.dir,
     );
 }

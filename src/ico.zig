@@ -252,7 +252,10 @@ pub const BitmapHeader = extern struct {
     bcPlanes: u16,
     bcBitCount: u16,
 
-    /// The values are the size of the header (found in bcSize)
+    pub fn version(self: *const BitmapHeader) Version {
+        return Version.get(self.bcSize);
+    }
+
     /// https://en.wikipedia.org/wiki/BMP_file_format#DIB_header_(bitmap_information_header)
     pub const Version = enum {
         unknown,
@@ -263,16 +266,26 @@ pub const BitmapHeader = extern struct {
 
         pub fn get(header_size: u32) Version {
             return switch (header_size) {
-                12 => .@"win2.0",
-                40 => .@"nt3.1",
-                108 => .@"nt4.0",
-                124 => .@"nt5.0",
+                len(.@"win2.0") => .@"win2.0",
+                len(.@"nt3.1") => .@"nt3.1",
+                len(.@"nt4.0") => .@"nt4.0",
+                len(.@"nt5.0") => .@"nt5.0",
                 else => .unknown,
             };
         }
 
-        pub fn nameForErrorDisplay(version: Version) []const u8 {
-            return switch (version) {
+        pub fn len(comptime v: Version) comptime_int {
+            return switch (v) {
+                .@"win2.0" => 12,
+                .@"nt3.1" => 40,
+                .@"nt4.0" => 108,
+                .@"nt5.0" => 124,
+                .unknown => unreachable,
+            };
+        }
+
+        pub fn nameForErrorDisplay(v: Version) []const u8 {
+            return switch (v) {
                 .unknown => "unknown",
                 .@"win2.0" => "Windows 2.0 (BITMAPCOREHEADER)",
                 .@"nt3.1" => "Windows NT, 3.1x (BITMAPINFOHEADER)",
