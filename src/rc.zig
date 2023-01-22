@@ -28,11 +28,16 @@ pub const Resource = enum {
     stringtable,
     /// Undocumented
     toolbar,
-    //textinclude, // A special resource that is interpreted by Visual C++.
-    //typelib, // A special resource that is used with the /TLBID and /TLBOUT linker options
     user_defined,
     versioninfo,
     vxd, // Obsolete
+
+    // Types that are treated as a user-defined type when encountered, but have
+    // special meaning without the Visual Studio GUI. We match the Win32 RC compiler
+    // behavior by acting as if these keyword don't exist when compiling the .rc
+    // (thereby treating them as user-defined).
+    //textinclude, // A special resource that is interpreted by Visual C++.
+    //typelib, // A special resource that is used with the /TLBID and /TLBOUT linker options
 
     // Types that can only be specified by numbers, they don't have keywords
     cursor_num,
