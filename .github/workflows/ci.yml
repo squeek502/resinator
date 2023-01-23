@@ -33,7 +33,7 @@ jobs:
       - name: Build
         run: |
           zig build
-          echo "$GITHUB_WORKSPACE/zig-out/bin" >> $GITHUB_PATH
+          Add-Content $env:GITHUB_PATH "$env:GITHUB_WORKSPACE\zig-out\bin"
 
       - name: Test
         run: zig build test
