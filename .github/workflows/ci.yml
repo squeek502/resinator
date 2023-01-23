@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          submodules: true
+      - uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: master
+
+      - run: zig version
+      - run: zig env
+
+      - name: Build
+        run: zig build
+
+      - name: Test
+        run: zig build test
