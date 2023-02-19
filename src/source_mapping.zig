@@ -268,6 +268,17 @@ pub const SourceMappings = struct {
 
         self.mapping.items.len = new_num_lines;
     }
+
+    /// Returns true if the line is from the main/root file (i.e. not a file that has been
+    /// `#include`d).
+    pub fn isRootFile(self: *SourceMappings, line_num: usize) bool {
+        const line_mapping = self.get(line_num);
+        // Assume the first filename added is the root file
+        // TOOD: Don't rely on this, instead mark/set the root file in some way
+        //       when creating the source mappings
+        if (line_mapping.filename_offset == 0) return true;
+        return false;
+    }
 };
 
 test "SourceMappings collapse" {

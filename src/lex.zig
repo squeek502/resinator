@@ -9,6 +9,7 @@ const ErrorDetails = @import("errors.zig").ErrorDetails;
 const columnsUntilTabStop = @import("literals.zig").columnsUntilTabStop;
 const code_pages = @import("code_pages.zig");
 const CodePage = code_pages.CodePage;
+const SourceMappings = @import("source_mapping.zig").SourceMappings;
 
 const dumpTokensDuringTests = false;
 
@@ -122,6 +123,8 @@ pub const LexError = error{
     CodePagePragmaMissingRightParen,
     CodePagePragmaInvalidCodePage,
     CodePagePragmaUnsupportedCodePage,
+    /// Can be caught and ignored
+    CodePagePragmaInIncludedFile,
 };
 
 pub const Lexer = struct {
@@ -133,16 +136,18 @@ pub const Lexer = struct {
     at_start_of_line: bool = true,
     error_context_token: ?Token = null,
     current_code_page: CodePage,
+    source_mappings: ?*SourceMappings,
 
     pub const string_literal_length_limit = 4097;
 
     pub const Error = LexError;
 
-    pub fn init(buffer: []const u8, default_code_page: CodePage) Self {
+    pub fn init(buffer: []const u8, default_code_page: CodePage, source_mappings: ?*SourceMappings) Self {
         return Self{
             .buffer = buffer,
             .index = 0,
             .current_code_page = default_code_page,
+            .source_mappings = source_mappings,
         };
     }
 
@@ -744,7 +749,7 @@ pub const Lexer = struct {
     }
 
     fn evaluatePreprocessorCommand(self: *Self, start: usize, end: usize) !void {
-        const error_context = Token{
+        const token = Token{
             .id = .preprocessor_command,
             .start = start,
             .end = end,
@@ -774,7 +779,7 @@ pub const Lexer = struct {
         }
 
         if (command.len == 0 or command[0] != '(') {
-            self.error_context_token = error_context;
+            self.error_context_token = token;
             return error.CodePagePragmaMissingLeftParen;
         }
         command = command[1..];
@@ -790,7 +795,7 @@ pub const Lexer = struct {
         }
 
         if (num_str.len == 0 or num_str[0] == '0') {
-            self.error_context_token = error_context;
+            self.error_context_token = token;
             return error.CodePagePragmaInvalidCodePage;
         }
 
@@ -799,25 +804,39 @@ pub const Lexer = struct {
         }
 
         if (command.len == 0 or command[0] != ')') {
-            self.error_context_token = error_context;
+            self.error_context_token = token;
             return error.CodePagePragmaMissingRightParen;
         }
 
         const num = std.fmt.parseUnsigned(u16, num_str, 10) catch {
-            self.error_context_token = error_context;
+            self.error_context_token = token;
             return error.CodePagePragmaInvalidCodePage;
         };
 
         const code_page = code_pages.CodePage.getByIdentifier(num) catch |err| switch (err) {
             error.InvalidCodePage => {
-                self.error_context_token = error_context;
+                self.error_context_token = token;
                 return error.CodePagePragmaInvalidCodePage;
             },
             error.UnsupportedCodePage => {
-                self.error_context_token = error_context;
+                self.error_context_token = token;
                 return error.CodePagePragmaUnsupportedCodePage;
             },
         };
+
+        // https://learn.microsoft.com/en-us/windows/win32/menurc/pragma-directives
+        // > This pragma is not supported in an included resource file (.rc)
+        //
+        // Even though the Win32 behavior is to just ignore such directives silently,
+        // this is an error in the lexer to allow for emitting warnings/errors when
+        // such directives are found if that's wanted. The intention is for the lexer
+        // to still be able to work correctly after this error is returned.
+        if (self.source_mappings) |source_mappings| {
+            if (!source_mappings.isRootFile(token.line_number)) {
+                self.error_context_token = token;
+                return error.CodePagePragmaInIncludedFile;
+            }
+        }
 
         self.current_code_page = code_page;
     }
@@ -835,6 +854,7 @@ pub const Lexer = struct {
             error.CodePagePragmaMissingRightParen => ErrorDetails.Error.code_page_pragma_missing_right_paren,
             error.CodePagePragmaInvalidCodePage => ErrorDetails.Error.code_page_pragma_invalid_code_page,
             error.CodePagePragmaUnsupportedCodePage => ErrorDetails.Error.code_page_pragma_unsupported_code_page,
+            error.CodePagePragmaInIncludedFile => ErrorDetails.Error.code_page_pragma_in_included_file,
         };
         return .{
             .err = err,
@@ -844,7 +864,7 @@ pub const Lexer = struct {
 };
 
 fn testLexNormal(source: []const u8, expected_tokens: []const Token.Id) !void {
-    var lexer = Lexer.init(source, CodePage.windows1252);
+    var lexer = Lexer.init(source, CodePage.windows1252, null);
     if (dumpTokensDuringTests) std.debug.print("\n----------------------\n{s}\n----------------------\n", .{lexer.buffer});
     for (expected_tokens) |expected_token_id| {
         const token = try lexer.nextNormal();
@@ -876,7 +896,7 @@ test "normal: string literals" {
 test "superscript chars and code pages" {
     const firstToken = struct {
         pub fn firstToken(source: []const u8, default_code_page: CodePage, comptime lex_method: Lexer.LexMethod) LexError!Token {
-            var lexer = Lexer.init(source, default_code_page);
+            var lexer = Lexer.init(source, default_code_page, null);
             return lexer.next(lex_method);
         }
     }.firstToken;

@@ -22,14 +22,21 @@ const utils = @import("utils.zig");
 const NameOrOrdinal = res.NameOrOrdinal;
 const CodePage = @import("code_pages.zig").CodePage;
 const CodePageLookup = @import("ast.zig").CodePageLookup;
+const SourceMappings = @import("source_mapping.zig").SourceMappings;
 const windows1252 = @import("windows1252.zig");
 
-pub fn compile(allocator: Allocator, source: []const u8, writer: anytype, cwd: std.fs.Dir, diagnostics: *Diagnostics) !void {
+pub const CompileOptions = struct {
+    cwd: std.fs.Dir,
+    diagnostics: *Diagnostics,
+    source_mappings: ?*SourceMappings = null,
+};
+
+pub fn compile(allocator: Allocator, source: []const u8, writer: anytype, options: CompileOptions) !void {
     // TODO: Take this as a parameter
     const default_code_page: CodePage = .windows1252;
-    var lexer = Lexer.init(source, default_code_page);
+    var lexer = Lexer.init(source, default_code_page, options.source_mappings);
     var parser = Parser.init(&lexer);
-    var tree = try parser.parse(allocator, diagnostics);
+    var tree = try parser.parse(allocator, options.diagnostics);
     defer tree.deinit();
 
     var arena_allocator = std.heap.ArenaAllocator.init(allocator);
@@ -40,8 +47,8 @@ pub fn compile(allocator: Allocator, source: []const u8, writer: anytype, cwd: s
         .source = source,
         .arena = arena,
         .allocator = allocator,
-        .cwd = cwd,
-        .diagnostics = diagnostics,
+        .cwd = options.cwd,
+        .diagnostics = options.diagnostics,
         .code_pages = &tree.code_pages,
     };
 
@@ -2351,7 +2358,7 @@ fn testCompile(source: []const u8, cwd: std.fs.Dir) !void {
     var diagnostics = Diagnostics.init(std.testing.allocator);
     defer diagnostics.deinit();
 
-    try compile(std.testing.allocator, source, buffer.writer(), cwd, &diagnostics);
+    try compile(std.testing.allocator, source, buffer.writer(), .{ .cwd = cwd, .diagnostics = &diagnostics });
 
     const expected_res = try getExpectedFromWindowsRC(std.testing.allocator, source);
     defer std.testing.allocator.free(expected_res);
@@ -2366,7 +2373,7 @@ fn testCompileWithOutput(source: []const u8, expected_output: []const u8, cwd: s
     var diagnostics = Diagnostics.init(std.testing.allocator);
     defer diagnostics.deinit();
 
-    compile(std.testing.allocator, source, buffer.writer(), cwd, &diagnostics) catch |err| switch (err) {
+    compile(std.testing.allocator, source, buffer.writer(), .{ .cwd = cwd, .diagnostics = &diagnostics }) catch |err| switch (err) {
         error.ParseError, error.CompileError => {
             diagnostics.renderToStdErr(cwd, source, null);
             return err;
@@ -2390,7 +2397,7 @@ fn testCompileErrorWithDir(expected_error_str: []const u8, source: []const u8, c
     var diagnostics = Diagnostics.init(allocator);
     defer diagnostics.deinit();
 
-    compile(std.testing.allocator, source, buffer.writer(), cwd, &diagnostics) catch |err| switch (err) {
+    compile(std.testing.allocator, source, buffer.writer(), .{ .cwd = cwd, .diagnostics = &diagnostics }) catch |err| switch (err) {
         error.ParseError, error.CompileError => {
             if (diagnostics.errors.items.len < 1) return error.NoDiagnostics;
             if (diagnostics.errors.items[0].type != .err) @panic("TODO handle compile error test with a non-error as the first error");
@@ -2416,7 +2423,7 @@ fn testCompileWarningWithDir(expected_warning_str: []const u8, source: []const u
     var diagnostics = Diagnostics.init(allocator);
     defer diagnostics.deinit();
 
-    compile(std.testing.allocator, source, buffer.writer(), cwd, &diagnostics) catch |err| switch (err) {
+    compile(std.testing.allocator, source, buffer.writer(), .{ .cwd = cwd, .diagnostics = &diagnostics }) catch |err| switch (err) {
         error.ParseError, error.CompileError => {
             diagnostics.renderToStdErr(cwd, source, null);
             return err;

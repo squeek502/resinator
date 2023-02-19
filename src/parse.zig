@@ -1526,8 +1526,21 @@ pub const Parser = struct {
     }
 
     fn nextToken(self: *Self, comptime method: Lexer.LexMethod) Error!void {
-        self.state.token = self.lexer.next(method) catch |err| {
-            return self.addErrorDetailsAndFail(self.lexer.getErrorDetails(err));
+        self.state.token = token: while (true) {
+            const token = self.lexer.next(method) catch |err| switch (err) {
+                error.CodePagePragmaInIncludedFile => {
+                    // The Win32 RC compiler silently ignores such `#pragma code_point` directives,
+                    // but we want to both ignore them *and* emit a warning
+                    try self.addErrorDetails(.{
+                        .err = .code_page_pragma_in_included_file,
+                        .type = .warning,
+                        .token = self.lexer.error_context_token.?,
+                    });
+                    continue;
+                },
+                else => return self.addErrorDetailsAndFail(self.lexer.getErrorDetails(err)),
+            };
+            break :token token;
         };
         // After every token, set the code page for its line
         try self.state.code_page_lookup.setForToken(self.state.token, self.lexer.current_code_page);
@@ -1603,7 +1616,7 @@ fn testParse(source: []const u8, expected_ast_dump: []const u8) !void {
     var diagnostics = Diagnostics.init(allocator);
     defer diagnostics.deinit();
     // TODO: test different code pages
-    var lexer = Lexer.init(source, .windows1252);
+    var lexer = Lexer.init(source, .windows1252, null);
     var parser = Parser.init(&lexer);
     var tree = parser.parse(allocator, &diagnostics) catch |err| switch (err) {
         error.ParseError => {
@@ -3020,7 +3033,7 @@ fn testParseError(expected_error_str: []const u8, source: []const u8) !void {
     var diagnostics = Diagnostics.init(allocator);
     defer diagnostics.deinit();
     // TODO: test different code pages
-    var lexer = Lexer.init(source, .windows1252);
+    var lexer = Lexer.init(source, .windows1252, null);
     var parser = Parser.init(&lexer);
     var tree = parser.parse(allocator, &diagnostics) catch |err| switch (err) {
         error.OutOfMemory => |e| return e,
@@ -3045,7 +3058,7 @@ fn testParseWarning(expected_warning_str: []const u8, source: []const u8) !void 
     var diagnostics = Diagnostics.init(allocator);
     defer diagnostics.deinit();
     // TODO: test different code pages
-    var lexer = Lexer.init(source, .windows1252);
+    var lexer = Lexer.init(source, .windows1252, null);
     var parser = Parser.init(&lexer);
     var tree = try parser.parse(allocator, &diagnostics);
     defer tree.deinit();
