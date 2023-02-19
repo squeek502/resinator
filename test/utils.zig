@@ -19,7 +19,7 @@ pub fn expectSameResOutputWithDir(allocator: Allocator, source: []const u8, buff
     defer diagnostics.deinit();
 
     buffer.shrinkRetainingCapacity(0);
-    resinator.compile.compile(allocator, source, buffer.writer(), cwd, &diagnostics) catch |err| switch (err) {
+    resinator.compile.compile(allocator, source, buffer.writer(), .{ .cwd = cwd, .diagnostics = &diagnostics }) catch |err| switch (err) {
         error.ParseError, error.CompileError => {
             diagnostics.renderToStdErr(cwd, source, null);
             // Allow certain errors from resinator if RC succeeds

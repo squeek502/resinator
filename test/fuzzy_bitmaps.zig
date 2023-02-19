@@ -87,7 +87,7 @@ test "BITMAP fuzz" {
         defer diagnostics.deinit();
 
         buffer.shrinkRetainingCapacity(0);
-        if (resinator.compile.compile(allocator, source, buffer.writer(), tmp.dir, &diagnostics)) {
+        if (resinator.compile.compile(allocator, source, buffer.writer(), .{ .cwd = tmp.dir, .diagnostics = &diagnostics })) {
             diagnostics.renderToStdErr(tmp.dir, source, null);
         } else |err| switch (err) {
             error.ParseError, error.CompileError => {
