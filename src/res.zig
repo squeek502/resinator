@@ -461,7 +461,7 @@ test "NameOrOrdinal" {
             // the input before the 𐐷 character, but uppercased
             var expected_u8_bytes = "00614982008907933748980730280674788429543776231864944218790698304852300002973622122844631429099469274282385299397783838528QFFL7SHNSIETG0QKLR1UYPBTUV1PMFQRRA0VJDG354GQEDJMUPGPP1W1EXVNTZVEIZ6K3IPQM1AWGEYALMEODYVEZGOD3MFMGEY8FNR4JUETTB1PZDEWSNDRGZUA8SNXP3NGO";
             var buf: [256:0]u16 = undefined;
-            for (expected_u8_bytes) |byte, i| {
+            for (expected_u8_bytes, 0..) |byte, i| {
                 buf[i] = byte;
             }
             // surrogate pair that is now orphaned

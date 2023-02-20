@@ -677,7 +677,7 @@ pub const Node = struct {
             },
             .accelerator => {
                 const accelerator = @fieldParentPtr(Node.Accelerator, "base", node);
-                for (accelerator.type_and_options) |option, i| {
+                for (accelerator.type_and_options, 0..) |option, i| {
                     if (i != 0) try writer.writeAll(",");
                     try writer.writeByte(' ');
                     try writer.writeAll(option.slice(tree.source));

@@ -25,7 +25,7 @@ pub fn windows1252ToUtf16AllocZ(allocator: std.mem.Allocator, win1252_str: []con
     // Guaranteed to need exactly the same number of code units as Windows-1252 bytes
     var utf16_slice = try allocator.allocSentinel(u16, win1252_str.len, 0);
     errdefer allocator.free(utf16_slice);
-    for (win1252_str) |c, i| {
+    for (win1252_str, 0..) |c, i| {
         utf16_slice[i] = toCodepoint(c);
     }
     return utf16_slice;

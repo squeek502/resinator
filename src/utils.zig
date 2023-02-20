@@ -60,7 +60,7 @@ pub const ascii = struct {
     /// Compares ASCII values case-insensitively, non-ASCII values are compared directly
     pub fn eqlIgnoreCaseW(a: []const u16, b: []const u16) bool {
         if (a.len != b.len) return false;
-        for (a) |a_c, i| {
+        for (a, 0..) |a_c, i| {
             if (a_c < 128) {
                 if (std.ascii.toLower(@intCast(u8, a_c)) != std.ascii.toLower(@intCast(u8, b[i]))) return false;
             } else {
@@ -86,7 +86,7 @@ pub fn ComptimeCaseInsensitiveStringMap(comptime V: type, comptime kvs_list: any
                 return a.key.len < b.key.len;
             }
         }).lenAsc;
-        for (kvs_list) |kv, i| {
+        for (kvs_list, 0..) |kv, i| {
             if (V != void) {
                 sorted_kvs[i] = .{ .key = kv.@"0", .value = kv.@"1" };
             } else {

@@ -221,7 +221,7 @@ pub fn randomAsciiStringLiteral(allocator: Allocator, rand: std.rand.Random) ![]
 pub fn randomAlphanumExtendedBytes(allocator: Allocator, rand: std.rand.Random) ![]const u8 {
     const extended = extended: {
         var buf: [128]u8 = undefined;
-        for (buf) |*c, i| {
+        for (&buf, 0..) |*c, i| {
             c.* = @intCast(u8, i) + 128;
         }
         break :extended buf;

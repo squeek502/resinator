@@ -334,7 +334,7 @@ pub const Compiler = struct {
 
                     const first_icon_id = self.state.icon_id;
                     const entry_type = if (predefined_type == .GROUP_ICON) @enumToInt(res.RT.ICON) else @enumToInt(res.RT.CURSOR);
-                    for (icon_dir.entries) |*entry, entry_i| {
+                    for (icon_dir.entries, 0..) |*entry, entry_i| {
                         var full_data_size = entry.data_size_in_bytes;
                         if (icon_dir.image_type == .cursor) full_data_size += 4;
 
@@ -959,7 +959,7 @@ pub const Compiler = struct {
         defer data_buffer.deinit();
         const data_writer = data_buffer.writer();
 
-        for (node.accelerators) |accel_node, i| {
+        for (node.accelerators, 0..) |accel_node, i| {
             const accelerator = @fieldParentPtr(Node.Accelerator, "base", accel_node);
             var modifiers = res.AcceleratorModifiers{};
             for (accelerator.type_and_options) |type_or_option| {
@@ -1477,7 +1477,7 @@ pub const Compiler = struct {
             }
         }
 
-        for (node.items) |item, i| {
+        for (node.items, 0..) |item, i| {
             const is_last = i == node.items.len - 1;
             try self.writeMenuItem(item, data_writer, is_last);
         }
@@ -1546,7 +1546,7 @@ pub const Compiler = struct {
                 defer self.allocator.free(text);
                 try writer.writeAll(std.mem.sliceAsBytes(text[0 .. text.len + 1]));
 
-                for (popup.items) |item, i| {
+                for (popup.items, 0..) |item, i| {
                     const is_last = i == popup.items.len - 1;
                     try self.writeMenuItem(item, writer, is_last);
                 }
@@ -1599,7 +1599,7 @@ pub const Compiler = struct {
                         try writer.writeIntLittle(u32, 0);
                     }
 
-                    for (menu_item.items) |item, i| {
+                    for (menu_item.items, 0..) |item, i| {
                         const is_last = i == menu_item.items.len - 1;
                         try self.writeMenuItem(item, writer, is_last);
                     }
@@ -1627,7 +1627,7 @@ pub const Compiler = struct {
                 .version_statement => {
                     const version_statement = @fieldParentPtr(Node.VersionStatement, "base", fixed_info);
                     const version_type = rc.VersionInfo.map.get(version_statement.type.slice(self.source)).?;
-                    for (version_statement.parts) |part, i| {
+                    for (version_statement.parts, 0..) |part, i| {
                         const part_value = evaluateNumberExpression(part, self.source, self.code_pages);
                         switch (version_type) {
                             .file_version => {
@@ -1717,7 +1717,7 @@ pub const Compiler = struct {
 
                 try writeDataPadding(writer, @intCast(u32, buf.items.len));
 
-                for (block_or_value.values) |value_value_node_uncasted, i| {
+                for (block_or_value.values, 0..) |value_value_node_uncasted, i| {
                     const value_value_node = value_value_node_uncasted.cast(.block_value_value).?;
                     const value_node = value_value_node.expression;
                     if (value_node.isNumberExpression()) {

@@ -364,12 +364,12 @@ fn testParseAndRemoveLineCommands(
 
     expectEqualMappings(expected_spans, results.mappings) catch |err| {
         std.debug.print("\nexpected mappings:\n", .{});
-        for (expected_spans) |span, i| {
+        for (expected_spans, 0..) |span, i| {
             const line_num = i + 1;
             std.debug.print("{}: {s}:{}-{}\n", .{ line_num, span.filename, span.start_line, span.end_line });
         }
         std.debug.print("\nactual mappings:\n", .{});
-        for (results.mappings.mapping.items) |span, i| {
+        for (results.mappings.mapping.items, 0..) |span, i| {
             const line_num = i + 1;
             const filename = results.mappings.files.get(span.filename_offset);
             std.debug.print("{}: {s}:{}-{}\n", .{ line_num, filename, span.start_line, span.end_line });
@@ -381,7 +381,7 @@ fn testParseAndRemoveLineCommands(
 
 fn expectEqualMappings(expected_spans: []const ExpectedSourceSpan, mappings: SourceMappings) !void {
     try std.testing.expectEqual(expected_spans.len, mappings.mapping.items.len);
-    for (expected_spans) |expected_span, i| {
+    for (expected_spans, 0..) |expected_span, i| {
         const line_num = i + 1;
         const span = mappings.get(line_num);
         const filename = mappings.files.get(span.filename_offset);
