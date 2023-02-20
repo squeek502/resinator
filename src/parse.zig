@@ -1548,8 +1548,13 @@ pub const Parser = struct {
 
     fn lookaheadToken(self: *Self, comptime method: Lexer.LexMethod) Error!Token {
         self.state.lookahead_lexer = self.lexer.*;
-        return self.state.lookahead_lexer.next(method) catch |err| {
-            return self.addErrorDetailsAndFail(self.state.lookahead_lexer.getErrorDetails(err));
+        return token: while (true) {
+            break :token self.state.lookahead_lexer.next(method) catch |err| switch (err) {
+                // Ignore this error and get the next valid token, we'll deal with this
+                // properly when getting the token for real
+                error.CodePagePragmaInIncludedFile => continue,
+                else => return self.addErrorDetailsAndFail(self.state.lookahead_lexer.getErrorDetails(err)),
+            };
         };
     }
 

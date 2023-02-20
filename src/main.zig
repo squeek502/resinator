@@ -110,6 +110,14 @@ pub fn main() !void {
     var mapping_results = try parseAndRemoveLineCommands(allocator, result.stdout, result.stdout);
     defer mapping_results.mappings.deinit(allocator);
 
+    // Set the root file
+    if (mapping_results.mappings.files.getOffset(input_filename)) |root_filename_offset| {
+        mapping_results.mappings.root_filename_offset = root_filename_offset;
+    } else {
+        // TODO: Better handling/printing of this case, it'd be nice to make this case impossible
+        std.debug.print("input filename not found in source mappings: {s}\n", .{input_filename});
+    }
+
     var preprocessed_input = removeComments(mapping_results.result, mapping_results.result, &mapping_results.mappings);
 
     var output_file = try std.fs.cwd().createFile(output_filename.?, .{});

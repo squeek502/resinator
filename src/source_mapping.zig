@@ -215,6 +215,9 @@ pub const SourceMappings = struct {
     /// line number -> span where the index is (line number - 1)
     mapping: std.ArrayListUnmanaged(SourceSpan) = .{},
     files: StringTable = .{},
+    /// The default assumes that the first filename added is the root file.
+    /// The value should be set to the correct offset if that assumption does not hold.
+    root_filename_offset: u32 = 0,
 
     pub const SourceSpan = struct {
         start_line: usize,
@@ -273,10 +276,7 @@ pub const SourceMappings = struct {
     /// `#include`d).
     pub fn isRootFile(self: *SourceMappings, line_num: usize) bool {
         const line_mapping = self.get(line_num);
-        // Assume the first filename added is the root file
-        // TOOD: Don't rely on this, instead mark/set the root file in some way
-        //       when creating the source mappings
-        if (line_mapping.filename_offset == 0) return true;
+        if (line_mapping.filename_offset == self.root_filename_offset) return true;
         return false;
     }
 };
