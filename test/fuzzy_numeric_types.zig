@@ -6,6 +6,12 @@ test "raw data" {
     var buffer = std.ArrayList(u8).init(allocator);
     defer buffer.deinit();
 
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(tmp_path);
+
     var source_buffer = std.ArrayList(u8).init(allocator);
     defer source_buffer.deinit();
 
@@ -21,6 +27,6 @@ test "raw data" {
 
         const source = source_buffer.items;
 
-        try utils.expectSameResOutput(allocator, source, &buffer);
+        try utils.expectSameResOutput(allocator, source, &buffer, tmp.dir, tmp_path);
     }
 }

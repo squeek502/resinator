@@ -8,6 +8,12 @@ test "single chars" {
     var buffer = std.ArrayList(u8).init(allocator);
     defer buffer.deinit();
 
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(tmp_path);
+
     var source_buf = "1 RCDATA { \"?\" }".*;
     var source: []u8 = &source_buf;
     const byte_index = std.mem.indexOfScalar(u8, source, '?').?;
@@ -18,7 +24,7 @@ test "single chars" {
 
         source[byte_index] = byte;
 
-        try utils.expectSameResOutput(allocator, source, &buffer);
+        try utils.expectSameResOutput(allocator, source, &buffer, tmp.dir, tmp_path);
 
         if (byte == 255) break;
     }
@@ -28,6 +34,12 @@ test "single char escapes" {
     const allocator = std.testing.allocator;
     var buffer = std.ArrayList(u8).init(allocator);
     defer buffer.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(tmp_path);
 
     var source_buf = "1 RCDATA { \"\\?\" }".*;
     var source: []u8 = &source_buf;
@@ -41,22 +53,22 @@ test "single char escapes" {
 
         source[escaped_byte_index] = escaped_byte;
 
-        try utils.expectSameResOutput(allocator, source, &buffer);
+        try utils.expectSameResOutput(allocator, source, &buffer, tmp.dir, tmp_path);
 
         if (escaped_byte == 255) break;
     }
 }
 
 test "fuzz" {
-    // Use a single tmp dir to avoid creating and cleaning up a dir for each RC invocation
-    // Unfortunately there doesn't seem to be a way to avoid hitting the filesystem,
-    // the Windows RC compiler doesn't seem to like named pipes for either input or output
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
     const allocator = std.testing.allocator;
     var random = std.rand.DefaultPrng.init(0);
     var rand = random.random();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(tmp_path);
 
     var source_buffer = std.ArrayList(u8).init(allocator);
     defer source_buffer.deinit();
@@ -77,6 +89,6 @@ test "fuzz" {
         // write out the source file to disk for debugging
         try std.fs.cwd().writeFile("zig-cache/tmp/fuzzy_ascii_strings.rc", source);
 
-        try utils.expectSameResOutput(allocator, source, &buffer);
+        try utils.expectSameResOutput(allocator, source, &buffer, tmp.dir, tmp_path);
     }
 }

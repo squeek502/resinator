@@ -21,6 +21,12 @@ fn testAllBytes(source: []u8) !void {
     var buffer = std.ArrayList(u8).init(allocator);
     defer buffer.deinit();
 
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(tmp_path);
+
     const byte_index = std.mem.indexOfScalar(u8, source, '?').?;
     var byte: u8 = 1;
     while (true) : (byte += 1) {
@@ -36,7 +42,7 @@ fn testAllBytes(source: []u8) !void {
         source[byte_index] = byte;
         std.debug.print("byte: 0x{X}\n", .{byte});
 
-        try utils.expectSameResOutput(allocator, source, &buffer);
+        try utils.expectSameResOutput(allocator, source, &buffer, tmp.dir, tmp_path);
 
         if (byte == 255) break;
     }

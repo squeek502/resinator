@@ -9,15 +9,12 @@ const common_resource_attributes: []const []const u8 = &.{
 
 // TODO: For each resource type as well
 test "RCDATA common resource attribute permutations" {
-    // Use a single tmp dir to avoid creating and cleaning up a dir for each RC invocation
-    // Unfortunately there doesn't seem to be a way to avoid hitting the filesystem,
-    // the Windows RC compiler doesn't seem to like named pipes for either input or output
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
     const allocator = std.testing.allocator;
     var buffer = std.ArrayList(u8).init(allocator);
     defer buffer.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
 
     const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
     defer allocator.free(tmp_path);
@@ -49,7 +46,7 @@ test "RCDATA common resource attribute permutations" {
             std.debug.print("{}\n", .{perm_i});
             const source = source_buffer.items;
 
-            try utils.expectSameResOutputWithDir(allocator, source, &buffer, tmp.dir, tmp_path);
+            try utils.expectSameResOutput(allocator, source, &buffer, tmp.dir, tmp_path);
 
             source_buffer.shrinkRetainingCapacity(0);
         }
@@ -60,15 +57,12 @@ test "ICON common resource attribute permutations" {
     // This takes a long time so it's disabled by default
     if (true) return error.SkipZigTest;
 
-    // Use a single tmp dir to avoid creating and cleaning up a dir for each RC invocation
-    // Unfortunately there doesn't seem to be a way to avoid hitting the filesystem,
-    // the Windows RC compiler doesn't seem to like named pipes for either input or output
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
     const allocator = std.testing.allocator;
     var buffer = std.ArrayList(u8).init(allocator);
     defer buffer.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
 
     const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
     defer allocator.free(tmp_path);
@@ -112,7 +106,7 @@ test "ICON common resource attribute permutations" {
             std.debug.print("{}\n", .{perm_i});
             const source = source_buffer.items;
 
-            try utils.expectSameResOutputWithDir(allocator, source, &buffer, tmp.dir, tmp_path);
+            try utils.expectSameResOutput(allocator, source, &buffer, tmp.dir, tmp_path);
 
             source_buffer.shrinkRetainingCapacity(0);
         }

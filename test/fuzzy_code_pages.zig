@@ -8,12 +8,15 @@ test "windows-1252 mappings" {
     // to run the test.
     if (true) return error.SkipZigTest;
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
     const allocator = std.testing.allocator;
     var buffer = std.ArrayList(u8).init(allocator);
     defer buffer.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(tmp_path);
 
     var source_buffer = std.ArrayList(u8).init(allocator);
     defer source_buffer.deinit();
@@ -47,7 +50,7 @@ test "windows-1252 mappings" {
             std.debug.print("{}\n", .{i});
             const source = source_buffer.items;
 
-            try utils.expectSameResOutput(allocator, source, &buffer);
+            try utils.expectSameResOutput(allocator, source, &buffer, tmp.dir, tmp_path);
 
             source_buffer.shrinkRetainingCapacity(0);
             try source_buffer.appendSlice("#pragma code_page(65001)\n");
@@ -56,15 +59,15 @@ test "windows-1252 mappings" {
 }
 
 test "fuzz" {
-    // Use a single tmp dir to avoid creating and cleaning up a dir for each RC invocation
-    // Unfortunately there doesn't seem to be a way to avoid hitting the filesystem,
-    // the Windows RC compiler doesn't seem to like named pipes for either input or output
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
     const allocator = std.testing.allocator;
     var random = std.rand.DefaultPrng.init(0);
     var rand = random.random();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(tmp_path);
 
     var source_buffer = std.ArrayList(u8).init(allocator);
     defer source_buffer.deinit();
@@ -114,6 +117,6 @@ test "fuzz" {
         // write out the source file to disk for debugging
         try std.fs.cwd().writeFile("zig-cache/tmp/fuzzy_code_pages.rc", source);
 
-        try utils.expectSameResOutput(allocator, source, &buffer);
+        try utils.expectSameResOutput(allocator, source, &buffer, tmp.dir, tmp_path);
     }
 }

@@ -17,9 +17,6 @@ test "BITMAP fuzz" {
     var random = std.rand.DefaultPrng.init(0);
     var rand = random.random();
 
-    const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
-    defer allocator.free(tmp_path);
-
     var image_buffer = std.ArrayList(u8).init(allocator);
     defer image_buffer.deinit();
 

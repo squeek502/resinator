@@ -4,15 +4,12 @@ const fuzzy_options = @import("fuzzy_options");
 const iterations = fuzzy_options.max_iterations;
 
 test "ICON fuzz" {
-    // Use a single tmp dir to avoid creating and cleaning up a dir for each RC invocation
-    // Unfortunately there doesn't seem to be a way to avoid hitting the filesystem,
-    // the Windows RC compiler doesn't seem to like named pipes for either input or output
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
     const allocator = std.testing.allocator;
     var random = std.rand.DefaultPrng.init(0);
     var rand = random.random();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
 
     const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
     defer allocator.free(tmp_path);
@@ -87,6 +84,6 @@ test "ICON fuzz" {
         // also write it to the top-level tmp dir for debugging
         try std.fs.cwd().writeFile("zig-cache/tmp/fuzzy_icons.ico", icon_buffer.items);
 
-        try utils.expectSameResOutputWithDir(allocator, source, &buffer, tmp.dir, tmp_path);
+        try utils.expectSameResOutput(allocator, source, &buffer, tmp.dir, tmp_path);
     }
 }

@@ -2,13 +2,7 @@ const std = @import("std");
 const resinator = @import("resinator");
 const Allocator = std.mem.Allocator;
 
-pub fn expectSameResOutput(allocator: Allocator, source: []const u8, buffer: *std.ArrayList(u8)) !void {
-    const cwd_path = try std.fs.cwd().realpathAlloc(allocator, ".");
-    defer allocator.free(cwd_path);
-    return expectSameResOutputWithDir(allocator, source, buffer, std.fs.cwd(), cwd_path);
-}
-
-pub fn expectSameResOutputWithDir(allocator: Allocator, source: []const u8, buffer: *std.ArrayList(u8), cwd: std.fs.Dir, cwd_path: []const u8) !void {
+pub fn expectSameResOutput(allocator: Allocator, source: []const u8, buffer: *std.ArrayList(u8), cwd: std.fs.Dir, cwd_path: []const u8) !void {
     const expected_res: ?[]const u8 = resinator.compile.getExpectedFromWindowsRCWithDir(allocator, source, cwd, cwd_path) catch |err| switch (err) {
         error.ExitCodeFailure, error.ProcessTerminated => null,
         else => |e| return e,
