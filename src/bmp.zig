@@ -4,6 +4,19 @@
 //! https://learn.microsoft.com/en-us/windows/win32/api/wingdi/ns-wingdi-bitmapcoreheader
 //! https://archive.org/details/mac_Graphics_File_Formats_Second_Edition_1996/page/n607/mode/2up
 //! https://learn.microsoft.com/en-us/windows/win32/api/wingdi/ns-wingdi-bitmapv5header
+//!
+//! Notes:
+//! - The Microsoft documentation is incredibly unclear about the color table when the
+//!   bit depth is >= 16.
+//!   + For bit depth 24 it says "the bmiColors member of BITMAPINFO is NULL" but also
+//!     says "the bmiColors color table is used for optimizing colors used on palette-based
+//!     devices, and must contain the number of entries specified by the bV5ClrUsed member"
+//!   + For bit depth 16 and 32, it seems to imply that if the compression is BI_BITFIELDS
+//!     or BI_ALPHABITFIELDS, then the color table *only* consists of the bit masks, but
+//!     doesn't really say this outright and the Wikipedia article seems to disagree
+//!   For the purposes of this implementation, color tables can always be present for any
+//!   bit depth and compression, and the color table follows the header + any optional
+//!   bit mask fields dictated by the specified compression.
 
 const std = @import("std");
 const BitmapHeader = @import("ico.zig").BitmapHeader;
@@ -93,28 +106,8 @@ pub fn read(reader: anytype, max_size: u64) ReadError!BitmapInfo {
             var dib_header = @ptrCast(*BITMAPINFOHEADER, &dib_header_buf);
             structFieldsLittleToNative(BITMAPINFOHEADER, dib_header);
 
-            const max_colors_in_palette: u64 = switch (dib_header.biBitCount) {
-                // Note: Bit depths >= 16 only uses the color table 'for optimizing colors
-                // used on palette-based devices', but it still makes sense to limit their
-                // colors since the pixel data is still limited to this number of colors
-                // (i.e. even though the color table is not indexed by the pixel data,
-                // the color table having more colors than the pixel data can represent
-                // would never make sense and indicates a malformed bitmap).
-                1, 4, 8, 16, 24, 32 => @as(u64, 1) << @intCast(u6, dib_header.biBitCount),
-                else => return error.InvalidBitsPerPixel,
-            };
-            if (dib_header.biClrUsed == 0 and dib_header.biBitCount < 16) {
-                bitmap_info.colors_in_palette = @intCast(u32, max_colors_in_palette);
-            } else {
-                bitmap_info.colors_in_palette = dib_header.biClrUsed;
-            }
+            bitmap_info.colors_in_palette = try dib_header.numColorsInTable();
             bitmap_info.bytes_per_color_palette_element = 4;
-
-            // Limit number of colors to the max colors in the palette for the bit depth.
-            if (bitmap_info.colors_in_palette > max_colors_in_palette) {
-                return error.TooManyColorsInPalette;
-            }
-
             bitmap_info.compression = @intToEnum(Compression, dib_header.biCompression);
 
             if (bitmap_info.getByteLenBetweenHeadersAndPixels() < bitmap_info.getBitmasksByteLen()) {
@@ -132,7 +125,7 @@ pub fn read(reader: anytype, max_size: u64) ReadError!BitmapInfo {
             // > The color palette has 2, 16, 256, or 0 entries for a BitsPerPixel of
             // > 1, 4, 8, and 24, respectively.
             bitmap_info.colors_in_palette = switch (dib_header.bcBitCount) {
-                1, 4, 8 => @as(u32, 1) << @intCast(u4, dib_header.bcBitCount),
+                inline 1, 4, 8 => |bit_count| 1 << bit_count,
                 24 => 0,
                 else => return error.InvalidBitsPerPixel,
             };
@@ -168,6 +161,50 @@ pub const BITMAPINFOHEADER = extern struct {
     biYPelsPerMeter: i32,
     biClrUsed: u32,
     biClrImportant: u32,
+
+    /// Returns error.TooManyColorsInPalette if the number of colors specified
+    /// exceeds the number of possible colors referenced in the pixel data (i.e.
+    /// if 1 bit is used per pixel, then the color table can't have more than 2 colors
+    /// since any more couldn't possibly be indexed in the pixel data)
+    ///
+    /// Returns error.InvalidBitsPerPixel if the bit depth is not 1, 4, 8, 16, 24, or 32.
+    pub fn numColorsInTable(self: BITMAPINFOHEADER) !u32 {
+        switch (self.biBitCount) {
+            inline 1, 4, 8 => |bit_count| switch (self.biClrUsed) {
+                // > If biClrUsed is zero, the array contains the maximum number of
+                // > colors for the given bitdepth; that is, 2^biBitCount colors
+                0 => return 1 << bit_count,
+                // > If biClrUsed is nonzero and the biBitCount member is less than 16,
+                // > the biClrUsed member specifies the actual number of colors the
+                // > graphics engine or device driver accesses.
+                else => {
+                    const max_colors = 1 << bit_count;
+                    if (self.biClrUsed > max_colors) {
+                        return error.TooManyColorsInPalette;
+                    }
+                    return self.biClrUsed;
+                },
+            },
+            // > If biBitCount is 16 or greater, the biClrUsed member specifies
+            // > the size of the color table used to optimize performance of the
+            // > system color palettes.
+            //
+            // Note: Bit depths >= 16 only use the color table 'for optimizing colors
+            // used on palette-based devices', but it still makes sense to limit their
+            // colors since the pixel data is still limited to this number of colors
+            // (i.e. even though the color table is not indexed by the pixel data,
+            // the color table having more colors than the pixel data can represent
+            // would never make sense and indicates a malformed bitmap).
+            inline 16, 24, 32 => |bit_count| {
+                const max_colors = 1 << bit_count;
+                if (self.biClrUsed > max_colors) {
+                    return error.TooManyColorsInPalette;
+                }
+                return self.biClrUsed;
+            },
+            else => return error.InvalidBitsPerPixel,
+        }
+    }
 };
 
 pub const Compression = enum(u32) {
