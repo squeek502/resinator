@@ -250,3 +250,51 @@ pub const Colors = enum {
         };
     }
 };
+
+/// Sort of like std.io.LimitedReader, but a Writer.
+/// Returns an error if writing the requested number of bytes
+/// would ever exceed bytes_left, i.e. it does not always
+/// write up to the limit and instead will error if the
+/// limit would be breached if the entire slice was written.
+pub fn LimitedWriter(comptime WriterType: type) type {
+    return struct {
+        inner_writer: WriterType,
+        bytes_left: u64,
+
+        pub const Error = error{NoSpaceLeft} || WriterType.Error;
+        pub const Writer = std.io.Writer(*Self, Error, write);
+
+        const Self = @This();
+
+        pub fn write(self: *Self, bytes: []const u8) Error!usize {
+            if (bytes.len > self.bytes_left) return error.NoSpaceLeft;
+            const amt = try self.inner_writer.write(bytes);
+            self.bytes_left -= amt;
+            return amt;
+        }
+
+        pub fn writer(self: *Self) Writer {
+            return .{ .context = self };
+        }
+    };
+}
+
+/// Returns an initialised `LimitedWriter`
+/// `bytes_left` is a `u64` to be able to take 64 bit file offsets
+pub fn limitedWriter(inner_writer: anytype, bytes_left: u64) LimitedWriter(@TypeOf(inner_writer)) {
+    return .{ .inner_writer = inner_writer, .bytes_left = bytes_left };
+}
+
+test "limitedWriter basic usage" {
+    var buf: [4]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buf);
+    var limited_stream = limitedWriter(fbs.writer(), 4);
+    var writer = limited_stream.writer();
+
+    try std.testing.expectEqual(@as(usize, 3), try writer.write("123"));
+    try std.testing.expectEqualSlices(u8, "123", buf[0..3]);
+    try std.testing.expectError(error.NoSpaceLeft, writer.write("45"));
+    try std.testing.expectEqual(@as(usize, 1), try writer.write("4"));
+    try std.testing.expectEqualSlices(u8, "1234", buf[0..4]);
+    try std.testing.expectError(error.NoSpaceLeft, writer.write("5"));
+}

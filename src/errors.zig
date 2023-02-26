@@ -276,6 +276,7 @@ pub const ErrorDetails = struct {
         /// palette bytes and the second contains the max number of missing palette bytes.
         /// If type is `.note`, then `extra` is `none`.
         bmp_too_many_missing_palette_bytes,
+        raw_data_size_exceeded_max,
 
         // Literals
         /// `number` is populated
@@ -452,6 +453,9 @@ pub const ErrorDetails = struct {
                 },
                 // TODO: command line option
                 .note => try writer.writeAll("the maximum number of missing color palette bytes is configurable via <<TODO command line option>>"),
+            },
+            .raw_data_size_exceeded_max => {
+                try writer.print("resource's data length exceeds maximum of {} bytes", .{std.math.maxInt(u32)});
             },
             .rc_would_miscompile_codepoint_byte_swap => switch (self.type) {
                 .err, .warning => return writer.print("codepoint U+{X} within a string literal would be miscompiled by the Win32 RC compiler (the bytes of the UTF-16 code unit would be swapped)", .{self.extra.number}),

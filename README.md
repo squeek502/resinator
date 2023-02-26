@@ -105,6 +105,11 @@ The plan is to use fuzz testing with the `rc` tool as an oracle to ensure that `
 - `.rc` files that use splices (`\` at the end of a line) within strings that include whitespace after the splice will be handled differently.
   + The Win32 RC compiler's preprocessor seems to collapse whitespace after a splice that's within a string, while `clang`'s preprocessor does not. An example of a file for which this behavior difference can be reproduced can be found [here](https://github.com/microsoft/Windows-classic-samples/blob/7cbd99ac1d2b4a0beffbaba29ea63d024ceff700/Samples/Win7Samples/winui/shell/appshellintegration/NonDefaultDropMenuVerb/NonDefaultDropMenuVerb.rc#L10-L20).
 
+### Unconfirmed divergences from the MSVC++ `rc` tool
+
+- `resinator` will error if a resource's data length exceeds the max of a `u32`, since the header of the resource needs to specify its data length as a `u32`.
+  + My assumption is that the Win32 RC compiler does not account for/test for this, and would likely overflow the data size. Need to test this with a > 4GiB resource to confirm.
+
 ## Status
 
 Pretty much all known/documented resource types are supported (pending further investigation). `resinator` can successfully compile every `.rc` file in the [Windows-classic-samples repo](https://github.com/microsoft/Windows-classic-samples) byte-for-byte identically to the Win32 RC compiler (this may not be technically true, there are some `.rc` files that need intermediate generated files that aren't fully tested yet).

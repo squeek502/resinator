@@ -883,18 +883,32 @@ pub const Compiler = struct {
     pub fn writeResourceRawData(self: *Compiler, node: *Node.ResourceRawData, writer: anytype) !void {
         var data_buffer = std.ArrayList(u8).init(self.allocator);
         defer data_buffer.deinit();
-        const data_writer = data_buffer.writer();
+        // The header's data length field is a u32 so limit the resource's data size so that
+        // we know we can always specify the real size.
+        var limited_writer = utils.limitedWriter(data_buffer.writer(), std.math.maxInt(u32));
+        const data_writer = limited_writer.writer();
 
         for (node.raw_data) |expression| {
             const data = try self.evaluateDataExpression(expression);
             defer data.deinit(self.allocator);
-            try data.write(data_writer);
+            data.write(data_writer) catch |err| switch (err) {
+                error.NoSpaceLeft => {
+                    return self.addErrorDetailsAndFail(.{
+                        .err = .raw_data_size_exceeded_max,
+                        .token = node.id,
+                    });
+                },
+                else => |e| return e,
+            };
         }
 
-        try self.writeResourceHeader(writer, node.id, node.type, @intCast(u32, data_buffer.items.len), node.common_resource_attributes, self.state.language);
+        // This intCast can't fail because the limitedWriter above guarantees that
+        // we will never write more than maxInt(u32) bytes.
+        const data_len = @intCast(u32, data_buffer.items.len);
+        try self.writeResourceHeader(writer, node.id, node.type, data_len, node.common_resource_attributes, self.state.language);
 
         var data_fbs = std.io.fixedBufferStream(data_buffer.items);
-        try writeResourceData(writer, data_fbs.reader(), @intCast(u32, data_buffer.items.len));
+        try writeResourceData(writer, data_fbs.reader(), data_len);
     }
 
     pub fn writeResourceHeader(self: *Compiler, writer: anytype, id_token: Token, type_token: Token, data_size: u32, common_resource_attributes: []Token, language: res.Language) !void {
