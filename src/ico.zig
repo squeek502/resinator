@@ -122,6 +122,12 @@ pub const IconDir = struct {
         self.allocator.free(self.entries);
     }
 
+    pub const res_header_byte_len = 6;
+
+    pub fn getResDataSize(self: IconDir) u32 {
+        return IconDir.res_header_byte_len + @intCast(u32, self.entries.len) * Entry.res_byte_len;
+    }
+
     pub fn writeResData(self: IconDir, writer: anytype, first_image_id: u16) !void {
         try writer.writeIntLittle(u16, 0);
         try writer.writeIntLittle(u16, @enumToInt(self.image_type));
@@ -156,6 +162,8 @@ pub const Entry = struct {
     },
     data_size_in_bytes: u32,
     data_offset_from_start_of_file: u32,
+
+    pub const res_byte_len = 14;
 
     pub fn writeResData(self: Entry, writer: anytype, id: u16) !void {
         switch (self.type_specific_data) {

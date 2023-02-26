@@ -492,8 +492,7 @@ pub const Compiler = struct {
                         self.state.icon_id += 1;
                     }
 
-                    // TODO: Move this in a function somewhere that makes sense
-                    header.data_size = @intCast(u32, 6 + 14 * icon_dir.entries.len);
+                    header.data_size = icon_dir.getResDataSize();
 
                     try header.write(writer);
                     try icon_dir.writeResData(writer, first_icon_id);
