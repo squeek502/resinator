@@ -115,8 +115,13 @@ pub fn main() !void {
     if (mapping_results.mappings.files.getOffset(input_filename)) |root_filename_offset| {
         mapping_results.mappings.root_filename_offset = root_filename_offset;
     } else {
-        // TODO: Better handling/printing of this case, it'd be nice to make this case impossible
+        // This *should* be impossible, as the clang preprocessor inserts whatever filename
+        // you give it into the #line directives (e.g. `.\./rCDaTA.rC` for a file called
+        // `rcdata.rc` will get a `#line 1 ".\\./rCDaTA.rC"` directive), but this may still
+        // happen if there is a mismatch in how the line directive strings are parsed versus
+        // how they are escaped/written by the preprocessor.
         std.debug.print("input filename not found in source mappings: {s}\n", .{input_filename});
+        @panic("Internal error (this is a bug)");
     }
 
     var preprocessed_input = removeComments(mapping_results.result, mapping_results.result, &mapping_results.mappings);
