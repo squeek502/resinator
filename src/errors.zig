@@ -524,6 +524,7 @@ pub fn renderErrorMessage(allocator: std.mem.Allocator, writer: anytype, colors:
     defer source_line_for_display_buf.deinit();
     try writeSourceSlice(source_line_for_display_buf.writer(), source_line);
 
+    // TODO: General handling of long lines, not tied to this specific error
     if (err_details.err == .string_literal_too_long) {
         const before_slice = source_line[0..@min(source_line.len, token_offset + 16)];
         try writeSourceSlice(writer, before_slice);
@@ -540,7 +541,11 @@ pub fn renderErrorMessage(allocator: std.mem.Allocator, writer: anytype, colors:
     try writer.writeByte('^');
     const token_len = err_details.token.end - err_details.token.start;
     if (token_len > 1) {
-        try writer.writeByteNTimes('~', token_len - 1);
+        var num_squiggles = token_len - 1;
+        if (err_details.err == .string_literal_too_long) {
+            num_squiggles = @min(num_squiggles, 15);
+        }
+        try writer.writeByteNTimes('~', num_squiggles);
     }
     try writer.writeByte('\n');
     colors.set(writer, .reset);
