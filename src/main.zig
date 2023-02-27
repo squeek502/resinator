@@ -59,6 +59,7 @@ pub fn main() !void {
         var filename_writer = filename_fbs.writer();
         try filename_writer.writeAll(std.fs.path.stem(input_filename));
         try filename_writer.writeAll(".res");
+        output_filename = output_filename_buf[0..filename_writer.context.pos];
     }
 
     var argv = std.ArrayList([]const u8).init(allocator);
