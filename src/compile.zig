@@ -653,8 +653,15 @@ pub const Compiler = struct {
         }
 
         // Fallback to just writing out the entire contents of the file
-        // TODO: How does the Windows RC compiler handle file sizes over u32 max?
-        header.data_size = @intCast(u32, try file.getEndPos());
+        const data_size = try file.getEndPos();
+        if (data_size > std.math.maxInt(u32)) {
+            return self.addErrorDetailsAndFail(.{
+                .err = .resource_data_size_exceeds_max,
+                .token = node.id,
+            });
+        }
+        // We now know that the data size will fit in a u32
+        header.data_size = @intCast(u32, data_size);
         try header.write(writer);
         try writeResourceData(writer, file.reader(), header.data_size);
     }
@@ -894,7 +901,7 @@ pub const Compiler = struct {
             data.write(data_writer) catch |err| switch (err) {
                 error.NoSpaceLeft => {
                     return self.addErrorDetailsAndFail(.{
-                        .err = .raw_data_size_exceeded_max,
+                        .err = .resource_data_size_exceeds_max,
                         .token = node.id,
                     });
                 },

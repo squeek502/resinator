@@ -93,6 +93,14 @@ The plan is to use fuzz testing with the `rc` tool as an oracle to ensure that `
   + The Win32 RC compiler does no checking of this, and will either give an out-of-memory error or just unconditionally write huge amounts of zeroes to the color palette (e.g. if the bit depth of the `.bmp` is 32 and the number of colors used is set to `200,000,000`, then `num_colors * 4` or `800,000,000` bytes will be written to the color palette). Such large amounts of colors are extremely likely be indicative of a malformed bitmap, as bit depths 16, 24, and 32 only use color tables for optimization purposes (["The bmiColors color table is used for optimizing colors used on palette-based devices, and must contain the number of entries specified by the biClrUsed member of the BITMAPINFOHEADER."](https://learn.microsoft.com/en-us/previous-versions//dd183376(v=vs.85))).
   + Note: Enforcing a limit here avoids malformed bitmaps potentially inducing really large `.res` files
 
+#### Resource data and `.res` filesize limits
+
+The Win32 RC compiler will `fatal error RW1023: I/O error seeking in file` if the resulting `.res` filesize ever exceeds 2GiB (2,147,483,648 bytes). This indirectly limits the size of individual resources; the largest possible resource can be slightly smaller than 2GiB if it's the only resource in the `.res` (slightly smaller than 2GiB to allow for the resource headers, etc).
+
+This 2GiB `.res` limit is not present in `resinator`, so instead:
+
+- `resinator` will error if a resource's data length exceeds the max of a `u32`, since the header of the resource needs to be able to specify its data length as a `u32`.
+
 ### Unavoidable divergences from the MSVC++ `rc` tool
 
 - `resinator` does not support UTF-16 encoded `.rc` files.
@@ -104,11 +112,6 @@ The plan is to use fuzz testing with the `rc` tool as an oracle to ensure that `
   + For example, `RC<\r>DATA` will be compiled by the Windows RC tool as if it were `RCDATA`, but `clang`'s preprocessor will convert it to `RC<\n>DATA` which `resinator` will parse as separate `RC` and `DATA` tokens.
 - `.rc` files that use splices (`\` at the end of a line) within strings that include whitespace after the splice will be handled differently.
   + The Win32 RC compiler's preprocessor seems to collapse whitespace after a splice that's within a string, while `clang`'s preprocessor does not. An example of a file for which this behavior difference can be reproduced can be found [here](https://github.com/microsoft/Windows-classic-samples/blob/7cbd99ac1d2b4a0beffbaba29ea63d024ceff700/Samples/Win7Samples/winui/shell/appshellintegration/NonDefaultDropMenuVerb/NonDefaultDropMenuVerb.rc#L10-L20).
-
-### Unconfirmed divergences from the MSVC++ `rc` tool
-
-- `resinator` will error if a resource's data length exceeds the max of a `u32`, since the header of the resource needs to specify its data length as a `u32`.
-  + My assumption is that the Win32 RC compiler does not account for/test for this, and would likely overflow the data size. Need to test this with a > 4GiB resource to confirm.
 
 ## Status
 
