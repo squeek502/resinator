@@ -1705,7 +1705,7 @@ pub const Compiler = struct {
         // limited the writer to maxInt(u16)
         const data_size = @intCast(u16, data_buffer.items.len);
         // And now that we know the full size of this node (including its children), set its size
-        std.mem.writeIntLittle(u16, data_buffer.items[0..2]);
+        std.mem.writeIntLittle(u16, data_buffer.items[0..2], data_size);
 
         const type_bytes = self.sourceBytesForToken(node.versioninfo);
         const id_bytes = self.sourceBytesForToken(node.id);
