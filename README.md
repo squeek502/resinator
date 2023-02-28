@@ -95,11 +95,10 @@ The plan is to use fuzz testing with the `rc` tool as an oracle to ensure that `
 
 #### Resource data and `.res` filesize limits
 
-The Win32 RC compiler will `fatal error RW1023: I/O error seeking in file` if the resulting `.res` filesize ever exceeds 2GiB (2,147,483,648 bytes). This indirectly limits the size of individual resources; the largest possible resource can be slightly smaller than 2GiB if it's the only resource in the `.res` (slightly smaller than 2GiB to allow for the resource headers, etc).
-
-This 2GiB `.res` limit is not present in `resinator`, so instead:
-
 - `resinator` will error if a resource's data length exceeds the max of a `u32`, since the header of the resource needs to be able to specify its data length as a `u32`.
+  + The Win32 RC compiler will `fatal error RW1023: I/O error seeking in file` if the resulting `.res` filesize ever exceeds 2GiB (2,147,483,648 bytes). This indirectly limits the size of individual resources; the largest possible resource can be slightly smaller than 2GiB if it's the only resource in the `.res` (slightly smaller than 2GiB to allow for the resource headers, etc).
+- `resinator` will error if a `VERSIONINFO` resource contains a node tree that is larger than the max of a `u16`, since the root node needs to be able to specify its byte length (inclusive of all children) as a `u16`.
+  + The Win32 RC compiler will not error and instead the node's byte length will overflow and wrap back around to 0. This leads to an invalid version node tree.
 
 ### Unavoidable divergences from the MSVC++ `rc` tool
 

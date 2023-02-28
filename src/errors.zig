@@ -277,6 +277,7 @@ pub const ErrorDetails = struct {
         /// If type is `.note`, then `extra` is `none`.
         bmp_too_many_missing_palette_bytes,
         resource_data_size_exceeds_max,
+        version_node_size_exceeds_max,
 
         // Literals
         /// `number` is populated
@@ -456,6 +457,10 @@ pub const ErrorDetails = struct {
             },
             .resource_data_size_exceeds_max => {
                 try writer.print("resource's data length exceeds maximum of {} bytes", .{std.math.maxInt(u32)});
+            },
+            .version_node_size_exceeds_max => switch (self.type) {
+                .err, .warning => return writer.print("version node tree size exceeds maximum of {} bytes", .{std.math.maxInt(u16)}),
+                .note => return writer.print("maximum tree size exceeded while writing this child", .{}),
             },
             .rc_would_miscompile_codepoint_byte_swap => switch (self.type) {
                 .err, .warning => return writer.print("codepoint U+{X} within a string literal would be miscompiled by the Win32 RC compiler (the bytes of the UTF-16 code unit would be swapped)", .{self.extra.number}),

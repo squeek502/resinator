@@ -1632,14 +1632,20 @@ pub const Compiler = struct {
     pub fn writeVersionInfo(self: *Compiler, node: *Node.VersionInfo, writer: anytype) !void {
         var data_buffer = std.ArrayList(u8).init(self.allocator);
         defer data_buffer.deinit();
-        const data_writer = data_buffer.writer();
+        // The node's length field (which is inclusive of the length of all of its children) is a u16
+        // so limit the node's data size so that we know we can always specify the real size.
+        var limited_writer = utils.limitedWriter(data_buffer.writer(), std.math.maxInt(u16));
+        const data_writer = limited_writer.writer();
 
         try data_writer.writeIntLittle(u16, 0); // placeholder size
         try data_writer.writeIntLittle(u16, res.FixedFileInfo.byte_len);
         try data_writer.writeIntLittle(u16, res.VersionNode.type_binary);
         const key_bytes = std.mem.sliceAsBytes(res.FixedFileInfo.key[0 .. res.FixedFileInfo.key.len + 1]);
         try data_writer.writeAll(key_bytes);
-        try writeDataPadding(data_writer, @intCast(u32, data_buffer.items.len));
+        // The number of bytes written up to this point is always the same, since the name
+        // of the node is a constant (FixedFileInfo.key). The total number of bytes
+        // written so far is 38, so we need 2 padding bytes to get back to DWORD alignment
+        try data_writer.writeIntLittle(u16, 0);
 
         var fixed_file_info = res.FixedFileInfo{};
         for (node.fixed_info) |fixed_info| {
@@ -1679,14 +1685,29 @@ pub const Compiler = struct {
         try fixed_file_info.write(data_writer);
 
         for (node.block_statements) |statement| {
-            try self.writeVersionNode(statement, data_writer, &data_buffer);
+            self.writeVersionNode(statement, data_writer, &data_buffer) catch |err| switch (err) {
+                error.NoSpaceLeft => {
+                    try self.addErrorDetails(.{
+                        .err = .version_node_size_exceeds_max,
+                        .token = node.id,
+                    });
+                    return self.addErrorDetailsAndFail(.{
+                        .err = .version_node_size_exceeds_max,
+                        .type = .note,
+                        .token = statement.getFirstToken(),
+                    });
+                },
+                else => |e| return e,
+            };
         }
 
-        // we now know the full size of this node (including its children), so set its size
-        std.mem.writeIntLittle(u16, data_buffer.items[0..2], @intCast(u16, data_buffer.items.len));
+        // We know that data_buffer.items.len is within the limits of a u16, since we
+        // limited the writer to maxInt(u16)
+        const data_size = @intCast(u16, data_buffer.items.len);
+        // And now that we know the full size of this node (including its children), set its size
+        std.mem.writeIntLittle(u16, data_buffer.items[0..2]);
 
         const type_bytes = self.sourceBytesForToken(node.versioninfo);
-        const data_size = @intCast(u32, data_buffer.items.len);
         const id_bytes = self.sourceBytesForToken(node.id);
         var header = try ResourceHeader.init(self.allocator, id_bytes, type_bytes, data_size, self.state.language);
         defer header.deinit(self.allocator);
@@ -1699,8 +1720,12 @@ pub const Compiler = struct {
         try writeResourceData(writer, data_fbs.reader(), data_size);
     }
 
+    /// Expects writer to be a LimitedWriter limited to u16, meaning all writes to
+    /// the writer within this function could return error.NoSpaceLeft, and that buf.items.len
+    /// will never be able to exceed maxInt(u16).
     pub fn writeVersionNode(self: *Compiler, node: *Node, writer: anytype, buf: *std.ArrayList(u8)) !void {
-        try writeDataPadding(writer, @intCast(u32, buf.items.len));
+        // We can assume that buf.items.len will never be able to exceed the limits of a u16
+        try writeDataPadding(writer, @intCast(u16, buf.items.len));
 
         const node_and_children_size_offset = buf.items.len;
         try writer.writeIntLittle(u16, 0); // placeholder for size
