@@ -2132,24 +2132,30 @@ pub const FontDir = struct {
     pub fn writeResData(self: *FontDir, compiler: *Compiler, writer: anytype) !void {
         if (self.fonts.items.len == 0) return;
 
+        // We know the number of fonts is limited to maxInt(u16) because fonts
+        // must have a valid and unique u16 ordinal ID (trying to specify a FONT
+        // with e.g. id 65536 will give a compile error).
+        const num_fonts = @intCast(u16, self.fonts.items.len);
+
         // u16 count + [(u16 id + 150 bytes) for each font]
-        const data_size = 2 + (2 + 150) * self.fonts.items.len;
+        // Note: This works out to a maximum data_size of 9,961,322.
+        const data_size: u32 = 2 + (2 + 150) * num_fonts;
         var header = Compiler.ResourceHeader{
             .name_value = try NameOrOrdinal.nameFromString(compiler.allocator, .{ .slice = "FONTDIR", .code_page = .windows1252 }),
             .type_value = NameOrOrdinal{ .ordinal = @enumToInt(res.RT.FONTDIR) },
             .memory_flags = res.MemoryFlags.defaults(res.RT.FONTDIR),
             .language = compiler.state.language,
-            .data_size = @intCast(u32, data_size),
+            .data_size = data_size,
         };
         defer header.deinit(compiler.allocator);
 
         try header.write(writer);
-        try writer.writeIntLittle(u16, @intCast(u16, self.fonts.items.len));
+        try writer.writeIntLittle(u16, num_fonts);
         for (self.fonts.items) |font| {
             try writer.writeIntLittle(u16, font.id);
             try writer.writeAll(&font.header_bytes);
         }
-        try Compiler.writeDataPadding(writer, @intCast(u32, data_size));
+        try Compiler.writeDataPadding(writer, data_size);
     }
 };
 
