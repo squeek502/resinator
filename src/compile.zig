@@ -184,9 +184,13 @@ pub const Compiler = struct {
     }
 
     /// https://learn.microsoft.com/en-us/windows/win32/menurc/searching-for-files
+    ///
+    /// Note: This will always return the first matching file that can be opened.
+    ///       This matches the Win32 RC compiler, which will fail with an error if the first
+    ///       matching file is invalid. That is, it does not do the `cmd` PATH searching
+    ///       thing of continuing to look for matching files until it finds a valid
+    ///       one if a matching file is invalid.
     fn searchForFile(self: *Compiler, path: []const u8) !std.fs.File {
-        // TODO: How does the Win32 RC compiler handle things like invalid icons, does it
-        //       error immediately or keep searching until it finds a valid one?
         const file = self.cwd.openFile(path, .{}) catch |first_err| {
             // TODO: /x option to not search INCLUDE, /i option to add search paths
             const INCLUDE = std.process.getEnvVarOwned(self.allocator, "INCLUDE") catch "";
