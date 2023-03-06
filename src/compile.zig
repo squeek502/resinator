@@ -1470,7 +1470,10 @@ pub const Compiler = struct {
     pub fn writeMenu(self: *Compiler, node: *Node.Menu, writer: anytype) !void {
         var data_buffer = std.ArrayList(u8).init(self.allocator);
         defer data_buffer.deinit();
-        const data_writer = data_buffer.writer();
+        // The header's data length field is a u32 so limit the resource's data size so that
+        // we know we can always specify the real size.
+        var limited_writer = utils.limitedWriter(data_buffer.writer(), std.math.maxInt(u32));
+        const data_writer = limited_writer.writer();
 
         const type_bytes = SourceBytes{
             .slice = node.type.slice(self.source),
@@ -1479,12 +1482,46 @@ pub const Compiler = struct {
         const resource = Resource.fromString(type_bytes);
         std.debug.assert(resource == .menu or resource == .menuex);
 
+        self.writeMenuData(node, data_writer, resource) catch |err| switch (err) {
+            error.NoSpaceLeft => {
+                return self.addErrorDetailsAndFail(.{
+                    .err = .resource_data_size_exceeds_max,
+                    .token = node.id,
+                });
+            },
+            else => |e| return e,
+        };
+
+        // This intCast can't fail because the limitedWriter above guarantees that
+        // we will never write more than maxInt(u32) bytes.
+        const data_size = @intCast(u32, data_buffer.items.len);
+        const id_bytes = SourceBytes{
+            .slice = node.id.slice(self.source),
+            .code_page = self.code_pages.getForToken(node.id),
+        };
+        var header = try ResourceHeader.init(self.allocator, id_bytes, type_bytes, data_size, self.state.language);
+        defer header.deinit(self.allocator);
+
+        header.applyMemoryFlags(node.common_resource_attributes, self.source);
+        header.applyOptionalStatements(node.optional_statements, self.source, self.code_pages);
+
+        try header.write(writer);
+
+        var data_fbs = std.io.fixedBufferStream(data_buffer.items);
+        try writeResourceData(writer, data_fbs.reader(), data_size);
+    }
+
+    /// Expects `data_writer` to be a LimitedWriter limited to u32, meaning all writes to
+    /// the writer within this function could return error.NoSpaceLeft
+    pub fn writeMenuData(self: *Compiler, node: *Node.Menu, data_writer: anytype, resource: Resource) !void {
         // menu header
         const version: u16 = if (resource == .menu) 0 else 1;
         try data_writer.writeIntLittle(u16, version);
         const header_size: u16 = if (resource == .menu) 0 else 4;
         try data_writer.writeIntLittle(u16, header_size); // cbHeaderSize
-        // Note: There can be extra bytes at the end, but they are always zero-length for us.
+        // Note: There can be extra bytes at the end of this header (`rgbExtra`),
+        //       but they are always zero-length for us, so we don't write anything
+        //       (the length of the rgbExtra field is inferred from the header_size).
         // MENU   => rgbExtra: [cbHeaderSize]u8
         // MENUEX => rgbExtra: [cbHeaderSize-4]u8
 
@@ -1501,22 +1538,6 @@ pub const Compiler = struct {
             const is_last = i == node.items.len - 1;
             try self.writeMenuItem(item, data_writer, is_last);
         }
-
-        const data_size = @intCast(u32, data_buffer.items.len);
-        const id_bytes = SourceBytes{
-            .slice = node.id.slice(self.source),
-            .code_page = self.code_pages.getForToken(node.id),
-        };
-        var header = try ResourceHeader.init(self.allocator, id_bytes, type_bytes, data_size, self.state.language);
-        defer header.deinit(self.allocator);
-
-        header.applyMemoryFlags(node.common_resource_attributes, self.source);
-        header.applyOptionalStatements(node.optional_statements, self.source, self.code_pages);
-
-        try header.write(writer);
-
-        var data_fbs = std.io.fixedBufferStream(data_buffer.items);
-        try writeResourceData(writer, data_fbs.reader(), data_size);
     }
 
     pub fn writeMenuItem(self: *Compiler, node: *Node, writer: anytype, is_last_of_parent: bool) !void {
