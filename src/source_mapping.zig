@@ -143,11 +143,6 @@ pub fn parseAndRemoveLineCommands(allocator: Allocator, source: []const u8, buf:
         }
     }
 
-    // TODO: This feels hacky and bad
-    // if (current_mapping.pending) {
-    //     try handleLineEnd(allocator, line_number, &parse_result.mappings, &current_mapping);
-    // }
-
     parse_result.result = result.getWritten();
 
     // Remove whitespace from the end of the result. This avoids issues when the
