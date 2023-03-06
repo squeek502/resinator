@@ -920,8 +920,12 @@ pub const Parser = struct {
         }
 
         var extra_data: []*Node = &[_]*Node{};
+        var extra_data_begin: ?Token = null;
+        var extra_data_end: ?Token = null;
         if (try self.parseOptionalToken(.begin)) {
+            extra_data_begin = self.state.token;
             extra_data = try self.parseRawDataBlock();
+            extra_data_end = self.state.token;
         }
 
         const node = try self.state.arena.create(Node.ControlStatement);
@@ -937,7 +941,9 @@ pub const Parser = struct {
             .style = style,
             .exstyle = exstyle,
             .help_id = help_id,
+            .extra_data_begin = extra_data_begin,
             .extra_data = extra_data,
+            .extra_data_end = extra_data_end,
         };
         return &node.base;
     }

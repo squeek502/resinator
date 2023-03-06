@@ -272,7 +272,9 @@ pub const Node = struct {
         style: ?*Node,
         exstyle: ?*Node,
         help_id: ?*Node,
+        extra_data_begin: ?Token,
         extra_data: []*Node,
+        extra_data_end: ?Token,
     };
 
     pub const Toolbar = struct {
@@ -736,15 +738,15 @@ pub const Node = struct {
                         try val_node.dump(tree, writer, indent + 2);
                     }
                 }
-                if (control.extra_data.len > 0) {
+                if (control.extra_data_begin != null) {
                     try writer.writeByteNTimes(' ', indent);
-                    try writer.writeAll("{"); // TODO real begin token?
+                    try writer.writeAll(control.extra_data_begin.?.slice(tree.source));
                     try writer.writeAll("\n");
                     for (control.extra_data) |data_node| {
                         try data_node.dump(tree, writer, indent + 1);
                     }
                     try writer.writeByteNTimes(' ', indent);
-                    try writer.writeAll("}"); // TODO real end token?
+                    try writer.writeAll(control.extra_data_end.?.slice(tree.source));
                     try writer.writeAll("\n");
                 }
             },
