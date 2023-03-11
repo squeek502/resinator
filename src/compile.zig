@@ -2294,6 +2294,10 @@ pub const StringTable = struct {
                 };
                 defer compiler.allocator.free(utf16_string);
 
+                // String literals are limited to approximately 4097 codepoints (see below comment), so
+                // these UTF-16 encoded strings are limited to approximately 4097 * 2 = 8194
+                // code units (since 2 is the maximum number of UTF-16 code units per codepoint),
+                // which is well within the u16 max.
                 try data_writer.writeIntLittle(u16, @intCast(u16, utf16_string.len));
                 for (utf16_string) |wc| {
                     try data_writer.writeIntLittle(u16, wc);
@@ -2303,6 +2307,20 @@ pub const StringTable = struct {
                 string_i += 1;
             }
 
+            // This intCast will never be able to fail due to the length constraints on string literals.
+            //
+            // - STRINGTABLE resource definitions can can only provide one string literal per index.
+            // - String literals are limited to approximately 4097 codepoints (not fully true
+            //   but close enough to true for this), which means that the approximate maximum number of
+            //   bytes per string literal is 4 * 4097 = 16,388 (since 4 is the maximum number of bytes
+            //   per codepoint).
+            // - Each Block/RT_STRING resource includes exactly 16 strings, so the
+            //   maximum number of total bytes in a RT_STRING resource's data is approximately
+            //   16 * 16,388 = 262,208 which is well within the u32 max.
+            //
+            // Note: The string literal maximum length is enforced by the lexer.
+            const data_size = @intCast(u32, data_buffer.items.len);
+
             const header = Compiler.ResourceHeader{
                 .name_value = .{ .ordinal = block_id },
                 .type_value = .{ .ordinal = @enumToInt(res.RT.STRING) },
@@ -2310,12 +2328,12 @@ pub const StringTable = struct {
                 .language = language,
                 .version = self.version,
                 .characteristics = self.characteristics,
-                .data_size = @intCast(u32, data_buffer.items.len),
+                .data_size = data_size,
             };
             try header.write(writer);
 
             var data_fbs = std.io.fixedBufferStream(data_buffer.items);
-            try Compiler.writeResourceData(writer, data_fbs.reader(), @intCast(u32, data_buffer.items.len));
+            try Compiler.writeResourceData(writer, data_fbs.reader(), data_size);
         }
     };
 
