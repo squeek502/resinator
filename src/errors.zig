@@ -75,7 +75,7 @@ pub const ErrorDetails = struct {
     err: Error,
     token: Token,
     // TODO: I don't really like this; notes at least should probably be handled differently
-    type: enum { err, warning, note } = .err,
+    type: Type = .err,
     print_source_line: bool = true,
     extra: union {
         none: void,
@@ -90,6 +90,8 @@ pub const ErrorDetails = struct {
         icon_dir: IconDirContext,
         bmp_read_error: BitmapReadError,
     } = .{ .none = {} },
+
+    pub const Type = enum { err, warning, note };
 
     comptime {
         // all fields in the extra union should be 32 bits or less
@@ -278,6 +280,7 @@ pub const ErrorDetails = struct {
         bmp_too_many_missing_palette_bytes,
         resource_data_size_exceeds_max,
         version_node_size_exceeds_max,
+        number_expression_as_filename,
 
         // Literals
         /// `number` is populated
@@ -461,6 +464,10 @@ pub const ErrorDetails = struct {
             .version_node_size_exceeds_max => switch (self.type) {
                 .err, .warning => return writer.print("version node tree size exceeds maximum of {} bytes", .{std.math.maxInt(u16)}),
                 .note => return writer.print("maximum tree size exceeded while writing this child", .{}),
+            },
+            .number_expression_as_filename => switch (self.type) {
+                .err, .warning => return writer.writeAll("filename cannot be specified using a number expression, consider using a quoted string instead"),
+                .note => return writer.print("the Win32 RC compiler would evaluate this number expression as the filename '{s}'", .{strings[self.extra.number]}),
             },
             .rc_would_miscompile_codepoint_byte_swap => switch (self.type) {
                 .err, .warning => return writer.print("codepoint U+{X} within a string literal would be miscompiled by the Win32 RC compiler (the bytes of the UTF-16 code unit would be swapped)", .{self.extra.number}),

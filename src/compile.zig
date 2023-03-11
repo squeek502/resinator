@@ -249,6 +249,26 @@ pub const Compiler = struct {
         const filename = try self.evaluateFilenameExpression(node.filename);
         defer filename.deinit(self.allocator);
 
+        // Allow plain number literals, but complex number expressions are evaluated strangely
+        // and almost certainly lead to things not intended by the user (e.g. '(1+-1)' evaluates
+        // to the filename '-1'), so error if the filename node is a grouped/binary expression.
+        if (node.filename.id != .literal) {
+            const filename_string_index = @intCast(u32, try self.diagnostics.putString(filename.utf8));
+            try self.addErrorDetails(.{
+                .err = .number_expression_as_filename,
+                // TODO: Make this point to the whole expression rather than just the first token
+                .token = node.filename.getFirstToken(),
+                .extra = .{ .number = filename_string_index },
+            });
+            return self.addErrorDetailsAndFail(.{
+                .err = .number_expression_as_filename,
+                .type = .note,
+                .token = node.filename.getFirstToken(),
+                .print_source_line = false,
+                .extra = .{ .number = filename_string_index },
+            });
+        }
+
         const file = self.searchForFile(filename.utf8) catch |err| switch (err) {
             error.OutOfMemory => |e| return e,
             else => |e| {
@@ -2478,11 +2498,16 @@ fn testCompileWithOutput(source: []const u8, expected_output: []const u8, cwd: s
     try std.testing.expectEqualSlices(u8, expected_output, buffer.items);
 }
 
-fn testCompileError(expected_error_str: []const u8, source: []const u8) !void {
-    return testCompileErrorWithDir(expected_error_str, source, std.fs.cwd());
+const ExpectedErrorDetails = struct {
+    str: []const u8,
+    type: ErrorDetails.Type,
+};
+
+fn testCompileErrorDetails(expected_details: []const ExpectedErrorDetails, source: []const u8, maybe_expected_output: ?[]const u8) !void {
+    return testCompileErrorDetailsWithDir(expected_details, source, maybe_expected_output, std.fs.cwd());
 }
 
-fn testCompileErrorWithDir(expected_error_str: []const u8, source: []const u8, cwd: std.fs.Dir) !void {
+fn testCompileErrorDetailsWithDir(expected_details: []const ExpectedErrorDetails, source: []const u8, maybe_expected_output: ?[]const u8, cwd: std.fs.Dir) !void {
     const allocator = std.testing.allocator;
 
     var buffer = std.ArrayList(u8).init(std.testing.allocator);
@@ -2491,45 +2516,44 @@ fn testCompileErrorWithDir(expected_error_str: []const u8, source: []const u8, c
     var diagnostics = Diagnostics.init(allocator);
     defer diagnostics.deinit();
 
-    compile(std.testing.allocator, source, buffer.writer(), .{ .cwd = cwd, .diagnostics = &diagnostics }) catch |err| switch (err) {
-        error.ParseError, error.CompileError => {
-            if (diagnostics.errors.items.len < 1) return error.NoDiagnostics;
-            if (diagnostics.errors.items[0].type != .err) @panic("TODO handle compile error test with a non-error as the first error");
-            var buf: [256]u8 = undefined;
-            var fbs = std.io.fixedBufferStream(&buf);
-            try diagnostics.errors.items[0].render(fbs.writer(), source, diagnostics.strings.items);
-            try std.testing.expectEqualStrings(expected_error_str, fbs.getWritten());
-            return;
-        },
-        else => return err,
+    const expect_fail = for (expected_details) |details| {
+        if (details.type == .err) break true;
+    } else false;
+
+    const did_fail = did_fail: {
+        compile(std.testing.allocator, source, buffer.writer(), .{ .cwd = cwd, .diagnostics = &diagnostics }) catch |err| switch (err) {
+            error.ParseError, error.CompileError => {
+                if (!expect_fail) {
+                    diagnostics.renderToStdErr(cwd, source, null);
+                    return err;
+                }
+                break :did_fail true;
+            },
+            else => return err,
+        };
+        break :did_fail false;
     };
-    std.debug.print("expected compile error, got .res:\n", .{});
-    std.testing.expectEqualSlices(u8, "", buffer.items) catch {};
-    return error.UnexpectedSuccess;
-}
+    if (did_fail and !expect_fail) {
+        std.debug.print("expected compile error, got .res:\n", .{});
+        std.testing.expectEqualSlices(u8, "", buffer.items) catch {};
+        return error.UnexpectedSuccess;
+    }
 
-fn testCompileWarningWithDir(expected_warning_str: []const u8, source: []const u8, maybe_expected_output: ?[]const u8, cwd: std.fs.Dir) !void {
-    const allocator = std.testing.allocator;
-
-    var buffer = std.ArrayList(u8).init(std.testing.allocator);
-    defer buffer.deinit();
-
-    var diagnostics = Diagnostics.init(allocator);
-    defer diagnostics.deinit();
-
-    compile(std.testing.allocator, source, buffer.writer(), .{ .cwd = cwd, .diagnostics = &diagnostics }) catch |err| switch (err) {
-        error.ParseError, error.CompileError => {
+    if (expected_details.len != diagnostics.errors.items.len) {
+        std.debug.print("expected {} error details, got {}:\n", .{ expected_details.len, diagnostics.errors.items.len });
+        diagnostics.renderToStdErr(cwd, source, null);
+        return error.ErrorDetailMismatch;
+    }
+    for (diagnostics.errors.items, expected_details) |actual, expected| {
+        std.testing.expectEqual(expected.type, actual.type) catch |e| {
             diagnostics.renderToStdErr(cwd, source, null);
-            return err;
-        },
-        else => return err,
-    };
-    if (diagnostics.errors.items.len < 1) return error.NoDiagnostics;
-    if (diagnostics.errors.items[0].type != .warning) @panic("TODO handle compile warning test with a non-warning as the first error");
-    var buf: [256]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&buf);
-    try diagnostics.errors.items[0].render(fbs.writer(), source, diagnostics.strings.items);
-    try std.testing.expectEqualStrings(expected_warning_str, fbs.getWritten());
+            return e;
+        };
+        var buf: [256]u8 = undefined;
+        var fbs = std.io.fixedBufferStream(&buf);
+        try actual.render(fbs.writer(), source, diagnostics.strings.items);
+        try std.testing.expectEqualStrings(expected.str, fbs.getWritten());
+    }
 
     if (maybe_expected_output) |expected_output| {
         try std.testing.expectEqualSlices(u8, expected_output, buffer.items);
@@ -2681,29 +2705,35 @@ test "filenames as numeric expressions" {
     );
     try tmp_dir.dir.deleteFile("~1");
 
-    try tmp_dir.dir.writeFile("1", "hello world");
-    try testCompileWithOutput(
+    try testCompileErrorDetailsWithDir(
+        &.{
+            .{ .type = .err, .str = "filename cannot be specified using a number expression, consider using a quoted string instead" },
+            .{ .type = .note, .str = "the Win32 RC compiler would evaluate this number expression as the filename '1'" },
+        },
         "1 RCDATA 1+1",
-        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0b\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00hello world\x00",
+        null,
         tmp_dir.dir,
     );
-    try tmp_dir.dir.deleteFile("1");
 
-    try tmp_dir.dir.writeFile("-1", "hello world");
-    try testCompileWithOutput(
+    try testCompileErrorDetailsWithDir(
+        &.{
+            .{ .type = .err, .str = "filename cannot be specified using a number expression, consider using a quoted string instead" },
+            .{ .type = .note, .str = "the Win32 RC compiler would evaluate this number expression as the filename '-1'" },
+        },
         "1 RCDATA 1+-1",
-        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0b\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00hello world\x00",
+        null,
         tmp_dir.dir,
     );
-    try tmp_dir.dir.deleteFile("-1");
 
-    try tmp_dir.dir.writeFile("-1", "hello world");
-    try testCompileWithOutput(
+    try testCompileErrorDetailsWithDir(
+        &.{
+            .{ .type = .err, .str = "filename cannot be specified using a number expression, consider using a quoted string instead" },
+            .{ .type = .note, .str = "the Win32 RC compiler would evaluate this number expression as the filename '-1'" },
+        },
         "1 RCDATA (1+-1)",
-        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0b\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00hello world\x00",
+        null,
         tmp_dir.dir,
     );
-    try tmp_dir.dir.deleteFile("-1");
 }
 
 test "NameOrOrdinal" {
@@ -2741,9 +2771,10 @@ test "basic icons" {
     // Cursors are just .ico files with a different image type
     // The Win32 RC compiler will compile them even if the types mismatch, but the .res
     // will fail to load the CURSOR/ICON at runtime, so we error instead.
-    try testCompileErrorWithDir(
-        "resource type 'cursor' does not match type 'icon' specified in the file",
+    try testCompileErrorDetailsWithDir(
+        &.{.{ .type = .err, .str = "resource type 'cursor' does not match type 'icon' specified in the file" }},
         "1 CURSOR test.ico",
+        null,
         tmp_dir.dir,
     );
 
@@ -2802,14 +2833,18 @@ test "uncommon icons/cursors" {
         resdir_riff[2] = 1;
         try tmp_dir.dir.writeFile("riff_in_dir.ico", resdir_riff ++ test_riff_data);
 
-        try testCompileErrorWithDir(
-            "resource with format 'riff' (at index 0) is not allowed in cursor resource groups",
+        try testCompileErrorDetailsWithDir(
+            &.{.{ .type = .err, .str = "resource with format 'riff' (at index 0) is not allowed in cursor resource groups" }},
             "1 CURSOR riff_in_dir.cur",
+            null,
             tmp_dir.dir,
         );
 
-        try testCompileWarningWithDir(
-            "the resource at index 0 of this icon has the format 'riff'; this would be an error in the Win32 RC compiler",
+        try testCompileErrorDetailsWithDir(
+            &.{
+                .{ .type = .warning, .str = "the resource at index 0 of this icon has the format 'riff'; this would be an error in the Win32 RC compiler" },
+                .{ .type = .note, .str = "animated RIFF icons within resource groups may not be well supported, consider using an animated icon file (.ani) instead" },
+            },
             "1 ICON riff_in_dir.ico",
             null,
             tmp_dir.dir,
@@ -2823,8 +2858,8 @@ test "uncommon icons/cursors" {
         resdir_png[2] = 2; // cursor
         try tmp_dir.dir.writeFile("png_in_dir.cur", resdir_png ++ test_png_data);
 
-        try testCompileWarningWithDir(
-            "the resource at index 0 of this cursor has the format 'png'; this would be an error in the Win32 RC compiler",
+        try testCompileErrorDetailsWithDir(
+            &.{.{ .type = .warning, .str = "the resource at index 0 of this cursor has the format 'png'; this would be an error in the Win32 RC compiler" }},
             "1 CURSOR png_in_dir.cur",
             null,
             tmp_dir.dir,
@@ -2846,15 +2881,17 @@ test "uncommon icons/cursors" {
         resdir_dib[2] = 2; // cursor
         try tmp_dir.dir.writeFile("old_version.cur", &resdir_dib);
 
-        try testCompileErrorWithDir(
-            "the DIB at index 0 of this icon is of version 'Windows 2.0 (BITMAPCOREHEADER)'; this version is no longer allowed and should be upgraded to 'Windows NT, 3.1x (BITMAPINFOHEADER)'",
+        try testCompileErrorDetailsWithDir(
+            &.{.{ .type = .err, .str = "the DIB at index 0 of this icon is of version 'Windows 2.0 (BITMAPCOREHEADER)'; this version is no longer allowed and should be upgraded to 'Windows NT, 3.1x (BITMAPINFOHEADER)'" }},
             "1 ICON old_version.ico",
+            null,
             tmp_dir.dir,
         );
 
-        try testCompileErrorWithDir(
-            "the DIB at index 0 of this cursor is of version 'Windows 2.0 (BITMAPCOREHEADER)'; this version is no longer allowed and should be upgraded to 'Windows NT, 3.1x (BITMAPINFOHEADER)'",
+        try testCompileErrorDetailsWithDir(
+            &.{.{ .type = .err, .str = "the DIB at index 0 of this cursor is of version 'Windows 2.0 (BITMAPCOREHEADER)'; this version is no longer allowed and should be upgraded to 'Windows NT, 3.1x (BITMAPINFOHEADER)'" }},
             "1 CURSOR old_version.cur",
+            null,
             tmp_dir.dir,
         );
 
@@ -2864,15 +2901,15 @@ test "uncommon icons/cursors" {
         resdir_dib[2] = 2; // cursor
         try tmp_dir.dir.writeFile("v5.cur", &resdir_dib);
 
-        try testCompileWarningWithDir(
-            "the DIB at index 0 of this icon is of version 'Windows NT 5.0, 98 (BITMAPV5HEADER)'; this would be an error in the Win32 RC compiler",
+        try testCompileErrorDetailsWithDir(
+            &.{.{ .type = .warning, .str = "the DIB at index 0 of this icon is of version 'Windows NT 5.0, 98 (BITMAPV5HEADER)'; this would be an error in the Win32 RC compiler" }},
             "1 ICON v5.ico",
             null,
             tmp_dir.dir,
         );
 
-        try testCompileWarningWithDir(
-            "the DIB at index 0 of this cursor is of version 'Windows NT 5.0, 98 (BITMAPV5HEADER)'; this would be an error in the Win32 RC compiler",
+        try testCompileErrorDetailsWithDir(
+            &.{.{ .type = .warning, .str = "the DIB at index 0 of this cursor is of version 'Windows NT 5.0, 98 (BITMAPV5HEADER)'; this would be an error in the Win32 RC compiler" }},
             "1 CURSOR v5.cur",
             null,
             tmp_dir.dir,
@@ -2884,15 +2921,15 @@ test "uncommon icons/cursors" {
         resdir_dib[2] = 2; // cursor
         try tmp_dir.dir.writeFile("unknown.cur", &resdir_dib);
 
-        try testCompileWarningWithDir(
-            "the DIB at index 0 of this icon is of version 'unknown'; this would be an error in the Win32 RC compiler",
+        try testCompileErrorDetailsWithDir(
+            &.{.{ .type = .warning, .str = "the DIB at index 0 of this icon is of version 'unknown'; this would be an error in the Win32 RC compiler" }},
             "1 ICON unknown.ico",
             null,
             tmp_dir.dir,
         );
 
-        try testCompileWarningWithDir(
-            "the DIB at index 0 of this cursor is of version 'unknown'; this would be an error in the Win32 RC compiler",
+        try testCompileErrorDetailsWithDir(
+            &.{.{ .type = .warning, .str = "the DIB at index 0 of this cursor is of version 'unknown'; this would be an error in the Win32 RC compiler" }},
             "1 CURSOR unknown.cur",
             null,
             tmp_dir.dir,
@@ -2915,8 +2952,8 @@ test "basic bitmap" {
 
     try tmp_dir.dir.writeFile("test_extra_palette_bytes.bmp", "BM<\x00\x00\x00\x00\x00\x00\x00:\x00\x00\x00(\x00\x00\x00\x01\x00\x00\x00\x01\x00\x00\x00\x01\x00\x10\x00\x00\x00\x00\x00\x06\x00\x00\x00\x12\x0b\x00\x00\x12\x0b\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\x7f\x00\x00\x00\x00");
 
-    try testCompileWarningWithDir(
-        "bitmap has 4 extra bytes preceding the pixel data which will be ignored",
+    try testCompileErrorDetailsWithDir(
+        &.{.{ .type = .warning, .str = "bitmap has 4 extra bytes preceding the pixel data which will be ignored" }},
         "1 BITMAP test_extra_palette_bytes.bmp",
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00.\x00\x00\x00 \x00\x00\x00\xff\xff\x02\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00(\x00\x00\x00\x01\x00\x00\x00\x01\x00\x00\x00\x01\x00\x10\x00\x00\x00\x00\x00\x06\x00\x00\x00\x12\x0b\x00\x00\x12\x0b\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\x7f\x00\x00\x00\x00\x00\x00",
         tmp_dir.dir,
@@ -2927,32 +2964,40 @@ test "basic bitmap" {
     // Note: The expected output here is different from what you'd get from the Win32 RC compiler,
     //       since the Win32 RC compiler miscompiles this particular case and puts the pixel
     //       data into the padding bytes of the color palette.
-    try testCompileWarningWithDir(
-        "bitmap has 16 missing color palette bytes which will be padded with zeroes",
+    try testCompileErrorDetailsWithDir(
+        &.{
+            .{ .type = .warning, .str = "bitmap has 16 missing color palette bytes which will be padded with zeroes" },
+            .{ .type = .warning, .str = "the missing color palette bytes would be miscompiled by the Win32 RC compiler (the added padding bytes would include 6 bytes of the pixel data)" },
+        },
         "1 BITMAP test_missing_palette_bytes.bmp",
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00>\x00\x00\x00 \x00\x00\x00\xff\xff\x02\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00(\x00\x00\x00\x01\x00\x00\x00\x01\x00\x00\x00\x01\x00\x10\x00\x00\x00\x00\x00\x06\x00\x00\x00\x12\x0b\x00\x00\x12\x0b\x00\x00\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\x7f\x00\x00\x00\x00\x00\x00",
         tmp_dir.dir,
     );
 
     try tmp_dir.dir.writeFile("test_win2.0_missing_palette_bytes.bmp", "BMJX\x02\x00\x00\x00\x00\x00G\x00\x00\x00\x0c\x00\x00\x00\x80\x02\xe0\x01\x01\x00\x04\x00\x00\x00\x00\x80\x00\x00\x00\x80\x00\x80\x80\x00\x00\x00\x80\x80\x00\x80\x00\x80\x80\x80\x80\x80\xcc\xcc\xcc\xff\x00\x00\x00\xff\x00\xff\xff\x00\x00\x00\xff\xff\x00\xff\x00\xff\xff");
-    try testCompileWarningWithDir(
-        "bitmap has 3 missing color palette bytes which will be padded with zeroes",
+    try testCompileErrorDetailsWithDir(
+        &.{.{ .type = .warning, .str = "bitmap has 3 missing color palette bytes which will be padded with zeroes" }},
         "1 BITMAP test_win2.0_missing_palette_bytes.bmp",
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00<\x00\x00\x00 \x00\x00\x00\xff\xff\x02\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x0c\x00\x00\x00\x80\x02\xe0\x01\x01\x00\x04\x00\x00\x00\x00\x80\x00\x00\x00\x80\x00\x80\x80\x00\x00\x00\x80\x80\x00\x80\x00\x80\x80\x80\x80\x80\xcc\xcc\xcc\xff\x00\x00\x00\xff\x00\xff\xff\x00\x00\x00\xff\xff\x00\xff\x00\xff\xff\x00\x00\x00",
         tmp_dir.dir,
     );
 
     try tmp_dir.dir.writeFile("test_too_many_colors_for_bit_depth.bmp", "BM<\x00\x00\x00\x00\x00\x00\x006\x00\x00\x00(\x00\x00\x00\x01\x00\x00\x00\x01\x00\x00\x00\x01\x00\x10\x00\x00\x00\x00\x00\x06\x00\x00\x00\x12\x0b\x00\x00\x12\x0b\x00\x00\xff\xff\xff\xff\x00\x00\x00\x00\xff\x7f\x00\x00\x00\x00");
-    try testCompileErrorWithDir(
-        "invalid bitmap file 'test_too_many_colors_for_bit_depth.bmp': TooManyColorsInPalette",
+    try testCompileErrorDetailsWithDir(
+        &.{.{ .type = .err, .str = "invalid bitmap file 'test_too_many_colors_for_bit_depth.bmp': TooManyColorsInPalette" }},
         "1 BITMAP test_too_many_colors_for_bit_depth.bmp",
+        null,
         tmp_dir.dir,
     );
 
     try tmp_dir.dir.writeFile("test_too_many_missing_palette_bytes.bmp", "BM<\x00\x00\x00\x00\x00\x00\x006\x00\x00\x00(\x00\x00\x00\x01\x00\x00\x00\x01\x00\x00\x00\x01\x00\x20\x00\x00\x00\x00\x00\x06\x00\x00\x00\x12\x0b\x00\x00\x12\x0b\x00\x00\xff\xff\xff\xff\x00\x00\x00\x00\xff\x7f\x00\x00\x00\x00");
-    try testCompileErrorWithDir(
-        "bitmap has 17179869180 missing color palette bytes which exceeds the maximum of 4096",
+    try testCompileErrorDetailsWithDir(
+        &.{
+            .{ .type = .err, .str = "bitmap has 17179869180 missing color palette bytes which exceeds the maximum of 4096" },
+            .{ .type = .note, .str = "the maximum number of missing color palette bytes is configurable via <<TODO command line option>>" },
+        },
         "1 BITMAP test_too_many_missing_palette_bytes.bmp",
+        null,
         tmp_dir.dir,
     );
 }
@@ -3121,9 +3166,10 @@ test "accelerators resource" {
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x08\x00\x00\x00 \x00\x00\x00\xff\xff\t\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x9d\x00C\x00\x01\x00\x00\x00",
         std.fs.cwd(),
     );
-    try testCompileError(
-        "accelerator type [ASCII or VIRTKEY] required when key is an integer",
+    try testCompileErrorDetails(
+        &.{.{ .type = .err, .str = "accelerator type [ASCII or VIRTKEY] required when key is an integer" }},
         "1 ACCELERATORS { 1, 1 }",
+        null,
     );
 }
 
