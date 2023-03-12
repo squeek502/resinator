@@ -12,6 +12,10 @@ const SourceBytes = @import("literals.zig").SourceBytes;
 const rc = @import("rc.zig");
 const res = @import("res.zig");
 
+// TODO: Make these configurable?
+pub const max_nested_menu_level: u32 = 512;
+pub const max_nested_version_level: u32 = 512;
+
 pub const Parser = struct {
     const Self = @This();
 
@@ -621,7 +625,7 @@ pub const Parser = struct {
 
                 var items = std.ArrayListUnmanaged(*Node){};
                 defer items.deinit(self.state.allocator);
-                while (try self.parseMenuItemStatement(resource)) |item_node| {
+                while (try self.parseMenuItemStatement(resource, id_token, 1)) |item_node| {
                     try items.append(self.state.allocator, item_node);
                 }
 
@@ -663,7 +667,7 @@ pub const Parser = struct {
                 try self.check(.begin);
 
                 var block_statements = std.ArrayListUnmanaged(*Node){};
-                while (try self.parseVersionBlockOrValue()) |block_node| {
+                while (try self.parseVersionBlockOrValue(id_token, 1)) |block_node| {
                     try block_statements.append(self.state.arena, block_node);
                 }
 
@@ -978,10 +982,24 @@ pub const Parser = struct {
     /// begin on the next token.
     /// After return, the current token will be the token immediately before the end of the
     /// menuitem statement (or unchanged if the function returns null).
-    fn parseMenuItemStatement(self: *Self, resource: Resource) Error!?*Node {
+    fn parseMenuItemStatement(self: *Self, resource: Resource, top_level_menu_id_token: Token, nesting_level: u32) Error!?*Node {
         const menuitem_token = try self.lookaheadToken(.normal);
         const menuitem = rc.MenuItem.map.get(menuitem_token.slice(self.lexer.buffer)) orelse return null;
         self.nextToken(.normal) catch unreachable;
+
+        if (nesting_level > max_nested_menu_level) {
+            try self.addErrorDetails(.{
+                .err = .nested_resource_level_exceeds_max,
+                .token = top_level_menu_id_token,
+                .extra = .{ .resource = resource },
+            });
+            return self.addErrorDetailsAndFail(.{
+                .err = .nested_resource_level_exceeds_max,
+                .type = .note,
+                .token = menuitem_token,
+                .extra = .{ .resource = resource },
+            });
+        }
 
         switch (resource) {
             .menu => switch (menuitem) {
@@ -1066,8 +1084,7 @@ pub const Parser = struct {
                     try self.check(.begin);
 
                     var items = std.ArrayListUnmanaged(*Node){};
-                    // TODO: Add nesting limit to avoid stack overflow
-                    while (try self.parseMenuItemStatement(resource)) |item_node| {
+                    while (try self.parseMenuItemStatement(resource, top_level_menu_id_token, nesting_level + 1)) |item_node| {
                         try items.append(self.state.arena, item_node);
                     }
 
@@ -1137,8 +1154,7 @@ pub const Parser = struct {
                 try self.check(.begin);
 
                 var items = std.ArrayListUnmanaged(*Node){};
-                // TODO: Add nesting limit to avoid stack overflow
-                while (try self.parseMenuItemStatement(resource)) |item_node| {
+                while (try self.parseMenuItemStatement(resource, top_level_menu_id_token, nesting_level + 1)) |item_node| {
                     try items.append(self.state.arena, item_node);
                 }
 
@@ -1235,10 +1251,24 @@ pub const Parser = struct {
     /// begin on the next token.
     /// After return, the current token will be the token immediately before the end of the
     /// version BLOCK/VALUE (or unchanged if the function returns null).
-    fn parseVersionBlockOrValue(self: *Self) Error!?*Node {
+    fn parseVersionBlockOrValue(self: *Self, top_level_version_id_token: Token, nesting_level: u32) Error!?*Node {
         const keyword_token = try self.lookaheadToken(.normal);
         const keyword = rc.VersionBlock.map.get(keyword_token.slice(self.lexer.buffer)) orelse return null;
         self.nextToken(.normal) catch unreachable;
+
+        if (nesting_level > max_nested_version_level) {
+            try self.addErrorDetails(.{
+                .err = .nested_resource_level_exceeds_max,
+                .token = top_level_version_id_token,
+                .extra = .{ .resource = .versioninfo },
+            });
+            return self.addErrorDetailsAndFail(.{
+                .err = .nested_resource_level_exceeds_max,
+                .type = .note,
+                .token = keyword_token,
+                .extra = .{ .resource = .versioninfo },
+            });
+        }
 
         try self.nextToken(.normal);
         const key = self.state.token;
@@ -1265,8 +1295,7 @@ pub const Parser = struct {
                 try self.check(.begin);
 
                 var children = std.ArrayListUnmanaged(*Node){};
-                // TODO: Add nesting limit to avoid stack overflow
-                while (try self.parseVersionBlockOrValue()) |value_node| {
+                while (try self.parseVersionBlockOrValue(top_level_version_id_token, nesting_level + 1)) |value_node| {
                     try children.append(self.state.arena, value_node);
                 }
 
@@ -3119,6 +3148,92 @@ test "parse errors" {
     try testParseErrorDetails(
         &.{.{ .type = .err, .str = "name or id is not allowed for resource type 'stringtable'" }},
         "1 STRINGTABLE { 1 \"\" }",
+        null,
+    );
+}
+
+test "max nested menu level" {
+    var source_buffer = std.ArrayList(u8).init(std.testing.allocator);
+    defer source_buffer.deinit();
+
+    try source_buffer.appendSlice("1 MENU {\n");
+    for (0..max_nested_menu_level) |_| {
+        try source_buffer.appendSlice("POPUP \"foo\" {\n");
+    }
+    for (0..max_nested_menu_level) |_| {
+        try source_buffer.appendSlice("}\n");
+    }
+    try source_buffer.appendSlice("}");
+
+    // Exactly hitting the nesting level is okay, but we still error
+    // because the innermost nested POPUP is empty.
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "empty menu of type 'POPUP' not allowed" }},
+        source_buffer.items,
+        null,
+    );
+
+    // Now reset and nest until the nesting level is 1 more than the max
+    source_buffer.clearRetainingCapacity();
+    try source_buffer.appendSlice("1 MENU {\n");
+    for (0..max_nested_menu_level + 1) |_| {
+        try source_buffer.appendSlice("POPUP \"foo\" {\n");
+    }
+    for (0..max_nested_menu_level + 1) |_| {
+        try source_buffer.appendSlice("}\n");
+    }
+    try source_buffer.appendSlice("}");
+
+    // Now we should get the nesting level error.
+    try testParseErrorDetails(
+        &.{
+            .{ .type = .err, .str = "menu contains too many nested children (max is 512)" },
+            .{ .type = .note, .str = "max menu nesting level exceeded here" },
+        },
+        source_buffer.items,
+        null,
+    );
+}
+
+test "max nested versioninfo level" {
+    var source_buffer = std.ArrayList(u8).init(std.testing.allocator);
+    defer source_buffer.deinit();
+
+    try source_buffer.appendSlice("1 VERSIONINFO {\n");
+    for (0..max_nested_version_level) |_| {
+        try source_buffer.appendSlice("BLOCK \"foo\" {\n");
+    }
+    for (0..max_nested_version_level) |_| {
+        try source_buffer.appendSlice("}\n");
+    }
+    try source_buffer.appendSlice("}");
+
+    // This should succeed, but we don't care about validating the tree since it's
+    // just giant nested nonsense.
+    try testParseErrorDetails(
+        &.{},
+        source_buffer.items,
+        null,
+    );
+
+    // Now reset and nest until the nesting level is 1 more than the max
+    source_buffer.clearRetainingCapacity();
+    try source_buffer.appendSlice("1 VERSIONINFO {\n");
+    for (0..max_nested_version_level + 1) |_| {
+        try source_buffer.appendSlice("BLOCK \"foo\" {\n");
+    }
+    for (0..max_nested_version_level + 1) |_| {
+        try source_buffer.appendSlice("}\n");
+    }
+    try source_buffer.appendSlice("}");
+
+    // Now we should get the nesting level error.
+    try testParseErrorDetails(
+        &.{
+            .{ .type = .err, .str = "versioninfo contains too many nested children (max is 512)" },
+            .{ .type = .note, .str = "max versioninfo nesting level exceeded here" },
+        },
+        source_buffer.items,
         null,
     );
 }

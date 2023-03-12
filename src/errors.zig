@@ -6,6 +6,7 @@ const rc = @import("rc.zig");
 const res = @import("res.zig");
 const ico = @import("ico.zig");
 const bmp = @import("bmp.zig");
+const parse = @import("parse.zig");
 
 pub const Diagnostics = struct {
     errors: std.ArrayListUnmanaged(ErrorDetails) = .{},
@@ -241,6 +242,7 @@ pub const ErrorDetails = struct {
         empty_menu_not_allowed,
         rc_would_miscompile_version_value_padding,
         code_page_pragma_in_included_file,
+        nested_resource_level_exceeds_max,
 
         // Compiler
         /// `string_and_language` is populated
@@ -369,6 +371,17 @@ pub const ErrorDetails = struct {
             },
             .code_page_pragma_in_included_file => {
                 try writer.print("#pragma code_page is not supported in an included resource file", .{});
+            },
+            .nested_resource_level_exceeds_max => switch (self.type) {
+                .err, .warning => {
+                    const max = switch (self.extra.resource) {
+                        .versioninfo => parse.max_nested_version_level,
+                        .menu, .menuex => parse.max_nested_menu_level,
+                        else => unreachable,
+                    };
+                    return writer.print("{s} contains too many nested children (max is {})", .{ @tagName(self.extra.resource), max });
+                },
+                .note => return writer.print("max {s} nesting level exceeded here", .{@tagName(self.extra.resource)}),
             },
             .string_already_defined => switch (self.type) {
                 // TODO: better printing of language, using constant names from WinNT.h
