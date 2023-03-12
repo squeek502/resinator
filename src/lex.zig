@@ -740,9 +740,7 @@ pub const Lexer = struct {
         self.error_context_token = .{
             .id = .invalid,
             .start = self.index,
-            // TODO: Not all codepoints are 1 byte long, e.g. the BOM, but
-            //       for display purposes pointing to one byte makes sense at the moment.
-            .end = self.index + 1,
+            .end = self.index + codepoint.byte_len,
             .line_number = self.line_number,
         };
         return err;

@@ -479,6 +479,23 @@ pub const ErrorDetails = struct {
             },
         }
     }
+
+    pub fn visualTokenLen(self: ErrorDetails) usize {
+        return switch (self.err) {
+            // These can technically be more than 1 byte depending on encoding,
+            // but they always refer to one visual character/grapheme.
+            .illegal_byte,
+            .illegal_byte_outside_string_literals,
+            .illegal_byte_order_mark,
+            .illegal_private_use_character,
+            => 1,
+            // Note: A perfect solution here would involve full grapheme cluster
+            //       awareness, but oh well. This will give an inflated length
+            //       for all multibyte codepoints, and even more inflated
+            //       for grapheme clusters.
+            else => self.token.end - self.token.start,
+        };
+    }
 };
 
 pub fn renderErrorMessage(allocator: std.mem.Allocator, writer: anytype, colors: utils.Colors, cwd: std.fs.Dir, err_details: ErrorDetails, source: []const u8, strings: []const []const u8, source_mappings: ?SourceMappings) !void {
@@ -551,7 +568,7 @@ pub fn renderErrorMessage(allocator: std.mem.Allocator, writer: anytype, colors:
     colors.set(writer, .green);
     try writer.writeByteNTimes(' ', token_offset);
     try writer.writeByte('^');
-    const token_len = err_details.token.end - err_details.token.start;
+    const token_len = err_details.visualTokenLen();
     if (token_len > 1) {
         var num_squiggles = token_len - 1;
         if (err_details.err == .string_literal_too_long) {
