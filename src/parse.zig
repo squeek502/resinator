@@ -285,7 +285,6 @@ pub const Parser = struct {
     /// Expects the current token to be the first token of the statement.
     fn parseStatement(self: *Self) Error!*Node {
         const first_token = self.state.token;
-        // TODO: Is this actually guaranteed? Should it be?
         std.debug.assert(first_token.id == .literal);
 
         // The Win32 RC compiler allows for a 'dangling' literal at the end of a file,
