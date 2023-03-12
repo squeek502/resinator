@@ -976,8 +976,9 @@ pub const Compiler = struct {
         try writer.writeByteNTimes(0, numPaddingBytesNeeded(data_size));
     }
 
-    pub fn numPaddingBytesNeeded(data_size: u32) u3 {
-        return @intCast(u3, (4 -% data_size) % 4);
+    pub fn numPaddingBytesNeeded(data_size: u32) u2 {
+        // Result is guaranteed to be between 0 and 3.
+        return @intCast(u2, (4 -% data_size) % 4);
     }
 
     pub fn evaluateAcceleratorKeyExpression(self: *Compiler, node: *Node, is_virt: bool) !u16 {
