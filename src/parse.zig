@@ -2620,18 +2620,24 @@ test "dialog controls" {
     );
 
     // help_id param is not supported if the resource is DIALOG
-    try testParseError("expected '<'}' or END>', got ','",
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "expected '<'}' or END>', got ','" }},
         \\1 DIALOG 1, 2, 3, 4
         \\{
         \\    AUTO3STATE,, "mytext",, 900,, 1 2 3 4, 0, 0, 100 { "AUTO3STATE" }
         \\}
+    ,
+        null,
     );
 
-    try testParseError("expected control class [BUTTON, EDIT, etc]; got 'SOMETHING'",
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "expected control class [BUTTON, EDIT, etc]; got 'SOMETHING'" }},
         \\1 DIALOG 1, 2, 3, 4
         \\{
         \\    CONTROL "", 900, SOMETHING, 0, 1, 2, 3, 4
         \\}
+    ,
+        null,
     );
 }
 
@@ -2718,21 +2724,25 @@ test "not expressions" {
 }
 
 test "menus" {
-    try testParseError(
-        "empty menu of type 'MENU' not allowed",
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "empty menu of type 'MENU' not allowed" }},
         "1 MENU {}",
+        null,
     );
-    try testParseError(
-        "empty menu of type 'MENUEX' not allowed",
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "empty menu of type 'MENUEX' not allowed" }},
         "1 MENUEX {}",
+        null,
     );
-    try testParseError(
-        "empty menu of type 'POPUP' not allowed",
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "empty menu of type 'POPUP' not allowed" }},
         "1 MENU { MENUITEM SEPARATOR POPUP \"\" {} }",
+        null,
     );
-    try testParseError(
-        "expected '<'}' or END>', got 'hello'",
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "expected '<'}' or END>', got 'hello'" }},
         "1 MENU { hello }",
+        null,
     );
     try testParse(
         \\1 MENU FIXED VERSION 1 CHARACTERISTICS (1+2) {
@@ -2845,15 +2855,20 @@ test "menus" {
 }
 
 test "versioninfo" {
-    try testParseError(
-        \\expected '<'{' or BEGIN>', got ','
-    ,
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "expected '<'{' or BEGIN>', got ','" }},
         \\1 VERSIONINFO PRODUCTVERSION 1,2,3,4,5 {}
-    );
-    try testParseWarning(
-        \\the padding before this quoted string value would be miscompiled by the Win32 RC compiler
     ,
+        null,
+    );
+    try testParseErrorDetails(
+        &.{
+            .{ .type = .warning, .str = "the padding before this quoted string value would be miscompiled by the Win32 RC compiler" },
+            .{ .type = .note, .str = "to avoid the potential miscompilation, consider adding a comma between the VALUE's key and the quoted string" },
+        },
         \\1 VERSIONINFO { VALUE "key" "value" }
+    ,
+        null,
     );
     try testParse(
         \\1 VERSIONINFO FIXED
@@ -2964,7 +2979,11 @@ test "dlginclude" {
         \\  literal L"Something.h"
         \\
     );
-    try testParseError("expected quoted string literal; got 'something.h'", "1 DLGINCLUDE something.h");
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "expected quoted string literal; got 'something.h'" }},
+        "1 DLGINCLUDE something.h",
+        null,
+    );
 }
 
 test "toolbar" {
@@ -3022,62 +3041,147 @@ test "semicolons" {
 }
 
 test "parse errors" {
-    try testParseError("unfinished raw data block at '<eof>', expected closing '}' or 'END'", "id RCDATA { 1");
-    try testParseError("unfinished string literal at '<eof>', expected closing '\"'", "id RCDATA \"unfinished string");
-    try testParseError("expected ')', got '}'", "id RCDATA { (1 }");
-    try testParseError("character '\\x1A' is not allowed", "id RCDATA { \"\x1A\" }");
-    try testParseError("character '\\x01' is not allowed outside of string literals", "id RCDATA { \x01 }");
-    try testParseError("escaping quotes with \\\" is not allowed (use \"\" instead)", "id RCDATA { \"\\\"\"\" }");
-    try testParseError("expected number or number expression; got '\"hello\"'", "STRINGTABLE { \"hello\" }");
-    try testParseError("expected quoted string literal; got '1'", "STRINGTABLE { 1, 1 }");
-    try testParseError("expected '<filename>', found '{' (resource type 'icon' can't use raw data)", "1 ICON {}");
-    try testParseError("id of resource type 'font' must be an ordinal (u16), got 'string'", "string FONT filename");
-    try testParseError("expected accelerator type or option [ASCII, VIRTKEY, etc]; got 'NOTANOPTIONORTYPE'", "1 ACCELERATORS { 1, 1, NOTANOPTIONORTYPE");
-    try testParseError("expected number, number expression, or quoted string literal; got 'hello'", "1 ACCELERATORS { hello, 1 }");
-    try testParseError("expected number or number expression; got '\"hello\"'", "1 ACCELERATORS { 1, \"hello\" }");
-    try testParseError("the number 6 (RT_STRING) cannot be used as a resource type", "1 6 {}");
-    try testParseError("name or id is not allowed for resource type 'stringtable'", "1 STRINGTABLE { 1 \"\" }");
-}
-
-fn testParseError(expected_error_str: []const u8, source: []const u8) !void {
-    const allocator = std.testing.allocator;
-    var diagnostics = Diagnostics.init(allocator);
-    defer diagnostics.deinit();
-    // TODO: test different code pages
-    var lexer = Lexer.init(source, .windows1252, null);
-    var parser = Parser.init(&lexer);
-    var tree = parser.parse(allocator, &diagnostics) catch |err| switch (err) {
-        error.OutOfMemory => |e| return e,
-        error.ParseError => {
-            if (diagnostics.errors.items.len < 1) return error.NoDiagnostics;
-            if (diagnostics.errors.items[0].type != .err) @panic("TODO handle parse test with a non-error as the first error");
-            var buf: [256]u8 = undefined;
-            var fbs = std.io.fixedBufferStream(&buf);
-            try diagnostics.errors.items[0].render(fbs.writer(), source, diagnostics.strings.items);
-            try std.testing.expectEqualStrings(expected_error_str, fbs.getWritten());
-            return;
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "unfinished raw data block at '<eof>', expected closing '}' or 'END'" }},
+        "id RCDATA { 1",
+        null,
+    );
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "unfinished string literal at '<eof>', expected closing '\"'" }},
+        "id RCDATA \"unfinished string",
+        null,
+    );
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "expected ')', got '}'" }},
+        "id RCDATA { (1 }",
+        null,
+    );
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "character '\\x1A' is not allowed" }},
+        "id RCDATA { \"\x1A\" }",
+        null,
+    );
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "character '\\x01' is not allowed outside of string literals" }},
+        "id RCDATA { \x01 }",
+        null,
+    );
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "escaping quotes with \\\" is not allowed (use \"\" instead)" }},
+        "id RCDATA { \"\\\"\"\" }",
+        null,
+    );
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "expected number or number expression; got '\"hello\"'" }},
+        "STRINGTABLE { \"hello\" }",
+        null,
+    );
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "expected quoted string literal; got '1'" }},
+        "STRINGTABLE { 1, 1 }",
+        null,
+    );
+    try testParseErrorDetails(
+        &.{
+            .{ .type = .err, .str = "expected '<filename>', found '{' (resource type 'icon' can't use raw data)" },
+            .{ .type = .note, .str = "if '{' is intended to be a filename, it must be specified as a quoted string literal" },
         },
-    };
-    defer tree.deinit();
-    std.debug.print("expected parse error, got tree:\n", .{});
-    try tree.dump(std.io.getStdErr().writer());
-    return error.UnexpectedSuccess;
+        "1 ICON {}",
+        null,
+    );
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "id of resource type 'font' must be an ordinal (u16), got 'string'" }},
+        "string FONT filename",
+        null,
+    );
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "expected accelerator type or option [ASCII, VIRTKEY, etc]; got 'NOTANOPTIONORTYPE'" }},
+        "1 ACCELERATORS { 1, 1, NOTANOPTIONORTYPE",
+        null,
+    );
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "expected number, number expression, or quoted string literal; got 'hello'" }},
+        "1 ACCELERATORS { hello, 1 }",
+        null,
+    );
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "expected number or number expression; got '\"hello\"'" }},
+        "1 ACCELERATORS { 1, \"hello\" }",
+        null,
+    );
+    try testParseErrorDetails(
+        &.{
+            .{ .type = .err, .str = "the number 6 (RT_STRING) cannot be used as a resource type" },
+            .{ .type = .note, .str = "using RT_STRING directly likely results in an invalid .res file, use a STRINGTABLE instead" },
+        },
+        "1 6 {}",
+        null,
+    );
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "name or id is not allowed for resource type 'stringtable'" }},
+        "1 STRINGTABLE { 1 \"\" }",
+        null,
+    );
 }
 
-fn testParseWarning(expected_warning_str: []const u8, source: []const u8) !void {
+const ExpectedErrorDetails = struct {
+    str: []const u8,
+    type: ErrorDetails.Type,
+};
+
+fn testParseErrorDetails(expected_details: []const ExpectedErrorDetails, source: []const u8, maybe_expected_output: ?[]const u8) !void {
     const allocator = std.testing.allocator;
     var diagnostics = Diagnostics.init(allocator);
     defer diagnostics.deinit();
-    // TODO: test different code pages
-    var lexer = Lexer.init(source, .windows1252, null);
-    var parser = Parser.init(&lexer);
-    var tree = try parser.parse(allocator, &diagnostics);
-    defer tree.deinit();
 
-    if (diagnostics.errors.items.len < 1) return error.NoDiagnostics;
-    if (diagnostics.errors.items[0].type != .warning) @panic("TODO handle parse test with a non-warning as the first error");
-    var buf: [256]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&buf);
-    try diagnostics.errors.items[0].render(fbs.writer(), source, diagnostics.strings.items);
-    try std.testing.expectEqualStrings(expected_warning_str, fbs.getWritten());
+    const expect_fail = for (expected_details) |details| {
+        if (details.type == .err) break true;
+    } else false;
+
+    const tree: ?*Tree = tree: {
+        var lexer = Lexer.init(source, .windows1252, null);
+        var parser = Parser.init(&lexer);
+        var tree = parser.parse(allocator, &diagnostics) catch |err| switch (err) {
+            error.OutOfMemory => |e| return e,
+            error.ParseError => {
+                if (!expect_fail) {
+                    diagnostics.renderToStdErr(std.fs.cwd(), source, null);
+                    return err;
+                }
+                break :tree null;
+            },
+        };
+        break :tree tree;
+    };
+    defer if (tree != null) tree.?.deinit();
+
+    if (tree != null and expect_fail) {
+        std.debug.print("expected parse error, got tree:\n", .{});
+        try tree.?.dump(std.io.getStdErr().writer());
+        return error.UnexpectedSuccess;
+    }
+
+    if (expected_details.len != diagnostics.errors.items.len) {
+        std.debug.print("expected {} error details, got {}:\n", .{ expected_details.len, diagnostics.errors.items.len });
+        diagnostics.renderToStdErr(std.fs.cwd(), source, null);
+        return error.ErrorDetailMismatch;
+    }
+    for (diagnostics.errors.items, expected_details) |actual, expected| {
+        std.testing.expectEqual(expected.type, actual.type) catch |e| {
+            diagnostics.renderToStdErr(std.fs.cwd(), source, null);
+            return e;
+        };
+        var buf: [256]u8 = undefined;
+        var fbs = std.io.fixedBufferStream(&buf);
+        try actual.render(fbs.writer(), source, diagnostics.strings.items);
+        try std.testing.expectEqualStrings(expected.str, fbs.getWritten());
+    }
+
+    if (maybe_expected_output) |expected_output| {
+        var buf = std.ArrayList(u8).init(allocator);
+        defer buf.deinit();
+
+        try tree.?.dump(buf.writer());
+        try std.testing.expectEqualStrings(expected_output, buf.items);
+    }
 }
