@@ -1641,7 +1641,7 @@ pub const Compiler = struct {
                 }
 
                 var flags: u16 = 0;
-                if (is_last_of_parent) flags |= @intCast(u16, res.MF.END);
+                if (is_last_of_parent) flags |= comptime @intCast(u16, res.MF.END);
                 // This constant doesn't seem to have a named #define, it's different than MF_POPUP
                 if (node_type == .popup_ex) flags |= 0x01;
                 try writer.writeIntLittle(u16, flags);
