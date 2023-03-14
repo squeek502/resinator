@@ -1206,7 +1206,8 @@ pub const Compiler = struct {
             try data_writer.writeIntLittle(u32, optional_statement_values.style);
             try data_writer.writeIntLittle(u32, optional_statement_values.exstyle);
         }
-        // TODO: Enforce this limit in the parser?
+        // This limit is enforced by the parser, so we know the number of controls
+        // is within the range of a u16.
         try data_writer.writeIntLittle(u16, @intCast(u16, node.controls.len));
         try data_writer.writeIntLittle(u16, x.asWord());
         try data_writer.writeIntLittle(u16, y.asWord());

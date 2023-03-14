@@ -243,6 +243,7 @@ pub const ErrorDetails = struct {
         rc_would_miscompile_version_value_padding,
         code_page_pragma_in_included_file,
         nested_resource_level_exceeds_max,
+        too_many_dialog_controls,
 
         // Compiler
         /// `string_and_language` is populated
@@ -382,6 +383,10 @@ pub const ErrorDetails = struct {
                     return writer.print("{s} contains too many nested children (max is {})", .{ @tagName(self.extra.resource), max });
                 },
                 .note => return writer.print("max {s} nesting level exceeded here", .{@tagName(self.extra.resource)}),
+            },
+            .too_many_dialog_controls => switch (self.type) {
+                .err, .warning => return writer.print("{s} contains too many controls (max is {})", .{ @tagName(self.extra.resource), std.math.maxInt(u16) }),
+                .note => return writer.writeAll("maximum number of controls exceeded here"),
             },
             .string_already_defined => switch (self.type) {
                 // TODO: better printing of language, using constant names from WinNT.h

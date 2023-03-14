@@ -101,6 +101,8 @@ The plan is to use fuzz testing with the `rc` tool as an oracle to ensure that `
   + The Win32 RC compiler will `fatal error RW1023: I/O error seeking in file` if the resulting `.res` filesize ever exceeds 2GiB (2,147,483,648 bytes). This indirectly limits the size of individual resources; the largest possible resource can be slightly smaller than 2GiB if it's the only resource in the `.res` (slightly smaller than 2GiB to allow for the resource headers, etc).
 - `resinator` will error if a `VERSIONINFO` resource contains a node tree that is larger than the max of a `u16`, since the root node needs to be able to specify its byte length (inclusive of all children) as a `u16`.
   + The Win32 RC compiler will not error and instead the node's byte length will overflow and wrap back around to 0. This leads to an invalid version node tree.
+- `resinator` will error if a `DIALOG`/`DIALOGEX` resource contains more controls than the max of a `u16`, since the dialog needs to be able to specify its number of controls as a `u16`.
+  + The Win32 RC compiler will not error and instead the number of controls will overflow and wrap back around to 0. This leads to an incorrect dialog resource.
 
 ### Unavoidable divergences from the MSVC++ `rc` tool
 

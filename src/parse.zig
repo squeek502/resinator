@@ -538,6 +538,22 @@ pub const Parser = struct {
                 var controls = std.ArrayListUnmanaged(*Node){};
                 defer controls.deinit(self.state.allocator);
                 while (try self.parseControlStatement(resource)) |control_node| {
+                    // The number of controls must fit in a u16 in order for it to
+                    // be able to be written into the relevant field in the .res data.
+                    if (controls.items.len >= std.math.maxInt(u16)) {
+                        try self.addErrorDetails(.{
+                            .err = .too_many_dialog_controls,
+                            .token = id_token,
+                            .extra = .{ .resource = resource },
+                        });
+                        return self.addErrorDetailsAndFail(.{
+                            .err = .too_many_dialog_controls,
+                            .type = .note,
+                            .token = control_node.getFirstToken(),
+                            .extra = .{ .resource = resource },
+                        });
+                    }
+
                     try controls.append(self.state.allocator, control_node);
                 }
 
@@ -3232,6 +3248,45 @@ test "max nested versioninfo level" {
         &.{
             .{ .type = .err, .str = "versioninfo contains too many nested children (max is 512)" },
             .{ .type = .note, .str = "max versioninfo nesting level exceeded here" },
+        },
+        source_buffer.items,
+        null,
+    );
+}
+
+test "max dialog controls" {
+    var source_buffer = std.ArrayList(u8).init(std.testing.allocator);
+    defer source_buffer.deinit();
+
+    const max_controls = std.math.maxInt(u16);
+
+    try source_buffer.appendSlice("1 DIALOGEX 1, 2, 3, 4 {\n");
+    for (0..max_controls) |_| {
+        try source_buffer.appendSlice("CHECKBOX \"foo\", 1, 2, 3, 4, 5\n");
+    }
+    try source_buffer.appendSlice("}");
+
+    // This should succeed, but we don't care about validating the tree since it's
+    // just a dialog with a giant list of controls.
+    try testParseErrorDetails(
+        &.{},
+        source_buffer.items,
+        null,
+    );
+
+    // Now reset and add 1 more than the max number of controls.
+    source_buffer.clearRetainingCapacity();
+    try source_buffer.appendSlice("1 DIALOGEX 1, 2, 3, 4 {\n");
+    for (0..max_controls + 1) |_| {
+        try source_buffer.appendSlice("CHECKBOX \"foo\", 1, 2, 3, 4, 5\n");
+    }
+    try source_buffer.appendSlice("}");
+
+    // Now we should get the 'too many controls' error.
+    try testParseErrorDetails(
+        &.{
+            .{ .type = .err, .str = "dialogex contains too many controls (max is 65535)" },
+            .{ .type = .note, .str = "max dialogex controls exceeded here" },
         },
         source_buffer.items,
         null,
