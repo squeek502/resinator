@@ -29,12 +29,11 @@ pub const CompileOptions = struct {
     cwd: std.fs.Dir,
     diagnostics: *Diagnostics,
     source_mappings: ?*SourceMappings = null,
+    default_code_page: CodePage = .windows1252,
 };
 
 pub fn compile(allocator: Allocator, source: []const u8, writer: anytype, options: CompileOptions) !void {
-    // TODO: Take this as a parameter
-    const default_code_page: CodePage = .windows1252;
-    var lexer = Lexer.init(source, default_code_page, options.source_mappings);
+    var lexer = Lexer.init(source, options.default_code_page, options.source_mappings);
     var parser = Parser.init(&lexer);
     var tree = try parser.parse(allocator, options.diagnostics);
     defer tree.deinit();
