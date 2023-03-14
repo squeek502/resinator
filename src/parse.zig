@@ -3286,7 +3286,7 @@ test "max dialog controls" {
     try testParseErrorDetails(
         &.{
             .{ .type = .err, .str = "dialogex contains too many controls (max is 65535)" },
-            .{ .type = .note, .str = "max dialogex controls exceeded here" },
+            .{ .type = .note, .str = "maximum number of controls exceeded here" },
         },
         source_buffer.items,
         null,
