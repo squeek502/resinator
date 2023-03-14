@@ -19,7 +19,6 @@ pub fn main() !void {
 
     var arg_i: usize = 1; // start at 1 to skip past the exe name
     while (arg_i < args.len) {
-        // TODO: Is this actually case-insensitive?
         if (std.ascii.eqlIgnoreCase("/I", args[arg_i])) {
             if (arg_i + 1 >= args.len) {
                 std.debug.print("Missing include path after {s} option\n", .{args[arg_i]});
