@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const Node = @import("ast.zig").Node;
 const Lexer = @import("lex.zig").Lexer;
@@ -30,6 +31,8 @@ pub const CompileOptions = struct {
     diagnostics: *Diagnostics,
     source_mappings: ?*SourceMappings = null,
     default_code_page: CodePage = .windows1252,
+    ignore_include_env_var: bool = false,
+    extra_include_paths: []const []const u8 = &.{},
 };
 
 pub fn compile(allocator: Allocator, source: []const u8, writer: anytype, options: CompileOptions) !void {
@@ -49,6 +52,8 @@ pub fn compile(allocator: Allocator, source: []const u8, writer: anytype, option
         .cwd = options.cwd,
         .diagnostics = options.diagnostics,
         .code_pages = &tree.code_pages,
+        .ignore_include_env_var = options.ignore_include_env_var,
+        .extra_include_paths = options.extra_include_paths,
     };
 
     try compiler.writeRoot(tree.root(), writer);
@@ -62,6 +67,8 @@ pub const Compiler = struct {
     state: State = .{},
     diagnostics: *Diagnostics,
     code_pages: *const CodePageLookup,
+    extra_include_paths: []const []const u8,
+    ignore_include_env_var: bool,
 
     pub const State = struct {
         icon_id: u16 = 1,
@@ -191,28 +198,74 @@ pub const Compiler = struct {
     ///       one if a matching file is invalid.
     fn searchForFile(self: *Compiler, path: []const u8) !std.fs.File {
         const file = self.cwd.openFile(path, .{}) catch |first_err| {
-            // TODO: /x option to not search INCLUDE, /i option to add search paths
-            const INCLUDE = std.process.getEnvVarOwned(self.allocator, "INCLUDE") catch "";
-            defer self.allocator.free(INCLUDE);
+            // If the path is absolute, then it is not resolved relative to any search
+            // paths, so there's no point in checking them.
+            //
+            // This behavior was determined/confirmed with the following test:
+            // - A `test.rc` file with the contents `1 RCDATA "/test.bin"`
+            // - A `test.bin` file at `C:\test.bin`
+            // - A `test.bin` file at `inc\test.bin` relative to the .rc file
+            // - Invoking `rc` with `rc /i inc test.rc`
+            //
+            // This results in a .res file with the contents of `C:\test.bin`, not
+            // the contents of `inc\test.bin`. Further, if `C:\test.bin` is deleted,
+            // then it start failing to find `/test.bin`, meaning that it does not resolve
+            // `/test.bin` relative to include paths and instead only treats it as
+            // an absolute path.
+            if (std.fs.path.isAbsolute(path)) {
+                return first_err;
+            }
 
             var buf = std.ArrayList(u8).init(self.allocator);
             defer buf.deinit();
 
+            for (self.extra_include_paths) |extra_include_path| {
+                return openFileFromSearchPath(self.cwd, &buf, extra_include_path, path) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => continue,
+                };
+            }
+
+            if (self.ignore_include_env_var) {
+                return first_err;
+            }
+
+            const INCLUDE = std.process.getEnvVarOwned(self.allocator, "INCLUDE") catch "";
+            defer self.allocator.free(INCLUDE);
+
             var it = std.mem.tokenize(u8, INCLUDE, ";");
             while (it.next()) |search_path| {
-                buf.clearRetainingCapacity();
-                try buf.appendSlice(search_path);
-                try buf.append(std.fs.path.sep);
-                try buf.appendSlice(path);
-                const normalized_len = std.os.windows.normalizePath(u8, buf.items) catch continue;
-                buf.shrinkRetainingCapacity(normalized_len);
-
-                return self.cwd.openFile(buf.items, .{}) catch continue;
+                return openFileFromSearchPath(self.cwd, &buf, search_path, path) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => continue,
+                };
             }
 
             return first_err;
         };
         return file;
+    }
+
+    fn openFileFromSearchPath(cwd: std.fs.Dir, buf: *std.ArrayList(u8), dir_path: []const u8, sub_path: []const u8) !std.fs.File {
+        buf.clearRetainingCapacity();
+        // We will need at most 1 extra byte in the buffer to ensure that we can join
+        // the two paths, since the only possible needed addition is at most one path separator.
+        try buf.ensureTotalCapacity(dir_path.len + sub_path.len + 1);
+
+        const path_seps = switch (builtin.target.os.tag) {
+            .windows => "/\\",
+            .uefi => "\\",
+            else => "/",
+        };
+        // Remove any trailing path separators so we know we have exactly 1 separator between the paths.
+        // Note: We know the sub_path does not have a leading slash that we have to worry about
+        //       because we know it can't be an absolute path (see `searchForFile`).
+        const joinable_dir_path = std.mem.trimRight(u8, dir_path, path_seps);
+        buf.appendSliceAssumeCapacity(joinable_dir_path);
+        buf.appendAssumeCapacity(std.fs.path.sep);
+        buf.appendSliceAssumeCapacity(sub_path);
+
+        return cwd.openFile(buf.items, .{});
     }
 
     pub fn writeResourceExternal(self: *Compiler, node: *Node.ResourceExternal, writer: anytype) !void {
@@ -2509,6 +2562,19 @@ fn testCompileErrorDetails(expected_details: []const ExpectedErrorDetails, sourc
 }
 
 fn testCompileErrorDetailsWithDir(expected_details: []const ExpectedErrorDetails, source: []const u8, maybe_expected_output: ?[]const u8, cwd: std.fs.Dir) !void {
+    return testCompileErrorDetailsWithOptions(expected_details, source, maybe_expected_output, .{
+        .cwd = cwd,
+    });
+}
+
+const TestCompileOptions = struct {
+    cwd: std.fs.Dir,
+    default_code_page: CodePage = .windows1252,
+    ignore_include_env_var: bool = false,
+    extra_include_paths: []const []const u8 = &.{},
+};
+
+fn testCompileErrorDetailsWithOptions(expected_details: []const ExpectedErrorDetails, source: []const u8, maybe_expected_output: ?[]const u8, options: TestCompileOptions) !void {
     const allocator = std.testing.allocator;
 
     var buffer = std.ArrayList(u8).init(std.testing.allocator);
@@ -2522,10 +2588,16 @@ fn testCompileErrorDetailsWithDir(expected_details: []const ExpectedErrorDetails
     } else false;
 
     const did_fail = did_fail: {
-        compile(std.testing.allocator, source, buffer.writer(), .{ .cwd = cwd, .diagnostics = &diagnostics }) catch |err| switch (err) {
+        compile(std.testing.allocator, source, buffer.writer(), .{
+            .cwd = options.cwd,
+            .diagnostics = &diagnostics,
+            .default_code_page = options.default_code_page,
+            .ignore_include_env_var = options.ignore_include_env_var,
+            .extra_include_paths = options.extra_include_paths,
+        }) catch |err| switch (err) {
             error.ParseError, error.CompileError => {
                 if (!expect_fail) {
-                    diagnostics.renderToStdErr(cwd, source, null);
+                    diagnostics.renderToStdErr(options.cwd, source, null);
                     return err;
                 }
                 break :did_fail true;
@@ -2542,12 +2614,12 @@ fn testCompileErrorDetailsWithDir(expected_details: []const ExpectedErrorDetails
 
     if (expected_details.len != diagnostics.errors.items.len) {
         std.debug.print("expected {} error details, got {}:\n", .{ expected_details.len, diagnostics.errors.items.len });
-        diagnostics.renderToStdErr(cwd, source, null);
+        diagnostics.renderToStdErr(options.cwd, source, null);
         return error.ErrorDetailMismatch;
     }
     for (diagnostics.errors.items, expected_details) |actual, expected| {
         std.testing.expectEqual(expected.type, actual.type) catch |e| {
-            diagnostics.renderToStdErr(cwd, source, null);
+            diagnostics.renderToStdErr(options.cwd, source, null);
             return e;
         };
         var buf: [256]u8 = undefined;
@@ -3524,5 +3596,47 @@ test "aniicon, anicursor" {
     ,
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x008\x00\x00\x00 \x00\x00\x00\xff\xff\x16\x00\xff\xff\x01\x00\x00\x00\x00\x00\x10\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00RIFF,\x00\x00\x00ACONanih$\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x008\x00\x00\x00 \x00\x00\x00\xff\xff\x15\x00\xff\xff\x02\x00\x00\x00\x00\x00\x10\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00RIFF,\x00\x00\x00ACONanih$\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00",
         tmp_dir.dir,
+    );
+}
+
+test "search paths" {
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    try tmp_dir.dir.makePath("inc");
+    try tmp_dir.dir.writeFile("inc/some_crazy_file.bin", "foo");
+
+    // The file is not in the include path so it should not be found
+    try testCompileErrorDetailsWithDir(
+        &.{
+            .{ .type = .err, .str = "unable to open file 'some_crazy_file.bin': FileNotFound" },
+        },
+        "1 RCDATA some_crazy_file.bin",
+        null,
+        tmp_dir.dir,
+    );
+
+    // Now we add the inc dir to the include path so it should now compile successfully.
+    try testCompileErrorDetailsWithOptions(
+        &.{},
+        "1 RCDATA some_crazy_file.bin",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00foo\x00",
+        .{
+            .cwd = tmp_dir.dir,
+            .extra_include_paths = &.{"inc"},
+        },
+    );
+
+    // However, if we specify the filename as an absolute path, it should not be found.
+    try testCompileErrorDetailsWithOptions(
+        &.{
+            .{ .type = .err, .str = "unable to open file '/some_crazy_file.bin': FileNotFound" },
+        },
+        "1 RCDATA \"/some_crazy_file.bin\"",
+        null,
+        .{
+            .cwd = tmp_dir.dir,
+            .extra_include_paths = &.{"inc"},
+        },
     );
 }

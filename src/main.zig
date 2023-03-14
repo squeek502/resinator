@@ -16,6 +16,7 @@ pub fn main() !void {
     var output_filename_buf: [std.fs.MAX_NAME_BYTES]u8 = undefined;
     var extra_include_paths = std.ArrayList([]const u8).init(allocator);
     defer extra_include_paths.deinit();
+    var ignore_include_env_var = false;
 
     var arg_i: usize = 1; // start at 1 to skip past the exe name
     while (arg_i < args.len) {
@@ -33,6 +34,8 @@ pub fn main() !void {
             }
             output_filename = args[arg_i + 1];
             arg_i += 2;
+        } else if (std.ascii.eqlIgnoreCase("/x", args[arg_i])) {
+            ignore_include_env_var = true;
         } else {
             break;
         }
@@ -143,6 +146,8 @@ pub fn main() !void {
         .cwd = std.fs.cwd(),
         .diagnostics = &diagnostics,
         .source_mappings = &mapping_results.mappings,
+        .ignore_include_env_var = ignore_include_env_var,
+        .extra_include_paths = extra_include_paths.items,
     }) catch |err| switch (err) {
         error.ParseError, error.CompileError => {
             diagnostics.renderToStdErr(std.fs.cwd(), preprocessed_input, mapping_results.mappings);
