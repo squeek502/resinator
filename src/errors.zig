@@ -33,12 +33,26 @@ pub const Diagnostics = struct {
         try self.errors.append(self.allocator, error_details);
     }
 
-    /// Returns the index of the added string
-    pub fn putString(self: *Diagnostics, str: []const u8) !usize {
+    const SmallestStringIndexType = std.meta.Int(.unsigned, @min(
+        @bitSizeOf(ErrorDetails.FileOpenError.FilenameStringIndex),
+        @min(
+            @bitSizeOf(ErrorDetails.IconReadError.FilenameStringIndex),
+            @bitSizeOf(ErrorDetails.BitmapReadError.FilenameStringIndex),
+        ),
+    ));
+
+    /// Returns the index of the added string as the SmallestStringIndexType
+    /// in order to avoid needing to `@intCast` it at callsites of putString.
+    /// Instead, this function will error if the index would ever exceed the
+    /// smallest FilenameStringIndex of an ErrorDetails type.
+    pub fn putString(self: *Diagnostics, str: []const u8) !SmallestStringIndexType {
+        if (self.strings.items.len >= std.math.maxInt(SmallestStringIndexType)) {
+            return error.OutOfMemory; // ran out of string indexes
+        }
         const dupe = try self.allocator.dupe(u8, str);
         const index = self.strings.items.len;
         try self.strings.append(self.allocator, dupe);
-        return index;
+        return @intCast(SmallestStringIndexType, index);
     }
 
     pub fn renderToStdErr(self: *Diagnostics, cwd: std.fs.Dir, source: []const u8, source_mappings: ?SourceMappings) void {

@@ -305,7 +305,7 @@ pub const Compiler = struct {
         // and almost certainly lead to things not intended by the user (e.g. '(1+-1)' evaluates
         // to the filename '-1'), so error if the filename node is a grouped/binary expression.
         if (node.filename.id != .literal) {
-            const filename_string_index = @intCast(u32, try self.diagnostics.putString(filename.utf8));
+            const filename_string_index = try self.diagnostics.putString(filename.utf8);
             try self.addErrorDetails(.{
                 .err = .number_expression_as_filename,
                 // TODO: Make this point to the whole expression rather than just the first token
@@ -324,10 +324,7 @@ pub const Compiler = struct {
         const file = self.searchForFile(filename.utf8) catch |err| switch (err) {
             error.OutOfMemory => |e| return e,
             else => |e| {
-                const filename_string_index = @intCast(
-                    ErrorDetails.FileOpenError.FilenameStringIndex,
-                    try self.diagnostics.putString(filename.utf8),
-                );
+                const filename_string_index = try self.diagnostics.putString(filename.utf8);
                 return self.addErrorDetailsAndFail(.{
                     .err = .file_open_error,
                     // TODO get the most relevant token for filename, e.g. in an expression like (1+-1), get the -1 token
@@ -583,10 +580,7 @@ pub const Compiler = struct {
                     const file_size = try file.getEndPos();
 
                     const bitmap_info = bmp.read(file.reader(), file_size) catch |err| {
-                        const filename_string_index = @intCast(
-                            ErrorDetails.BitmapReadError.FilenameStringIndex,
-                            try self.diagnostics.putString(filename.utf8),
-                        );
+                        const filename_string_index = try self.diagnostics.putString(filename.utf8);
                         return self.addErrorDetailsAndFail(.{
                             .err = .bmp_read_error,
                             .token = node.filename.getFirstToken(),
@@ -601,7 +595,7 @@ pub const Compiler = struct {
                         const num_ignored_bytes = bitmap_info.getActualPaletteByteLen() - bitmap_info.getExpectedPaletteByteLen();
                         var number_as_bytes: [8]u8 = undefined;
                         std.mem.writeIntNative(u64, &number_as_bytes, num_ignored_bytes);
-                        const value_string_index = @intCast(u32, try self.diagnostics.putString(&number_as_bytes));
+                        const value_string_index = try self.diagnostics.putString(&number_as_bytes);
                         try self.addErrorDetails(.{
                             .err = .bmp_ignored_palette_bytes,
                             .type = .warning,
@@ -617,10 +611,7 @@ pub const Compiler = struct {
                             var numbers_as_bytes: [16]u8 = undefined;
                             std.mem.writeIntNative(u64, numbers_as_bytes[0..8], num_padding_bytes);
                             std.mem.writeIntNative(u64, numbers_as_bytes[8..16], max_missing_bytes);
-                            const values_string_index = @intCast(
-                                u32,
-                                try self.diagnostics.putString(&numbers_as_bytes),
-                            );
+                            const values_string_index = try self.diagnostics.putString(&numbers_as_bytes);
                             try self.addErrorDetails(.{
                                 .err = .bmp_too_many_missing_palette_bytes,
                                 .token = node.filename.getFirstToken(),
@@ -636,7 +627,7 @@ pub const Compiler = struct {
 
                         var number_as_bytes: [8]u8 = undefined;
                         std.mem.writeIntNative(u64, &number_as_bytes, num_padding_bytes);
-                        const value_string_index = @intCast(u32, try self.diagnostics.putString(&number_as_bytes));
+                        const value_string_index = try self.diagnostics.putString(&number_as_bytes);
                         try self.addErrorDetails(.{
                             .err = .bmp_missing_palette_bytes,
                             .type = .warning,
@@ -647,7 +638,7 @@ pub const Compiler = struct {
                         if (pixel_data_len > 0) {
                             const miscompiled_bytes = @min(pixel_data_len, num_padding_bytes);
                             std.mem.writeIntNative(u64, &number_as_bytes, miscompiled_bytes);
-                            const miscompiled_bytes_string_index = @intCast(u32, try self.diagnostics.putString(&number_as_bytes));
+                            const miscompiled_bytes_string_index = try self.diagnostics.putString(&number_as_bytes);
                             try self.addErrorDetails(.{
                                 .err = .rc_would_miscompile_bmp_palette_padding,
                                 .type = .warning,
@@ -749,10 +740,7 @@ pub const Compiler = struct {
         token: Token,
         predefined_type: res.RT,
     ) error{ CompileError, OutOfMemory } {
-        const filename_string_index = @intCast(
-            ErrorDetails.IconReadError.FilenameStringIndex,
-            try self.diagnostics.putString(filename),
-        );
+        const filename_string_index = try self.diagnostics.putString(filename);
         return self.addErrorDetailsAndFail(.{
             .err = .icon_read_error,
             .token = token,
