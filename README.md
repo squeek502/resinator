@@ -103,6 +103,8 @@ The plan is to use fuzz testing with the `rc` tool as an oracle to ensure that `
   + The Win32 RC compiler will not error and instead the node's byte length will overflow and wrap back around to 0. This leads to an invalid version node tree.
 - `resinator` will error if a `DIALOG`/`DIALOGEX` resource contains more controls than the max of a `u16`, since the dialog needs to be able to specify its number of controls as a `u16`.
   + The Win32 RC compiler will not error and instead the number of controls will overflow and wrap back around to 0. This leads to an incorrect dialog resource.
+- `resinator` will error if a control within a `DIALOG`/`DIALOGEX` resource contains more extra data than the max of a `u16`, since the dialog needs to be able to specify the number of extra data bytes of each control as a `u16`.
+  + The Win32 RC compiler will not error and instead the extra data length of the control will overflow and wrap back around to 0. This leads to an incorrect dialog resource.
 
 ### Unavoidable divergences from the MSVC++ `rc` tool
 
