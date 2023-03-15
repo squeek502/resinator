@@ -1101,10 +1101,22 @@ pub const Compiler = struct {
         try writeResourceData(writer, data_fbs.reader(), data_size);
     }
 
+    const DialogOptionalStatementValues = struct {
+        style: u32 = res.WS.SYSMENU | res.WS.BORDER | res.WS.POPUP,
+        exstyle: u32 = 0,
+        class: ?NameOrOrdinal = null,
+        menu: ?NameOrOrdinal = null,
+        font: ?FontStatementValues = null,
+        caption: ?Token = null,
+    };
+
     pub fn writeDialog(self: *Compiler, node: *Node.Dialog, writer: anytype) !void {
         var data_buffer = std.ArrayList(u8).init(self.allocator);
         defer data_buffer.deinit();
-        const data_writer = data_buffer.writer();
+        // The header's data length field is a u32 so limit the resource's data size so that
+        // we know we can always specify the real size.
+        var limited_writer = utils.limitedWriter(data_buffer.writer(), std.math.maxInt(u32));
+        const data_writer = limited_writer.writer();
 
         const resource = Resource.fromString(.{
             .slice = node.type.slice(self.source),
@@ -1112,15 +1124,7 @@ pub const Compiler = struct {
         });
         std.debug.assert(resource == .dialog or resource == .dialogex);
 
-        const OptionalStatementValues = struct {
-            style: u32 = res.WS.SYSMENU | res.WS.BORDER | res.WS.POPUP,
-            exstyle: u32 = 0,
-            class: ?NameOrOrdinal = null,
-            menu: ?NameOrOrdinal = null,
-            font: ?FontStatementValues = null,
-            caption: ?Token = null,
-        };
-        var optional_statement_values: OptionalStatementValues = .{};
+        var optional_statement_values: DialogOptionalStatementValues = .{};
         defer {
             if (optional_statement_values.class) |class| {
                 class.deinit(self.allocator);
@@ -1232,6 +1236,79 @@ pub const Compiler = struct {
             optional_statement_values.style |= res.WS.CAPTION;
         }
 
+        self.writeDialogHeaderAndStrings(
+            node,
+            data_writer,
+            resource,
+            &optional_statement_values,
+            x,
+            y,
+            width,
+            height,
+        ) catch |err| switch (err) {
+            // Dialog header and menu/class/title strings can never exceed u32 bytes
+            // on their own, so this error is unreachable.
+            error.NoSpaceLeft => unreachable,
+            else => |e| return e,
+        };
+
+        for (node.controls) |control_node| {
+            const control = @fieldParentPtr(Node.ControlStatement, "base", control_node);
+
+            self.writeDialogControl(
+                control,
+                data_writer,
+                resource,
+                // We know the data_buffer len is limited to u32 max.
+                @intCast(u32, data_buffer.items.len),
+            ) catch |err| switch (err) {
+                error.NoSpaceLeft => {
+                    try self.addErrorDetails(.{
+                        .err = .resource_data_size_exceeds_max,
+                        .token = node.id,
+                    });
+                    return self.addErrorDetailsAndFail(.{
+                        .err = .resource_data_size_exceeds_max,
+                        .type = .note,
+                        .token = control.type,
+                    });
+                },
+                else => |e| return e,
+            };
+        }
+
+        const data_size = @intCast(u32, data_buffer.items.len);
+        const id_bytes = SourceBytes{
+            .slice = node.id.slice(self.source),
+            .code_page = self.code_pages.getForToken(node.id),
+        };
+        const type_bytes = SourceBytes{
+            .slice = node.type.slice(self.source),
+            .code_page = self.code_pages.getForToken(node.type),
+        };
+        var header = try ResourceHeader.init(self.allocator, id_bytes, type_bytes, data_size, self.state.language);
+        defer header.deinit(self.allocator);
+
+        header.applyMemoryFlags(node.common_resource_attributes, self.source);
+        header.applyOptionalStatements(node.optional_statements, self.source, self.code_pages);
+
+        try header.write(writer);
+
+        var data_fbs = std.io.fixedBufferStream(data_buffer.items);
+        try writeResourceData(writer, data_fbs.reader(), data_size);
+    }
+
+    fn writeDialogHeaderAndStrings(
+        self: *Compiler,
+        node: *Node.Dialog,
+        data_writer: anytype,
+        resource: Resource,
+        optional_statement_values: *const DialogOptionalStatementValues,
+        x: Number,
+        y: Number,
+        width: Number,
+        height: Number,
+    ) !void {
         // Header
         if (resource == .dialogex) {
             const help_id: u32 = help_id: {
@@ -1279,175 +1356,177 @@ pub const Compiler = struct {
         if (optional_statement_values.font) |font| {
             try self.writeDialogFont(resource, font, data_writer);
         }
+    }
 
-        for (node.controls) |control_node| {
-            const control = @fieldParentPtr(Node.ControlStatement, "base", control_node);
-            const control_type = rc.Control.map.get(control.type.slice(self.source)).?;
+    fn writeDialogControl(
+        self: *Compiler,
+        control: *Node.ControlStatement,
+        data_writer: anytype,
+        resource: Resource,
+        bytes_written_so_far: u32,
+    ) !void {
+        const control_type = rc.Control.map.get(control.type.slice(self.source)).?;
 
-            // Each control must be at a 4-byte boundary. However, the Windows RC
-            // compiler will miscompile controls if their extra data ends on an odd offset.
-            // We will avoid the miscompilation and emit a warning.
-            const num_padding = numPaddingBytesNeeded(@intCast(u32, data_buffer.items.len));
-            if (num_padding == 1 or num_padding == 3) {
-                try self.addErrorDetails(.{
-                    .err = .rc_would_miscompile_control_padding,
-                    .type = .warning,
-                    .token = control.type,
-                });
-                try self.addErrorDetails(.{
-                    .err = .rc_would_miscompile_control_padding,
-                    .type = .note,
-                    .print_source_line = false,
-                    .token = control.type,
-                });
-            }
-            try data_writer.writeByteNTimes(0, num_padding);
+        // Each control must be at a 4-byte boundary. However, the Windows RC
+        // compiler will miscompile controls if their extra data ends on an odd offset.
+        // We will avoid the miscompilation and emit a warning.
+        const num_padding = numPaddingBytesNeeded(bytes_written_so_far);
+        if (num_padding == 1 or num_padding == 3) {
+            try self.addErrorDetails(.{
+                .err = .rc_would_miscompile_control_padding,
+                .type = .warning,
+                .token = control.type,
+            });
+            try self.addErrorDetails(.{
+                .err = .rc_would_miscompile_control_padding,
+                .type = .note,
+                .print_source_line = false,
+                .token = control.type,
+            });
+        }
+        try data_writer.writeByteNTimes(0, num_padding);
 
-            var style = if (control.style) |style_expression|
-                // Certain styles are implied by the control type
-                evaluateFlagsExpressionWithDefault(res.ControlClass.getImpliedStyle(control_type), style_expression, self.source, self.code_pages)
-            else
-                res.ControlClass.getImpliedStyle(control_type);
+        var style = if (control.style) |style_expression|
+            // Certain styles are implied by the control type
+            evaluateFlagsExpressionWithDefault(res.ControlClass.getImpliedStyle(control_type), style_expression, self.source, self.code_pages)
+        else
+            res.ControlClass.getImpliedStyle(control_type);
 
-            var exstyle = if (control.exstyle) |exstyle_expression|
-                evaluateFlagsExpressionWithDefault(0, exstyle_expression, self.source, self.code_pages)
-            else
-                0;
+        var exstyle = if (control.exstyle) |exstyle_expression|
+            evaluateFlagsExpressionWithDefault(0, exstyle_expression, self.source, self.code_pages)
+        else
+            0;
 
-            switch (resource) {
-                .dialog => {
-                    // Note: Reverse order from DIALOGEX
-                    try data_writer.writeIntLittle(u32, style);
-                    try data_writer.writeIntLittle(u32, exstyle);
-                },
-                .dialogex => {
-                    const help_id: u32 = if (control.help_id) |help_id_expression|
-                        evaluateNumberExpression(help_id_expression, self.source, self.code_pages).value
-                    else
-                        0;
-                    try data_writer.writeIntLittle(u32, help_id);
-                    // Note: Reverse order from DIALOG
-                    try data_writer.writeIntLittle(u32, exstyle);
-                    try data_writer.writeIntLittle(u32, style);
-                },
-                else => unreachable,
-            }
-
-            const control_x = evaluateNumberExpression(control.x, self.source, self.code_pages);
-            const control_y = evaluateNumberExpression(control.y, self.source, self.code_pages);
-            const control_width = evaluateNumberExpression(control.width, self.source, self.code_pages);
-            const control_height = evaluateNumberExpression(control.height, self.source, self.code_pages);
-
-            try data_writer.writeIntLittle(u16, control_x.asWord());
-            try data_writer.writeIntLittle(u16, control_y.asWord());
-            try data_writer.writeIntLittle(u16, control_width.asWord());
-            try data_writer.writeIntLittle(u16, control_height.asWord());
-
-            const control_id = evaluateNumberExpression(control.id, self.source, self.code_pages);
-            switch (resource) {
-                .dialog => try data_writer.writeIntLittle(u16, control_id.asWord()),
-                .dialogex => try data_writer.writeIntLittle(u32, control_id.value),
-                else => unreachable,
-            }
-
-            if (res.ControlClass.fromControl(control_type)) |control_class| {
-                const ordinal = NameOrOrdinal{ .ordinal = @enumToInt(control_class) };
-                try ordinal.write(data_writer);
-            } else {
-                const class_node = control.class.?;
-                if (class_node.isNumberExpression()) {
-                    const number = evaluateNumberExpression(class_node, self.source, self.code_pages);
-                    const ordinal = NameOrOrdinal{ .ordinal = number.asWord() };
-                    // This is different from how the Windows RC compiles ordinals here,
-                    // but I think that's a miscompilation/bug of the Windows implementation.
-                    // The Windows behavior is (where LSB = least significant byte):
-                    // - If the LSB is 0x00 => 0xFFFF0000
-                    // - If the LSB is < 0x80 => 0x000000<LSB>
-                    // - If the LSB is >= 0x80 => 0x0000FF<LSB>
-                    //
-                    // Because of this, we emit a warning about the potential miscompilation
-                    try self.addErrorDetails(.{
-                        .err = .rc_would_miscompile_control_class_ordinal,
-                        .type = .warning,
-                        .token = class_node.getFirstToken(),
-                    });
-                    try self.addErrorDetails(.{
-                        .err = .rc_would_miscompile_control_class_ordinal,
-                        .type = .note,
-                        .print_source_line = false,
-                        .token = class_node.getFirstToken(),
-                    });
-                    // And then write out the ordinal using a proper a NameOrOrdinal encoding.
-                    try ordinal.write(data_writer);
-                } else if (class_node.isStringLiteral()) {
-                    const literal_node = @fieldParentPtr(Node.Literal, "base", class_node);
-                    const parsed = try self.parseQuotedStringAsWideString(literal_node.token);
-                    defer self.allocator.free(parsed);
-                    if (rc.ControlClass.fromWideString(parsed)) |control_class| {
-                        const ordinal = NameOrOrdinal{ .ordinal = @enumToInt(control_class) };
-                        try ordinal.write(data_writer);
-                    } else {
-                        const name = NameOrOrdinal{ .name = parsed };
-                        try name.write(data_writer);
-                    }
-                } else {
-                    const literal_node = @fieldParentPtr(Node.Literal, "base", class_node);
-                    const literal_slice = literal_node.token.slice(self.source);
-                    // This succeeding is guaranteed by the parser
-                    const control_class = rc.ControlClass.map.get(literal_slice) orelse unreachable;
-                    const ordinal = NameOrOrdinal{ .ordinal = @enumToInt(control_class) };
-                    try ordinal.write(data_writer);
-                }
-            }
-
-            if (control.text) |text_token| {
-                const bytes = SourceBytes{
-                    .slice = text_token.slice(self.source),
-                    .code_page = self.code_pages.getForToken(text_token),
-                };
-                if (NameOrOrdinal.maybeOrdinalFromString(bytes)) |ordinal| {
-                    try ordinal.write(data_writer);
-                } else {
-                    const text = try self.parseQuotedStringAsWideString(text_token);
-                    defer self.allocator.free(text);
-                    const name_or_ordinal = NameOrOrdinal{ .name = text };
-                    try name_or_ordinal.write(data_writer);
-                }
-            } else {
-                try NameOrOrdinal.writeEmpty(data_writer);
-            }
-
-            var extra_data_buf = std.ArrayListUnmanaged(u8){};
-            defer extra_data_buf.deinit(self.allocator);
-            var extra_data_writer = extra_data_buf.writer(self.allocator);
-            for (control.extra_data) |data_expression| {
-                const data = try self.evaluateDataExpression(data_expression);
-                defer data.deinit(self.allocator);
-                try data.write(extra_data_writer);
-            }
-            try data_writer.writeIntLittle(u16, @intCast(u16, extra_data_buf.items.len));
-            try data_writer.writeAll(extra_data_buf.items);
+        switch (resource) {
+            .dialog => {
+                // Note: Reverse order from DIALOGEX
+                try data_writer.writeIntLittle(u32, style);
+                try data_writer.writeIntLittle(u32, exstyle);
+            },
+            .dialogex => {
+                const help_id: u32 = if (control.help_id) |help_id_expression|
+                    evaluateNumberExpression(help_id_expression, self.source, self.code_pages).value
+                else
+                    0;
+                try data_writer.writeIntLittle(u32, help_id);
+                // Note: Reverse order from DIALOG
+                try data_writer.writeIntLittle(u32, exstyle);
+                try data_writer.writeIntLittle(u32, style);
+            },
+            else => unreachable,
         }
 
-        const data_size = @intCast(u32, data_buffer.items.len);
-        const id_bytes = SourceBytes{
-            .slice = node.id.slice(self.source),
-            .code_page = self.code_pages.getForToken(node.id),
-        };
-        const type_bytes = SourceBytes{
-            .slice = node.type.slice(self.source),
-            .code_page = self.code_pages.getForToken(node.type),
-        };
-        var header = try ResourceHeader.init(self.allocator, id_bytes, type_bytes, data_size, self.state.language);
-        defer header.deinit(self.allocator);
+        const control_x = evaluateNumberExpression(control.x, self.source, self.code_pages);
+        const control_y = evaluateNumberExpression(control.y, self.source, self.code_pages);
+        const control_width = evaluateNumberExpression(control.width, self.source, self.code_pages);
+        const control_height = evaluateNumberExpression(control.height, self.source, self.code_pages);
 
-        header.applyMemoryFlags(node.common_resource_attributes, self.source);
-        header.applyOptionalStatements(node.optional_statements, self.source, self.code_pages);
+        try data_writer.writeIntLittle(u16, control_x.asWord());
+        try data_writer.writeIntLittle(u16, control_y.asWord());
+        try data_writer.writeIntLittle(u16, control_width.asWord());
+        try data_writer.writeIntLittle(u16, control_height.asWord());
 
-        try header.write(writer);
+        const control_id = evaluateNumberExpression(control.id, self.source, self.code_pages);
+        switch (resource) {
+            .dialog => try data_writer.writeIntLittle(u16, control_id.asWord()),
+            .dialogex => try data_writer.writeIntLittle(u32, control_id.value),
+            else => unreachable,
+        }
 
-        var data_fbs = std.io.fixedBufferStream(data_buffer.items);
-        try writeResourceData(writer, data_fbs.reader(), data_size);
+        if (res.ControlClass.fromControl(control_type)) |control_class| {
+            const ordinal = NameOrOrdinal{ .ordinal = @enumToInt(control_class) };
+            try ordinal.write(data_writer);
+        } else {
+            const class_node = control.class.?;
+            if (class_node.isNumberExpression()) {
+                const number = evaluateNumberExpression(class_node, self.source, self.code_pages);
+                const ordinal = NameOrOrdinal{ .ordinal = number.asWord() };
+                // This is different from how the Windows RC compiles ordinals here,
+                // but I think that's a miscompilation/bug of the Windows implementation.
+                // The Windows behavior is (where LSB = least significant byte):
+                // - If the LSB is 0x00 => 0xFFFF0000
+                // - If the LSB is < 0x80 => 0x000000<LSB>
+                // - If the LSB is >= 0x80 => 0x0000FF<LSB>
+                //
+                // Because of this, we emit a warning about the potential miscompilation
+                try self.addErrorDetails(.{
+                    .err = .rc_would_miscompile_control_class_ordinal,
+                    .type = .warning,
+                    .token = class_node.getFirstToken(),
+                });
+                try self.addErrorDetails(.{
+                    .err = .rc_would_miscompile_control_class_ordinal,
+                    .type = .note,
+                    .print_source_line = false,
+                    .token = class_node.getFirstToken(),
+                });
+                // And then write out the ordinal using a proper a NameOrOrdinal encoding.
+                try ordinal.write(data_writer);
+            } else if (class_node.isStringLiteral()) {
+                const literal_node = @fieldParentPtr(Node.Literal, "base", class_node);
+                const parsed = try self.parseQuotedStringAsWideString(literal_node.token);
+                defer self.allocator.free(parsed);
+                if (rc.ControlClass.fromWideString(parsed)) |control_class| {
+                    const ordinal = NameOrOrdinal{ .ordinal = @enumToInt(control_class) };
+                    try ordinal.write(data_writer);
+                } else {
+                    const name = NameOrOrdinal{ .name = parsed };
+                    try name.write(data_writer);
+                }
+            } else {
+                const literal_node = @fieldParentPtr(Node.Literal, "base", class_node);
+                const literal_slice = literal_node.token.slice(self.source);
+                // This succeeding is guaranteed by the parser
+                const control_class = rc.ControlClass.map.get(literal_slice) orelse unreachable;
+                const ordinal = NameOrOrdinal{ .ordinal = @enumToInt(control_class) };
+                try ordinal.write(data_writer);
+            }
+        }
+
+        if (control.text) |text_token| {
+            const bytes = SourceBytes{
+                .slice = text_token.slice(self.source),
+                .code_page = self.code_pages.getForToken(text_token),
+            };
+            if (NameOrOrdinal.maybeOrdinalFromString(bytes)) |ordinal| {
+                try ordinal.write(data_writer);
+            } else {
+                const text = try self.parseQuotedStringAsWideString(text_token);
+                defer self.allocator.free(text);
+                const name_or_ordinal = NameOrOrdinal{ .name = text };
+                try name_or_ordinal.write(data_writer);
+            }
+        } else {
+            try NameOrOrdinal.writeEmpty(data_writer);
+        }
+
+        var extra_data_buf = std.ArrayList(u8).init(self.allocator);
+        defer extra_data_buf.deinit();
+        // The extra data byte length must be able to fit within a u16.
+        var limited_extra_data_writer = utils.limitedWriter(extra_data_buf.writer(), std.math.maxInt(u16));
+        const extra_data_writer = limited_extra_data_writer.writer();
+        for (control.extra_data) |data_expression| {
+            const data = try self.evaluateDataExpression(data_expression);
+            defer data.deinit(self.allocator);
+            data.write(extra_data_writer) catch |err| switch (err) {
+                error.NoSpaceLeft => {
+                    try self.addErrorDetails(.{
+                        .err = .control_extra_data_size_exceeds_max,
+                        .token = control.type,
+                    });
+                    return self.addErrorDetailsAndFail(.{
+                        .err = .control_extra_data_size_exceeds_max,
+                        .type = .note,
+                        .token = data_expression.getFirstToken(),
+                    });
+                },
+                else => |e| return e,
+            };
+        }
+        // We know the extra_data_buf size fits within a u16.
+        const extra_data_size = @intCast(u16, extra_data_buf.items.len);
+        try data_writer.writeIntLittle(u16, extra_data_size);
+        try data_writer.writeAll(extra_data_buf.items);
     }
 
     pub fn writeToolbar(self: *Compiler, node: *Node.Toolbar, writer: anytype) !void {
