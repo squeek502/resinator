@@ -31,9 +31,9 @@ The plan is to use fuzz testing with the `rc` tool as an oracle to ensure that `
 - In `resinator`, embedded `NUL` (`<0x00>`) characters are always illegal anywhere in a `.rc` file.
   + The Windows RC compiler behaves very strangely when embedded `NUL` characters are in a `.rc` file. For example, `1 RCDATA { "a<0x00>" }` will give the error "unexpected end of file in string literal", but `1 RCDATA { "<0x00>" }` will "successfully" compile and result in an empty `.res` file (the `RCDATA` resource won't be included at all). Even stranger, whitespace seems to matter in terms of when it will error; if you add a space to the beginning of the `1 RCDATA { "a<0x00>" }` version then it "successfully" compiles but also results in an empty `.res`.
     - TODO: This might be related to the Windows RC compiler's handling/inferring of UTF-16 encoded files, which `resinator` doesn't handle yet.
-- *[Not final]* In `resinator`, embedded 'End of Transmission' (`<0x04>`) characters are always illegal outside of string literals.
+- In `resinator`, embedded 'End of Transmission' (`<0x04>`) characters are always illegal outside of string literals.
   + The Windows RC compiler seemingly treats `<0x04>` characters outside of string literals as a 'skip the next character' instruction when parsing, i.e. `RCDATA<0x04>x` gets parsed as if it were `RCDATA`. It's possible to emulate this behavior in `resinator`, but it seems unlikely that any real `.rc` files are intentionally using this behavior, so by making it a compile error it avoids running into strange behavior if a `<0x04>` character is ever inserted into a `.rc` file accidentally.
-- *[Not final]* In `resinator`, embedded 'Delete' (`<0x7F>`) characters are always illegal anywhere in a `.rc` file.
+- In `resinator`, embedded 'Delete' (`<0x7F>`) characters are always illegal anywhere in a `.rc` file.
   + The Windows RC compiler seemingly treats `<0x7F>` characters as a terminator in some capacity. A few examples:
     - `1 RC<0x7F>DATA {}` gets parsed as `1 RC DATA {}`
     - `<0x7F>1 RCDATA {}` "succeeds" but results in an empty `.res` file (no RCDATA resource)

@@ -710,7 +710,6 @@ pub const Lexer = struct {
             0x00, 0x1A, 0x7F => error.IllegalByte,
             // 0x01...0x03 result in strange 'macro definition too big' errors when used outside of string literals
             // 0x04 is valid but behaves strangely (sort of acts as a 'skip the next character' instruction)
-            // TODO: re-evaluate 0x04
             0x01...0x04 => if (!in_string_literal) error.IllegalByteOutsideStringLiterals else return,
             // @ and ` both result in error RC2018: unknown character '0x60' (and subsequently
             // fatal error RC1116: RC terminating after preprocessor errors) if they are ever used
