@@ -15,6 +15,10 @@ const CurrentMapping = struct {
     ignore_contents: bool = false,
 };
 
+pub const ParseAndRemoveLineCommandsOptions = struct {
+    initial_filename: ?[]const u8 = null,
+};
+
 /// Parses and removes #line commands as well as all source code that is within a file
 /// with .c or .h extensions.
 ///
@@ -27,11 +31,11 @@ const CurrentMapping = struct {
 /// from https://learn.microsoft.com/en-us/windows/win32/menurc/preprocessor-directives
 ///
 /// Returns a slice of `buf` with the aforementioned stuff removed as well as a mapping
-/// between the lines and their correpsonding lines in their original files.
+/// between the lines and their corresponding lines in their original files.
 ///
 /// `buf` must be at least as long as `source`
 /// In-place transformation is supported (i.e. `source` and `buf` can be the same slice)
-pub fn parseAndRemoveLineCommands(allocator: Allocator, source: []const u8, buf: []u8) !ParseLineCommandsResult {
+pub fn parseAndRemoveLineCommands(allocator: Allocator, source: []const u8, buf: []u8, options: ParseAndRemoveLineCommandsOptions) !ParseLineCommandsResult {
     var parse_result = ParseLineCommandsResult{
         .result = undefined,
         .mappings = .{},
@@ -40,6 +44,10 @@ pub fn parseAndRemoveLineCommands(allocator: Allocator, source: []const u8, buf:
 
     var current_mapping: CurrentMapping = .{};
     defer current_mapping.filename.deinit(allocator);
+
+    if (options.initial_filename) |initial_filename| {
+        try current_mapping.filename.appendSlice(allocator, initial_filename);
+    }
 
     std.debug.assert(buf.len >= source.len);
     var result = UncheckedSliceWriter{ .slice = buf };
@@ -78,6 +86,7 @@ pub fn parseAndRemoveLineCommands(allocator: Allocator, source: []const u8, buf:
                     }
                 },
                 else => {
+                    state = .non_preprocessor;
                     if (pending_start != null) {
                         if (!current_mapping.ignore_contents) {
                             result.writeSlice(source[pending_start.? .. index + 1]);
@@ -127,7 +136,10 @@ pub fn parseAndRemoveLineCommands(allocator: Allocator, source: []const u8, buf:
         }
     } else {
         switch (state) {
-            .line_start, .non_preprocessor => {},
+            .line_start => {},
+            .non_preprocessor => {
+                try handleLineEnd(allocator, line_number, &parse_result.mappings, &current_mapping);
+            },
             .preprocessor => {
                 // Now that we have the full line we can decide what to do with it
                 const preprocessor_str = source[preprocessor_start..index];
@@ -198,10 +210,10 @@ pub fn handleLineCommand(allocator: Allocator, line_command: []const u8, current
     current_mapping.ignore_contents = std.ascii.endsWithIgnoreCase(filename, ".c") or std.ascii.endsWithIgnoreCase(filename, ".h");
 }
 
-pub fn parseAndRemoveLineCommandsAlloc(allocator: Allocator, source: []const u8) !ParseLineCommandsResult {
+pub fn parseAndRemoveLineCommandsAlloc(allocator: Allocator, source: []const u8, options: ParseAndRemoveLineCommandsOptions) !ParseLineCommandsResult {
     var buf = try allocator.alloc(u8, source.len);
     errdefer allocator.free(buf);
-    var result = try parseAndRemoveLineCommands(allocator, source, buf);
+    var result = try parseAndRemoveLineCommands(allocator, source, buf, options);
     result.result = try allocator.realloc(buf, result.result.len);
     return result;
 }
@@ -350,8 +362,9 @@ fn testParseAndRemoveLineCommands(
     expected: []const u8,
     comptime expected_spans: []const ExpectedSourceSpan,
     source: []const u8,
+    options: ParseAndRemoveLineCommandsOptions,
 ) !void {
-    var results = try parseAndRemoveLineCommandsAlloc(std.testing.allocator, source);
+    var results = try parseAndRemoveLineCommandsAlloc(std.testing.allocator, source, options);
     defer std.testing.allocator.free(results.result);
     defer results.mappings.deinit(std.testing.allocator);
 
@@ -387,7 +400,7 @@ fn expectEqualMappings(expected_spans: []const ExpectedSourceSpan, mappings: Sou
 }
 
 test "basic" {
-    try testParseAndRemoveLineCommands("", &[_]ExpectedSourceSpan{}, "#line 1 \"blah.rc\"");
+    try testParseAndRemoveLineCommands("", &[_]ExpectedSourceSpan{}, "#line 1 \"blah.rc\"", .{});
 }
 
 test "only removes line commands" {
@@ -398,7 +411,7 @@ test "only removes line commands" {
     },
         \\#line 1 "blah.rc"
         \\#pragma code_page(65001)
-    );
+    , .{});
 }
 
 test "example" {
@@ -427,12 +440,25 @@ test "example" {
         \\included RCDATA {"hello"}
         \\#line 7 "./header.h"
         \\#line 1 "rcdata.rc"
-    );
+    , .{});
+}
+
+test "no line commands" {
+    try testParseAndRemoveLineCommands(
+        \\1 RCDATA {"blah"}
+        \\2 RCDATA {"blah"}
+    , &[_]ExpectedSourceSpan{
+        .{ .start_line = 1, .end_line = 1, .filename = "blah.rc" },
+        .{ .start_line = 2, .end_line = 2, .filename = "blah.rc" },
+    },
+        \\1 RCDATA {"blah"}
+        \\2 RCDATA {"blah"}
+    , .{ .initial_filename = "blah.rc" });
 }
 
 test "in place" {
     var mut_source = "#line 1 \"blah.rc\"".*;
-    var result = try parseAndRemoveLineCommands(std.testing.allocator, &mut_source, &mut_source);
+    var result = try parseAndRemoveLineCommands(std.testing.allocator, &mut_source, &mut_source, .{});
     defer result.mappings.deinit(std.testing.allocator);
     try std.testing.expectEqualStrings("", result.result);
 }
