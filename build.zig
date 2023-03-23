@@ -33,6 +33,8 @@ pub fn build(b: *std.build.Builder) void {
         .target = target,
         .optimize = mode,
     });
+    const test_filter = b.option([]const u8, "test-filter", "Skip tests that do not match filter");
+    exe_tests.setFilter(test_filter);
 
     const test_step = b.step("test", "Run library tests");
     test_step.dependOn(&exe_tests.step);
