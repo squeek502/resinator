@@ -36,6 +36,10 @@ pub fn main() !void {
     };
     defer options.deinit();
 
+    if (options.verbose) {
+        try options.dumpVerbose(std.io.getStdOut().writer());
+    }
+
     var full_input = full_input: {
         if (options.preprocess) {
             var argv = std.ArrayList([]const u8).init(allocator);

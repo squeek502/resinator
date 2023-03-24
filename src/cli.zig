@@ -2,6 +2,7 @@ const std = @import("std");
 const CodePage = @import("code_pages.zig").CodePage;
 const lang = @import("lang.zig");
 const utils = @import("utils.zig");
+const res = @import("res.zig");
 const Allocator = std.mem.Allocator;
 
 pub const Diagnostics = struct {
@@ -75,6 +76,41 @@ pub const Options = struct {
         self.extra_include_paths.deinit(self.allocator);
         self.allocator.free(self.input_filename);
         self.allocator.free(self.output_filename);
+    }
+
+    pub fn dumpVerbose(self: *const Options, writer: anytype) !void {
+        try writer.print("Input filename: {s}\n", .{self.input_filename});
+        try writer.print("Output filename: {s}\n", .{self.output_filename});
+        if (self.extra_include_paths.items.len > 0) {
+            try writer.writeAll(" Extra include paths:\n");
+            for (self.extra_include_paths.items) |extra_include_path| {
+                try writer.print("  \"{s}\"\n", .{extra_include_path});
+            }
+        }
+        if (self.ignore_include_env_var) {
+            try writer.writeAll(" The INCLUDE environment variable will be ignored\n");
+        }
+        if (!self.preprocess) {
+            try writer.writeAll(" The preprocessor will not be invoked\n");
+        }
+
+        // TODO: This default language id stuff (specifically the stuff in this orelse branch
+        //       which ends up resolving to [LANG_ENGLISH, SUBLANG_ENGLISH_US])
+        //       is strewn about all over the place, it should be consolidated
+        const language_id = self.default_language_id orelse (res.Language{}).asInt();
+        const language_name = language_name: {
+            if (std.meta.intToEnum(lang.LanguageId, language_id)) |lang_enum_val| {
+                break :language_name @tagName(lang_enum_val);
+            } else |_| {}
+            if (language_id == lang.LOCALE_CUSTOM_UNSPECIFIED) {
+                break :language_name "LOCALE_CUSTOM_UNSPECIFIED";
+            }
+            break :language_name "<UNKNOWN>";
+        };
+        try writer.print("Default language: {s} (id=0x{x})\n", .{ language_name, language_id });
+
+        const code_page = self.default_code_page orelse .windows1252;
+        try writer.print("Default codepage: {s} (id={})\n", .{ @tagName(code_page), @enumToInt(code_page) });
     }
 };
 
