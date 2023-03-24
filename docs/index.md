@@ -12,8 +12,10 @@ Currently a dumping ground for various pieces of information related to `.rc` an
 ### CLI
 
 - Multiple options can be specified at a time, e.g. `/vnl409` gets resolved as if it were `/v /n /l409`.
-- The `/sl` option ('Specify the resource string length limit in percentage') must be between 1 and 100 and it seems the default is 50. If it's set to 100, the maximum length of a string literal becomes 8092 (instead of 4097).
-  + The `rc` tool will crash if `/sl 100` is set and there is a string literal with exactly 8093 characters in it. If one more character is added to the string literal, it errors with 'string literal too long'.
+- The `/sl` option ('Specify the resource string length limit in percentage') must be between 1 and 100 (if specified). If it's set to 100, the maximum length of a string literal becomes 8192.
+  + The `rc` tool will crash if `/sl 100` is set and there is a string literal with exactly 8193 characters in it. If one more character is added to the string literal, it errors with 'string literal too long'.
+  + The default maximum string literal length (if `/sl` is not specified) is 4097. If `/sl 50` is specified, the maximum string literal length becomes 4096 rather than 4097. So, there's no `/sl` setting that's equivalent to the default string literal length limit.
+  + If `/sl 33` is set, the maximum string literal length becomes 2703 (`8192 * 0.33 = 2,703.36`). 2704 chars will error with `string literal too long`.
 
 #### Undocumented options
 
