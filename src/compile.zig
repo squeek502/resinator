@@ -35,6 +35,8 @@ pub const CompileOptions = struct {
     ignore_include_env_var: bool = false,
     extra_include_paths: []const []const u8 = &.{},
     default_language_id: ?u16 = null,
+    // TODO: Implement verbose output
+    verbose: bool = false,
 };
 
 pub fn compile(allocator: Allocator, source: []const u8, writer: anytype, options: CompileOptions) !void {

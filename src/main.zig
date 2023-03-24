@@ -24,6 +24,7 @@ pub fn main() !void {
     var preprocess = true;
     var default_language_id: ?u16 = null;
     var default_code_page: ?CodePage = null;
+    var verbose = false;
 
     const Arg = struct {
         prefix: enum { long, short, slash },
@@ -135,6 +136,9 @@ pub fn main() !void {
                 },
             };
             arg_i += if (rest.len == 0) 2 else 1;
+        } else if (std.ascii.eqlIgnoreCase("v", arg.name)) {
+            verbose = true;
+            arg_i += 1;
         } else if (std.ascii.eqlIgnoreCase("x", arg.name)) {
             ignore_include_env_var = true;
             arg_i += 1;
@@ -268,6 +272,7 @@ pub fn main() !void {
         .extra_include_paths = extra_include_paths.items,
         .default_language_id = default_language_id,
         .default_code_page = default_code_page orelse .windows1252,
+        .verbose = verbose,
     }) catch |err| switch (err) {
         error.ParseError, error.CompileError => {
             diagnostics.renderToStdErr(std.fs.cwd(), final_input, mapping_results.mappings);
