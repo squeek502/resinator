@@ -3166,6 +3166,11 @@ test "parse errors" {
         "1 STRINGTABLE { 1 \"\" }",
         null,
     );
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "unsupported code page 'utf7 (id=65000)' in #pragma code_page" }},
+        "#pragma code_page( 65000 )",
+        null,
+    );
 }
 
 test "max nested menu level" {

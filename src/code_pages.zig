@@ -259,14 +259,16 @@ pub const CodePage = enum(u16) {
     pub fn getByIdentifier(identifier: u16) !CodePage {
         // There's probably a more efficient way to do this (e.g. ComptimeHashMap?) but
         // this should be fine, especially since this function likely won't be called much.
-        const code_page = code_page: {
-            inline for (@typeInfo(CodePage).Enum.fields) |enumField| {
-                if (identifier == enumField.value) {
-                    break :code_page @field(CodePage, enumField.name);
-                }
+        inline for (@typeInfo(CodePage).Enum.fields) |enumField| {
+            if (identifier == enumField.value) {
+                return @field(CodePage, enumField.name);
             }
-            return error.InvalidCodePage;
-        };
+        }
+        return error.InvalidCodePage;
+    }
+
+    pub fn getByIdentifierEnsureSupported(identifier: u16) !CodePage {
+        const code_page = try getByIdentifier(identifier);
         switch (isSupported(code_page)) {
             true => return code_page,
             false => return error.UnsupportedCodePage,

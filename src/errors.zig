@@ -7,6 +7,7 @@ const res = @import("res.zig");
 const ico = @import("ico.zig");
 const bmp = @import("bmp.zig");
 const parse = @import("parse.zig");
+const CodePage = @import("code_pages.zig").CodePage;
 
 pub const Diagnostics = struct {
     errors: std.ArrayListUnmanaged(ErrorDetails) = .{},
@@ -342,8 +343,23 @@ pub const ErrorDetails = struct {
                 return writer.writeAll("invalid or unknown code page in code_page #pragma");
             },
             .code_page_pragma_unsupported_code_page => {
-                // TODO add info about which code page is unsupported
-                return writer.writeAll("unsupported code page in code_page #pragma");
+                // We know that the token slice is a well-formed #pragma code_page(N), so
+                // we can skip to the first ( and then get the number that follows
+                const token_slice = self.token.slice(source);
+                var number_start = std.mem.indexOfScalar(u8, token_slice, '(').? + 1;
+                while (std.ascii.isWhitespace(token_slice[number_start])) {
+                    number_start += 1;
+                }
+                var number_slice = token_slice[number_start..number_start];
+                while (std.ascii.isDigit(token_slice[number_start + number_slice.len])) {
+                    number_slice.len += 1;
+                }
+                const number = std.fmt.parseUnsigned(u16, number_slice, 10) catch unreachable;
+                const code_page = CodePage.getByIdentifier(number) catch unreachable;
+                // TODO: Improve or maybe add a note making it more clear that the code page
+                //       is valid and that the code page is unsupported purely due to a limitation
+                //       in this compiler.
+                return writer.print("unsupported code page '{s} (id={})' in #pragma code_page", .{ @tagName(code_page), number });
             },
             .unfinished_raw_data_block => {
                 return writer.print("unfinished raw data block at '{s}', expected closing '}}' or 'END'", .{self.token.nameForErrorDisplay(source)});

@@ -810,7 +810,7 @@ pub const Lexer = struct {
             return error.CodePagePragmaInvalidCodePage;
         };
 
-        const code_page = code_pages.CodePage.getByIdentifier(num) catch |err| switch (err) {
+        const code_page = code_pages.CodePage.getByIdentifierEnsureSupported(num) catch |err| switch (err) {
             error.InvalidCodePage => {
                 self.error_context_token = token;
                 return error.CodePagePragmaInvalidCodePage;
