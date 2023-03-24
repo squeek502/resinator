@@ -9,6 +9,11 @@ Currently a dumping ground for various pieces of information related to `.rc` an
 
 - Resource definitions that specify a filename can specify files in the include path of the `rc` compiler, e.g. `windows.h` and they will be found/used.
 
+### Undocumented command line options
+
+- Prefixing seemingly any option with `a` will still work, e.g. `/ac65001` will work as if it were `/c65001`, `/anologo` will work like `/nologo`, etc.
+- Either one of `/?c` or `/hc` will add a normally hidden 'Comments extracting switches:' section to the help menu, with `/t` and `/t`-prefixed options dealing with `.LCX` and `.LCE` files. Can find no info about any of this online. A generated `.LCE` file seems to be an XML file with some info about the comments and resources in the `.rc` file(s).
+
 ## Common Resource Attributes / Memory Flags
 
 ### Flags
