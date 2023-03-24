@@ -74,7 +74,7 @@ pub fn main() !void {
         else if (std.ascii.startsWithIgnoreCase(arg.name, "ln")) {
             const rest = arg.name[2..];
             if (rest.len == 0 and arg_i + 1 >= args.len) {
-                std.debug.print("Missing output path after {s} option\n", .{args[arg_i]});
+                std.debug.print("Missing language tag after {s} option\n", .{args[arg_i]});
                 std.os.exit(1);
             }
             const tag = switch (rest.len) {
@@ -89,7 +89,7 @@ pub fn main() !void {
         } else if (std.ascii.startsWithIgnoreCase(arg.name, "l")) {
             const rest = arg.name[1..];
             if (rest.len == 0 and arg_i + 1 >= args.len) {
-                std.debug.print("Missing output path after {s} option\n", .{args[arg_i]});
+                std.debug.print("Missing language ID after {s} option\n", .{args[arg_i]});
                 std.os.exit(1);
             }
             const num_str = switch (rest.len) {
