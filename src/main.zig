@@ -87,6 +87,10 @@ pub fn main() !void {
                 std.debug.print("Invalid language tag: {s}\n", .{tag});
                 std.os.exit(1);
             };
+            if (default_language_id.? == lang.LOCALE_CUSTOM_UNSPECIFIED) {
+                // TODO: Better formatting
+                std.debug.print("Warning: language tag '{s}' does not have an assigned ID so it has been converted to LOCALE_CUSTOM_UNSPECIFIED (id=0x{x})\n", .{ tag, lang.LOCALE_CUSTOM_UNSPECIFIED });
+            }
             arg_i += if (rest.len == 0) 2 else 1;
         } else if (std.ascii.startsWithIgnoreCase(arg.name, "l")) {
             const rest = arg.name[1..];
