@@ -180,6 +180,9 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
 
     var arg_i: usize = 1; // start at 1 to skip past the exe name
     while (arg_i < args.len) {
+        // TODO: One arg can have multiple options within it, e.g.
+        //       /vrln409 is allowed and resolves as if it were
+        //       /v /r /ln409
         const arg = Arg.fromString(args[arg_i]) orelse break;
         // -- on its own ends arg parsing
         if (arg.name.len == 0 and arg.prefix == .long) {

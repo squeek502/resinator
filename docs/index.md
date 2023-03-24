@@ -9,9 +9,15 @@ Currently a dumping ground for various pieces of information related to `.rc` an
 
 - Resource definitions that specify a filename can specify files in the include path of the `rc` compiler, e.g. `windows.h` and they will be found/used.
 
-### Undocumented command line options
+### CLI
 
-- Prefixing seemingly any option with `a` will still work, e.g. `/ac65001` will work as if it were `/c65001`, `/anologo` will work like `/nologo`, etc.
+- Multiple options can be specified at a time, e.g. `/vnl409` gets resolved as if it were `/v /n /l409`.
+- The `/sl` option ('Specify the resource string length limit in percentage') must be between 1 and 100 and it seems the default is 50. If it's set to 100, the maximum length of a string literal becomes 8092 (instead of 4097).
+  + The `rc` tool will crash if `/sl 100` is set and there is a string literal with exactly 8093 characters in it. If one more character is added to the string literal, it errors with 'string literal too long'.
+
+#### Undocumented options
+
+- `/a` seems to be a recognized option but it's unclear what it does and is totally undocumented AFAICT
 - Either one of `/?c` or `/hc` will add a normally hidden 'Comments extracting switches:' section to the help menu, with `/t` and `/t`-prefixed options dealing with `.LCX` and `.LCE` files. Can find no info about any of this online. A generated `.LCE` file seems to be an XML file with some info about the comments and resources in the `.rc` file(s).
 
 ## Common Resource Attributes / Memory Flags
