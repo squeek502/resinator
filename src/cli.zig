@@ -14,6 +14,9 @@ pub const Options = struct {
     verbose: bool = false,
 
     pub fn deinit(self: *Options) void {
+        for (self.extra_include_paths.items) |extra_include_path| {
+            self.allocator.free(extra_include_path);
+        }
         self.extra_include_paths.deinit(self.allocator);
         self.allocator.free(self.input_filename);
         self.allocator.free(self.output_filename);
@@ -57,10 +60,12 @@ pub fn parse(allocator: std.mem.Allocator, args: []const []const u8) !Options {
                 std.debug.print("Missing include path after {s} option\n", .{args[arg_i]});
                 std.os.exit(1);
             }
-            try options.extra_include_paths.append(options.allocator, switch (rest.len) {
+            const path = switch (rest.len) {
                 0 => args[arg_i + 1],
                 else => rest,
-            });
+            };
+            const duped = try allocator.dupe(u8, path);
+            try options.extra_include_paths.append(options.allocator, duped);
             arg_i += if (rest.len == 0) 2 else 1;
         } else if (std.ascii.startsWithIgnoreCase(arg.name, "fo")) {
             const rest = arg.name[2..];
