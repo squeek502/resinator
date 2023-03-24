@@ -8,6 +8,7 @@ const CodePage = @import("code_pages.zig").CodePage;
 const literals = @import("literals.zig");
 const SourceBytes = literals.SourceBytes;
 const Codepoint = @import("code_pages.zig").Codepoint;
+const lang = @import("lang.zig");
 
 /// https://learn.microsoft.com/en-us/windows/win32/menurc/resource-types
 pub const RT = enum(u8) {
@@ -147,8 +148,16 @@ pub const MemoryFlags = packed struct(u16) {
 pub const Language = packed struct(u16) {
     // TODO: Are these defaults dependent on the system's language setting at the time
     //       that the RC compiler is run?
-    primary_language_id: u10 = 0x09, // LANG_ENGLISH
-    sublanguage_id: u6 = 0x01, // SUBLANG_ENGLISH_US (since primary is ENGLISH)
+    primary_language_id: u10 = lang.LANG_ENGLISH,
+    sublanguage_id: u6 = lang.SUBLANG_ENGLISH_US,
+
+    pub fn fromInt(int: u16) Language {
+        return @bitCast(Language, int);
+    }
+
+    pub fn asInt(self: Language) u16 {
+        return @bitCast(u16, self);
+    }
 };
 
 /// https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-dlgitemtemplate#remarks

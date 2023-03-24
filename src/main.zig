@@ -5,6 +5,7 @@ const parseAndRemoveLineCommands = @import("source_mapping.zig").parseAndRemoveL
 const SourceMappings = @import("source_mapping.zig").SourceMappings;
 const compile = @import("compile.zig").compile;
 const Diagnostics = @import("errors.zig").Diagnostics;
+const lang = @import("lang.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{ .stack_trace_frames = 8 }){};
@@ -20,6 +21,7 @@ pub fn main() !void {
     defer extra_include_paths.deinit();
     var ignore_include_env_var = false;
     var preprocess = true;
+    var default_language_id: ?u16 = null;
 
     const Arg = struct {
         prefix: enum { long, short, slash },
@@ -65,6 +67,38 @@ pub fn main() !void {
             output_filename = switch (rest.len) {
                 0 => args[arg_i + 1],
                 else => rest,
+            };
+            arg_i += if (rest.len == 0) 2 else 1;
+        }
+        // Note: This must come before the "l" case to avoid becoming a dead branch
+        else if (std.ascii.startsWithIgnoreCase(arg.name, "ln")) {
+            const rest = arg.name[2..];
+            if (rest.len == 0 and arg_i + 1 >= args.len) {
+                std.debug.print("Missing output path after {s} option\n", .{args[arg_i]});
+                std.os.exit(1);
+            }
+            const tag = switch (rest.len) {
+                0 => args[arg_i + 1],
+                else => rest,
+            };
+            default_language_id = lang.tagToInt(tag) catch {
+                std.debug.print("Invalid language tag: {s}\n", .{tag});
+                std.os.exit(1);
+            };
+            arg_i += if (rest.len == 0) 2 else 1;
+        } else if (std.ascii.startsWithIgnoreCase(arg.name, "l")) {
+            const rest = arg.name[1..];
+            if (rest.len == 0 and arg_i + 1 >= args.len) {
+                std.debug.print("Missing output path after {s} option\n", .{args[arg_i]});
+                std.os.exit(1);
+            }
+            const num_str = switch (rest.len) {
+                0 => args[arg_i + 1],
+                else => rest,
+            };
+            default_language_id = lang.parseInt(num_str) catch {
+                std.debug.print("Invalid language ID: {s}\n", .{num_str});
+                std.os.exit(1);
             };
             arg_i += if (rest.len == 0) 2 else 1;
         } else if (std.ascii.eqlIgnoreCase("x", arg.name)) {
@@ -198,6 +232,7 @@ pub fn main() !void {
         .source_mappings = &mapping_results.mappings,
         .ignore_include_env_var = ignore_include_env_var,
         .extra_include_paths = extra_include_paths.items,
+        .default_language_id = default_language_id,
     }) catch |err| switch (err) {
         error.ParseError, error.CompileError => {
             diagnostics.renderToStdErr(std.fs.cwd(), final_input, mapping_results.mappings);

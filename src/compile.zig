@@ -25,6 +25,7 @@ const CodePage = @import("code_pages.zig").CodePage;
 const CodePageLookup = @import("ast.zig").CodePageLookup;
 const SourceMappings = @import("source_mapping.zig").SourceMappings;
 const windows1252 = @import("windows1252.zig");
+const lang = @import("lang.zig");
 
 pub const CompileOptions = struct {
     cwd: std.fs.Dir,
@@ -33,6 +34,7 @@ pub const CompileOptions = struct {
     default_code_page: CodePage = .windows1252,
     ignore_include_env_var: bool = false,
     extra_include_paths: []const []const u8 = &.{},
+    default_language_id: ?u16 = null,
 };
 
 pub fn compile(allocator: Allocator, source: []const u8, writer: anytype, options: CompileOptions) !void {
@@ -55,6 +57,9 @@ pub fn compile(allocator: Allocator, source: []const u8, writer: anytype, option
         .ignore_include_env_var = options.ignore_include_env_var,
         .extra_include_paths = options.extra_include_paths,
     };
+    if (options.default_language_id) |default_language_id| {
+        compiler.state.language = res.Language.fromInt(default_language_id);
+    }
 
     try compiler.writeRoot(tree.root(), writer);
 }
@@ -2077,7 +2082,7 @@ pub const Compiler = struct {
 
             try writer.writeIntLittle(DWORD, 0); // DataVersion
             try writer.writeIntLittle(WORD, self.memory_flags.value); // MemoryFlags
-            try writer.writeIntLittle(WORD, @bitCast(WORD, self.language)); // LanguageId
+            try writer.writeIntLittle(WORD, self.language.asInt()); // LanguageId
             try writer.writeIntLittle(DWORD, self.version); // Version
             try writer.writeIntLittle(DWORD, self.characteristics); // Characteristics
         }

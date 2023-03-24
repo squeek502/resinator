@@ -8,6 +8,7 @@ pub const comments = @import("comments.zig");
 pub const compile = @import("compile.zig");
 pub const errors = @import("errors.zig");
 pub const ico = @import("ico.zig");
+pub const lang = @import("lang.zig");
 pub const lex = @import("lex.zig");
 pub const literals = @import("literals.zig");
 pub const parse = @import("parse.zig");
