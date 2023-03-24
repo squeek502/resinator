@@ -296,17 +296,24 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
         output_filename = positionals[1];
     }
     if (output_filename == null) {
-        var output_filename_buf: [std.fs.MAX_NAME_BYTES]u8 = undefined;
-        var filename_fbs = std.io.fixedBufferStream(&output_filename_buf);
-        var filename_writer = filename_fbs.writer();
-        // TODO: It's technically possible for this to overflow the buffer
-        //       since input_filename is not guaranteed to be within MAX_NAME_BYTES
-        filename_writer.writeAll(std.fs.path.stem(options.input_filename)) catch unreachable;
-        filename_writer.writeAll(".res") catch unreachable;
-        output_filename = output_filename_buf[0..filename_writer.context.pos];
-    }
+        var buf = std.ArrayList(u8).init(allocator);
+        errdefer buf.deinit();
 
-    options.output_filename = try allocator.dupe(u8, output_filename.?);
+        if (std.fs.path.dirname(options.input_filename)) |dirname| {
+            var end_pos = dirname.len;
+            // We want to ensure that we write a path separator at the end, so if the dirname
+            // doesn't end with a path sep then include the char after the dirname
+            // which must be a path sep.
+            if (!std.fs.path.isSep(dirname[dirname.len - 1])) end_pos += 1;
+            try buf.appendSlice(options.input_filename[0..end_pos]);
+        }
+        try buf.appendSlice(std.fs.path.stem(options.input_filename));
+        try buf.appendSlice(".res");
+
+        options.output_filename = try buf.toOwnedSlice();
+    } else {
+        options.output_filename = try allocator.dupe(u8, output_filename.?);
+    }
 
     return options;
 }
