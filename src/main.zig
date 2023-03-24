@@ -14,7 +14,25 @@ pub fn main() !void {
         var args = try std.process.argsAlloc(allocator);
         defer std.process.argsFree(allocator, args);
 
-        break :options try cli.parse(allocator, args);
+        var cli_diagnostics = cli.Diagnostics.init(allocator);
+        defer cli_diagnostics.deinit();
+        var options = cli.parse(allocator, args, &cli_diagnostics) catch |err| switch (err) {
+            error.ParseError => {
+                cli_diagnostics.renderToStdErr(args);
+                std.os.exit(1);
+            },
+            else => |e| return e,
+        };
+
+        // print any warnings/notes
+        cli_diagnostics.renderToStdErr(args);
+        // If there was something printed, then add an extra newline separator
+        // so that there is a clear separation between the cli diagnostics and whatever
+        // gets printed after
+        if (cli_diagnostics.errors.items.len > 0) {
+            std.debug.print("\n", .{});
+        }
+        break :options options;
     };
     defer options.deinit();
 
