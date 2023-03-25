@@ -203,6 +203,9 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
     var output_filename: ?[]const u8 = null;
     var output_filename_context: Arg.Context = undefined;
 
+    // TODO: Don't immediately fail on error, collect more than one
+    //       error if it can be recovered from
+
     var arg_i: usize = 1; // start at 1 to skip past the exe name
     next_arg: while (arg_i < args.len) {
         var arg = Arg.fromString(args[arg_i]) orelse break;
@@ -473,7 +476,9 @@ pub fn renderErrorMessage(writer: anytype, colors: utils.Colors, err_details: Di
     } else if (err_details.arg_span.point_at_next_arg) {
         try writer.writeByteNTimes('~', arg_with_name.len - err_details.arg_span.name_offset + 1);
         try writer.writeByte('^');
-        try writer.writeByteNTimes('~', next_arg_len - 1);
+        if (next_arg_len > 0) {
+            try writer.writeByteNTimes('~', next_arg_len - 1);
+        }
     }
     try writer.writeByte('\n');
     colors.set(writer, .reset);
