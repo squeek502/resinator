@@ -54,8 +54,12 @@ pub const Diagnostics = struct {
         std.debug.getStderrMutex().lock();
         defer std.debug.getStderrMutex().unlock();
         const stderr = std.io.getStdErr().writer();
+        self.renderToWriter(args, stderr, colors) catch return;
+    }
+
+    pub fn renderToWriter(self: *Diagnostics, args: []const []const u8, writer: anytype, colors: utils.Colors) !void {
         for (self.errors.items) |err_details| {
-            renderErrorMessage(stderr, colors, err_details, args) catch return;
+            try renderErrorMessage(writer, colors, err_details, args);
         }
     }
 };
@@ -455,7 +459,8 @@ pub fn renderErrorMessage(writer: anytype, colors: utils.Colors, err_details: Di
         next_arg_len = next_arg.len;
     }
 
-    if (err_details.arg_index + 1 < args.len) {
+    const last_shown_arg_index = if (err_details.arg_span.point_at_next_arg) err_details.arg_index + 1 else err_details.arg_index;
+    if (last_shown_arg_index + 1 < args.len) {
         colors.set(writer, .dim);
         try writer.writeAll(prefix);
         colors.set(writer, .reset);
@@ -482,4 +487,104 @@ pub fn renderErrorMessage(writer: anytype, colors: utils.Colors, err_details: Di
     }
     try writer.writeByte('\n');
     colors.set(writer, .reset);
+}
+
+fn testParse(args: []const []const u8, expected: Options) !void {
+    var diagnostics = Diagnostics.init(std.testing.allocator);
+    defer diagnostics.deinit();
+
+    var options = parse(std.testing.allocator, args, &diagnostics) catch |err| {
+        diagnostics.renderToStdErr(args);
+        return err;
+    };
+    defer options.deinit();
+
+    try std.testing.expectEqualDeep(expected, options);
+}
+
+fn testParseError(args: []const []const u8, expected_output: []const u8) !void {
+    var diagnostics = Diagnostics.init(std.testing.allocator);
+    defer diagnostics.deinit();
+
+    var options = parse(std.testing.allocator, args, &diagnostics) catch |err| switch (err) {
+        error.ParseError => {
+            var output = std.ArrayList(u8).init(std.testing.allocator);
+            defer output.deinit();
+
+            try diagnostics.renderToWriter(args, output.writer(), .no_color);
+            try std.testing.expectEqualStrings(expected_output, output.items);
+            return;
+        },
+        else => |e| return e,
+    };
+    defer options.deinit();
+
+    std.debug.print("expected error, got options: {}\n", .{options});
+    return error.TestExpectedError;
+}
+
+test "parse errors: basic" {
+    try testParseError(&.{ "foo.exe", "/ln" },
+        \\<cli>: error: missing language tag after /ln option
+        \\ ... /ln
+        \\     ~~~~^
+        \\
+    );
+    try testParseError(&.{ "foo.exe", "-vln" },
+        \\<cli>: error: missing language tag after -ln option
+        \\ ... -vln
+        \\     ~ ~~~^
+        \\
+    );
+    try testParseError(&.{ "foo.exe", "/not-an-option" },
+        \\<cli>: error: invalid option: /not-an-option
+        \\ ... /not-an-option
+        \\     ~^~~~~~~~~~~~~
+        \\
+    );
+    try testParseError(&.{ "foo.exe", "-not-an-option" },
+        \\<cli>: error: invalid option: -not-an-option
+        \\ ... -not-an-option
+        \\     ~^~~~~~~~~~~~~
+        \\
+    );
+    try testParseError(&.{ "foo.exe", "--not-an-option" },
+        \\<cli>: error: invalid option: --not-an-option
+        \\ ... --not-an-option
+        \\     ~~^~~~~~~~~~~~~
+        \\
+    );
+    try testParseError(&.{ "foo.exe", "/vnot-an-option" },
+        \\<cli>: error: invalid option: /not-an-option
+        \\ ... /vnot-an-option
+        \\     ~ ^~~~~~~~~~~~~
+        \\
+    );
+    try testParseError(&.{ "foo.exe", "-vnot-an-option" },
+        \\<cli>: error: invalid option: -not-an-option
+        \\ ... -vnot-an-option
+        \\     ~ ^~~~~~~~~~~~~
+        \\
+    );
+    try testParseError(&.{ "foo.exe", "--vnot-an-option" },
+        \\<cli>: error: invalid option: --not-an-option
+        \\ ... --vnot-an-option
+        \\     ~~ ^~~~~~~~~~~~~
+        \\
+    );
+}
+
+test "parse errors: /ln" {
+    try testParseError(&.{ "foo.exe", "/ln", "invalid" },
+        \\<cli>: error: invalid language tag: invalid
+        \\ ... /ln invalid
+        \\     ~~~~^~~~~~~
+        \\
+    );
+    try testParseError(&.{ "foo.exe", "/lninvalid" },
+        \\<cli>: error: invalid language tag: invalid
+        \\ ... /lninvalid
+        \\     ~~~^~~~~~~
+        \\
+    );
 }

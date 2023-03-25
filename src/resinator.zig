@@ -3,6 +3,7 @@ const std = @import("std");
 pub const ani = @import("ani.zig");
 pub const ast = @import("ast.zig");
 pub const bmp = @import("bmp.zig");
+pub const cli = @import("cli.zig");
 pub const code_pages = @import("code_pages.zig");
 pub const comments = @import("comments.zig");
 pub const compile = @import("compile.zig");
