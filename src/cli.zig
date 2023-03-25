@@ -18,8 +18,10 @@ pub const Diagnostics = struct {
 
         pub const Type = enum { err, warning, note };
         pub const ArgSpan = struct {
-            index_span: isize = 1,
-            offset: usize = 0,
+            point_at_next_arg: bool = false,
+            name_offset: usize = 0,
+            prefix_len: usize = 0,
+            value_offset: usize = 0,
         };
     };
 
@@ -116,24 +118,38 @@ pub const Options = struct {
 
 pub const Arg = struct {
     prefix: enum { long, short, slash },
-    name: []const u8,
+    name_offset: usize,
     full: []const u8,
 
     pub fn fromString(str: []const u8) ?@This() {
         if (std.mem.startsWith(u8, str, "--")) {
-            return .{ .prefix = .long, .name = str[2..], .full = str };
+            return .{ .prefix = .long, .name_offset = 2, .full = str };
         } else if (std.mem.startsWith(u8, str, "-")) {
-            return .{ .prefix = .short, .name = str[1..], .full = str };
+            return .{ .prefix = .short, .name_offset = 1, .full = str };
         } else if (std.mem.startsWith(u8, str, "/")) {
-            return .{ .prefix = .slash, .name = str[1..], .full = str };
+            return .{ .prefix = .slash, .name_offset = 1, .full = str };
         }
         return null;
     }
 
-    pub fn option(self: Arg, option_len: usize) []const u8 {
-        return switch (self.prefix) {
-            .long => self.full[0 .. option_len + 2],
-            .short, .slash => self.full[0 .. option_len + 1],
+    pub fn prefixSlice(self: Arg) []const u8 {
+        return self.full[0..(if (self.prefix == .long) 2 else 1)];
+    }
+
+    pub fn name(self: Arg) []const u8 {
+        return self.full[self.name_offset..];
+    }
+
+    pub fn optionWithoutPrefix(self: Arg, option_len: usize) []const u8 {
+        return self.name()[0..option_len];
+    }
+
+    pub fn missingSpan(self: Arg) Diagnostics.ErrorDetails.ArgSpan {
+        return .{
+            .point_at_next_arg = true,
+            .value_offset = 0,
+            .name_offset = self.name_offset,
+            .prefix_len = self.prefixSlice().len,
         };
     }
 
@@ -142,9 +158,18 @@ pub const Arg = struct {
         index_increment: u2 = 1,
 
         pub fn argSpan(self: Value, arg: Arg) Diagnostics.ErrorDetails.ArgSpan {
+            const prefix_len = arg.prefixSlice().len;
             switch (self.index_increment) {
-                1 => return .{ .offset = @ptrToInt(self.slice.ptr) - @ptrToInt(arg.full.ptr) },
-                2 => return .{ .index_span = -1 },
+                1 => return .{
+                    .value_offset = @ptrToInt(self.slice.ptr) - @ptrToInt(arg.full.ptr),
+                    .prefix_len = prefix_len,
+                    .name_offset = arg.name_offset,
+                },
+                2 => return .{
+                    .point_at_next_arg = true,
+                    .prefix_len = prefix_len,
+                    .name_offset = arg.name_offset,
+                },
                 else => unreachable,
             }
         }
@@ -156,7 +181,7 @@ pub const Arg = struct {
     };
 
     pub fn value(self: Arg, option_len: usize, index: usize, args: []const []const u8) error{MissingValue}!Value {
-        const rest = args[index][self.option(option_len).len..];
+        const rest = self.full[self.name_offset + option_len ..];
         if (rest.len > 0) return .{ .slice = rest };
         if (index + 1 >= args.len) return error.MissingValue;
         return .{ .slice = args[index + 1], .index_increment = 2 };
@@ -179,129 +204,144 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
     var output_filename_context: Arg.Context = undefined;
 
     var arg_i: usize = 1; // start at 1 to skip past the exe name
-    while (arg_i < args.len) {
-        // TODO: One arg can have multiple options within it, e.g.
-        //       /vrln409 is allowed and resolves as if it were
-        //       /v /r /ln409
-        const arg = Arg.fromString(args[arg_i]) orelse break;
+    next_arg: while (arg_i < args.len) {
+        var arg = Arg.fromString(args[arg_i]) orelse break;
         // -- on its own ends arg parsing
-        if (arg.name.len == 0 and arg.prefix == .long) {
+        if (arg.name().len == 0 and arg.prefix == .long) {
             arg_i += 1;
             break;
         }
 
-        if (std.ascii.startsWithIgnoreCase(arg.name, "i")) {
-            const value = arg.value(1, arg_i, args) catch {
-                var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i + 1, .arg_span = .{ .index_span = -1 } };
-                var msg_writer = err_details.msg.writer(allocator);
-                try msg_writer.print("missing include path after {s} option", .{arg.option(1)});
-                try diagnostics.append(err_details);
-                return error.ParseError;
-            };
-            const path = value.slice;
-            const duped = try allocator.dupe(u8, path);
-            try options.extra_include_paths.append(options.allocator, duped);
-            arg_i += value.index_increment;
-        } else if (std.ascii.startsWithIgnoreCase(arg.name, "fo")) {
-            const value = arg.value(2, arg_i, args) catch {
-                var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i + 1, .arg_span = .{ .index_span = -1 } };
-                var msg_writer = err_details.msg.writer(allocator);
-                try msg_writer.print("missing output path after {s} option", .{arg.option(2)});
-                try diagnostics.append(err_details);
-                return error.ParseError;
-            };
-            output_filename_context = .{ .index = arg_i, .arg = arg, .value = value };
-            output_filename = value.slice;
-            arg_i += value.index_increment;
-        }
-        // Note: This must come before the "l" case to avoid becoming a dead branch
-        else if (std.ascii.startsWithIgnoreCase(arg.name, "ln")) {
-            const value = arg.value(2, arg_i, args) catch {
-                var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i + 1, .arg_span = .{ .index_span = -1 } };
-                var msg_writer = err_details.msg.writer(allocator);
-                try msg_writer.print("missing language tag after {s} option", .{arg.option(2)});
-                try diagnostics.append(err_details);
-                return error.ParseError;
-            };
-            const tag = value.slice;
-            options.default_language_id = lang.tagToInt(tag) catch {
-                var err_details = Diagnostics.ErrorDetails{ .arg_index = value.index(arg_i), .arg_span = value.argSpan(arg) };
-                var msg_writer = err_details.msg.writer(allocator);
-                try msg_writer.print("invalid language tag: {s}", .{tag});
-                try diagnostics.append(err_details);
-                return error.ParseError;
-            };
-            if (options.default_language_id.? == lang.LOCALE_CUSTOM_UNSPECIFIED) {
-                var err_details = Diagnostics.ErrorDetails{ .type = .warning, .arg_index = value.index(arg_i), .arg_span = value.argSpan(arg) };
-                var msg_writer = err_details.msg.writer(allocator);
-                try msg_writer.print("language tag '{s}' does not have an assigned ID so it will be resolved to LOCALE_CUSTOM_UNSPECIFIED (id=0x{x})", .{ tag, lang.LOCALE_CUSTOM_UNSPECIFIED });
-                try diagnostics.append(err_details);
+        while (arg.name().len > 0) {
+            const arg_name = arg.name();
+            if (std.ascii.startsWithIgnoreCase(arg_name, "no-preprocess")) {
+                options.preprocess = false;
+                arg.name_offset += "no-preprocess".len;
+            } else if (std.ascii.startsWithIgnoreCase(arg_name, "fo")) {
+                const value = arg.value(2, arg_i, args) catch {
+                    var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = arg.missingSpan() };
+                    var msg_writer = err_details.msg.writer(allocator);
+                    try msg_writer.print("missing output path after {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(2) });
+                    try diagnostics.append(err_details);
+                    return error.ParseError;
+                };
+                output_filename_context = .{ .index = arg_i, .arg = arg, .value = value };
+                output_filename = value.slice;
+                arg_i += value.index_increment;
+                continue :next_arg;
             }
-            arg_i += value.index_increment;
-        } else if (std.ascii.startsWithIgnoreCase(arg.name, "l")) {
-            const value = arg.value(1, arg_i, args) catch {
-                var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i + 1, .arg_span = .{ .index_span = -1 } };
-                var msg_writer = err_details.msg.writer(allocator);
-                try msg_writer.print("missing language ID after {s} option", .{arg.option(1)});
-                try diagnostics.append(err_details);
-                return error.ParseError;
-            };
-            const num_str = value.slice;
-            options.default_language_id = lang.parseInt(num_str) catch {
-                var err_details = Diagnostics.ErrorDetails{ .arg_index = value.index(arg_i), .arg_span = value.argSpan(arg) };
-                var msg_writer = err_details.msg.writer(allocator);
-                try msg_writer.print("invalid language ID: {s}", .{num_str});
-                try diagnostics.append(err_details);
-                return error.ParseError;
-            };
-            arg_i += value.index_increment;
-        } else if (std.ascii.startsWithIgnoreCase(arg.name, "c")) {
-            const value = arg.value(1, arg_i, args) catch {
-                var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i + 1, .arg_span = .{ .index_span = -1 } };
-                var msg_writer = err_details.msg.writer(allocator);
-                try msg_writer.print("missing code page ID after {s} option", .{arg.option(1)});
-                try diagnostics.append(err_details);
-                return error.ParseError;
-            };
-            const num_str = value.slice;
-            const code_page_id = std.fmt.parseUnsigned(u16, num_str, 10) catch {
-                var err_details = Diagnostics.ErrorDetails{ .arg_index = value.index(arg_i), .arg_span = value.argSpan(arg) };
-                var msg_writer = err_details.msg.writer(allocator);
-                try msg_writer.print("invalid code page ID: {s}", .{num_str});
-                try diagnostics.append(err_details);
-                return error.ParseError;
-            };
-            options.default_code_page = CodePage.getByIdentifierEnsureSupported(code_page_id) catch |err| switch (err) {
-                error.InvalidCodePage => {
-                    var err_details = Diagnostics.ErrorDetails{ .arg_index = value.index(arg_i), .arg_span = value.argSpan(arg) };
+            // Note: This must come before the "l" case to avoid becoming a dead branch
+            else if (std.ascii.startsWithIgnoreCase(arg_name, "ln")) {
+                const value = arg.value(2, arg_i, args) catch {
+                    var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = arg.missingSpan() };
                     var msg_writer = err_details.msg.writer(allocator);
-                    try msg_writer.print("invalid or unknown code page ID: {}", .{code_page_id});
+                    try msg_writer.print("missing language tag after {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(2) });
                     try diagnostics.append(err_details);
                     return error.ParseError;
-                },
-                error.UnsupportedCodePage => {
-                    var err_details = Diagnostics.ErrorDetails{ .arg_index = value.index(arg_i), .arg_span = value.argSpan(arg) };
+                };
+                const tag = value.slice;
+                options.default_language_id = lang.tagToInt(tag) catch {
+                    var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = value.argSpan(arg) };
                     var msg_writer = err_details.msg.writer(allocator);
-                    try msg_writer.print("unsupported code page: {s} (id={})", .{
-                        @tagName(CodePage.getByIdentifier(code_page_id) catch unreachable),
-                        code_page_id,
-                    });
+                    try msg_writer.print("invalid language tag: {s}", .{tag});
                     try diagnostics.append(err_details);
                     return error.ParseError;
-                },
-            };
-            arg_i += value.index_increment;
-        } else if (std.ascii.eqlIgnoreCase("v", arg.name)) {
-            options.verbose = true;
-            arg_i += 1;
-        } else if (std.ascii.eqlIgnoreCase("x", arg.name)) {
-            options.ignore_include_env_var = true;
-            arg_i += 1;
-        } else if (std.ascii.eqlIgnoreCase("no-preprocess", arg.name)) {
-            options.preprocess = false;
-            arg_i += 1;
+                };
+                if (options.default_language_id.? == lang.LOCALE_CUSTOM_UNSPECIFIED) {
+                    var err_details = Diagnostics.ErrorDetails{ .type = .warning, .arg_index = arg_i, .arg_span = value.argSpan(arg) };
+                    var msg_writer = err_details.msg.writer(allocator);
+                    try msg_writer.print("language tag '{s}' does not have an assigned ID so it will be resolved to LOCALE_CUSTOM_UNSPECIFIED (id=0x{x})", .{ tag, lang.LOCALE_CUSTOM_UNSPECIFIED });
+                    try diagnostics.append(err_details);
+                }
+                arg_i += value.index_increment;
+                continue :next_arg;
+            } else if (std.ascii.startsWithIgnoreCase(arg_name, "l")) {
+                const value = arg.value(1, arg_i, args) catch {
+                    var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = arg.missingSpan() };
+                    var msg_writer = err_details.msg.writer(allocator);
+                    try msg_writer.print("missing language ID after {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(1) });
+                    try diagnostics.append(err_details);
+                    return error.ParseError;
+                };
+                const num_str = value.slice;
+                options.default_language_id = lang.parseInt(num_str) catch {
+                    var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = value.argSpan(arg) };
+                    var msg_writer = err_details.msg.writer(allocator);
+                    try msg_writer.print("invalid language ID: {s}", .{num_str});
+                    try diagnostics.append(err_details);
+                    return error.ParseError;
+                };
+                arg_i += value.index_increment;
+                continue :next_arg;
+            } else if (std.ascii.startsWithIgnoreCase(arg_name, "c")) {
+                const value = arg.value(1, arg_i, args) catch {
+                    var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = arg.missingSpan() };
+                    var msg_writer = err_details.msg.writer(allocator);
+                    try msg_writer.print("missing code page ID after {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(1) });
+                    try diagnostics.append(err_details);
+                    return error.ParseError;
+                };
+                const num_str = value.slice;
+                const code_page_id = std.fmt.parseUnsigned(u16, num_str, 10) catch {
+                    var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = value.argSpan(arg) };
+                    var msg_writer = err_details.msg.writer(allocator);
+                    try msg_writer.print("invalid code page ID: {s}", .{num_str});
+                    try diagnostics.append(err_details);
+                    return error.ParseError;
+                };
+                options.default_code_page = CodePage.getByIdentifierEnsureSupported(code_page_id) catch |err| switch (err) {
+                    error.InvalidCodePage => {
+                        var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = value.argSpan(arg) };
+                        var msg_writer = err_details.msg.writer(allocator);
+                        try msg_writer.print("invalid or unknown code page ID: {}", .{code_page_id});
+                        try diagnostics.append(err_details);
+                        return error.ParseError;
+                    },
+                    error.UnsupportedCodePage => {
+                        var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = value.argSpan(arg) };
+                        var msg_writer = err_details.msg.writer(allocator);
+                        try msg_writer.print("unsupported code page: {s} (id={})", .{
+                            @tagName(CodePage.getByIdentifier(code_page_id) catch unreachable),
+                            code_page_id,
+                        });
+                        try diagnostics.append(err_details);
+                        return error.ParseError;
+                    },
+                };
+                arg_i += value.index_increment;
+                continue :next_arg;
+            } else if (std.ascii.startsWithIgnoreCase(arg_name, "v")) {
+                options.verbose = true;
+                arg.name_offset += 1;
+            } else if (std.ascii.startsWithIgnoreCase(arg_name, "x")) {
+                options.ignore_include_env_var = true;
+                arg.name_offset += 1;
+            } else if (std.ascii.startsWithIgnoreCase(arg_name, "i")) {
+                const value = arg.value(1, arg_i, args) catch {
+                    var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = arg.missingSpan() };
+                    var msg_writer = err_details.msg.writer(allocator);
+                    try msg_writer.print("missing include path after {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(1) });
+                    try diagnostics.append(err_details);
+                    return error.ParseError;
+                };
+                const path = value.slice;
+                const duped = try allocator.dupe(u8, path);
+                try options.extra_include_paths.append(options.allocator, duped);
+                arg_i += value.index_increment;
+                continue :next_arg;
+            } else {
+                var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = .{
+                    .name_offset = arg.name_offset,
+                    .prefix_len = arg.prefixSlice().len,
+                } };
+                var msg_writer = err_details.msg.writer(allocator);
+                try msg_writer.print("invalid option: {s}{s}", .{ arg.prefixSlice(), arg.name() });
+                try diagnostics.append(err_details);
+                return error.ParseError;
+            }
         } else {
-            break;
+            arg_i += 1;
+            continue;
         }
     }
 
@@ -393,16 +433,26 @@ pub fn renderErrorMessage(writer: anytype, colors: utils.Colors, err_details: Di
     try writer.writeAll(prefix);
     colors.set(writer, .reset);
 
-    const positive_span = err_details.arg_span.index_span >= 0;
-    const span_start = if (positive_span) err_details.arg_index else @intCast(usize, @as(i65, err_details.arg_index) + err_details.arg_span.index_span);
-    const span_end = if (positive_span) err_details.arg_index + @intCast(usize, err_details.arg_span.index_span) else err_details.arg_index + 1;
-    const span_slice = args[span_start..@min(args.len, span_end)];
+    const arg_with_name = args[err_details.arg_index];
 
-    for (span_slice, 0..) |arg, i| {
-        try writer.writeAll(arg);
-        if (i < span_slice.len - 1) try writer.writeByte(' ');
+    if (err_details.arg_span.prefix_len == err_details.arg_span.name_offset) {
+        try writer.writeAll(arg_with_name);
+    } else {
+        try writer.writeAll(arg_with_name[0..err_details.arg_span.prefix_len]);
+        colors.set(writer, .dim);
+        try writer.writeAll(arg_with_name[err_details.arg_span.prefix_len..err_details.arg_span.name_offset]);
+        colors.set(writer, .reset);
+        try writer.writeAll(arg_with_name[err_details.arg_span.name_offset..]);
     }
-    if (span_end < args.len) {
+    var next_arg_len: usize = 0;
+    if (err_details.arg_span.point_at_next_arg and err_details.arg_index + 1 < args.len) {
+        const next_arg = args[err_details.arg_index + 1];
+        try writer.writeByte(' ');
+        try writer.writeAll(next_arg);
+        next_arg_len = next_arg.len;
+    }
+
+    if (err_details.arg_index + 1 < args.len) {
         colors.set(writer, .dim);
         try writer.writeAll(prefix);
         colors.set(writer, .reset);
@@ -411,25 +461,19 @@ pub fn renderErrorMessage(writer: anytype, colors: utils.Colors, err_details: Di
 
     colors.set(writer, .green);
     try writer.writeByteNTimes(' ', prefix.len);
-    if (err_details.arg_span.index_span < 0) {
-        var num_squiggles_before: usize = 0;
-        for (span_slice[0..std.math.absCast(err_details.arg_span.index_span)]) |arg_before| {
-            num_squiggles_before += arg_before.len + 1;
-        }
-        try writer.writeByteNTimes('~', num_squiggles_before);
-    }
-    if (err_details.arg_span.offset > 0) {
-        try writer.writeByteNTimes('~', err_details.arg_span.offset);
-    }
-    try writer.writeByte('^');
-    // We sometimes want to point to a missing arg, in which case arg_index may be
-    // outside of the range of args
-    if (err_details.arg_index < args.len) {
-        const pointed_to_arg = args[err_details.arg_index];
-        if (pointed_to_arg.len - err_details.arg_span.offset > 1) {
-            var num_squiggles = pointed_to_arg.len - err_details.arg_span.offset - 1;
-            try writer.writeByteNTimes('~', num_squiggles);
-        }
+    try writer.writeByteNTimes('~', err_details.arg_span.prefix_len);
+    try writer.writeByteNTimes(' ', err_details.arg_span.name_offset - err_details.arg_span.prefix_len);
+    if (!err_details.arg_span.point_at_next_arg and err_details.arg_span.value_offset == 0) {
+        try writer.writeByte('^');
+        try writer.writeByteNTimes('~', arg_with_name.len - err_details.arg_span.name_offset - 1);
+    } else if (err_details.arg_span.value_offset > 0) {
+        try writer.writeByteNTimes('~', err_details.arg_span.value_offset - err_details.arg_span.name_offset);
+        try writer.writeByte('^');
+        try writer.writeByteNTimes('~', arg_with_name.len - err_details.arg_span.value_offset - 1);
+    } else if (err_details.arg_span.point_at_next_arg) {
+        try writer.writeByteNTimes('~', arg_with_name.len - err_details.arg_span.name_offset + 1);
+        try writer.writeByte('^');
+        try writer.writeByteNTimes('~', next_arg_len - 1);
     }
     try writer.writeByte('\n');
     colors.set(writer, .reset);
