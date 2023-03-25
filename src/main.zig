@@ -36,8 +36,10 @@ pub fn main() !void {
     };
     defer options.deinit();
 
+    const stdout_writer = std.io.getStdOut().writer();
     if (options.verbose) {
-        try options.dumpVerbose(std.io.getStdOut().writer());
+        try options.dumpVerbose(stdout_writer);
+        try stdout_writer.writeByte('\n');
     }
 
     var full_input = full_input: {
