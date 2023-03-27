@@ -62,6 +62,13 @@ pub const Diagnostics = struct {
             try renderErrorMessage(writer, colors, err_details, args);
         }
     }
+
+    pub fn hasError(self: *const Diagnostics) bool {
+        for (self.errors.items) |err| {
+            if (err.type == .err) return true;
+        }
+        return false;
+    }
 };
 
 pub const Options = struct {
@@ -207,9 +214,6 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
     var output_filename: ?[]const u8 = null;
     var output_filename_context: Arg.Context = undefined;
 
-    // TODO: Don't immediately fail on error, collect more than one
-    //       error if it can be recovered from
-
     var arg_i: usize = 1; // start at 1 to skip past the exe name
     next_arg: while (arg_i < args.len) {
         var arg = Arg.fromString(args[arg_i]) orelse break;
@@ -221,6 +225,9 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
 
         while (arg.name().len > 0) {
             const arg_name = arg.name();
+            // Note: These cases should be in order from longest to shortest, since
+            //       shorter options that are a substring of a longer one could make
+            //       the longer option's branch unreachable.
             if (std.ascii.startsWithIgnoreCase(arg_name, "no-preprocess")) {
                 options.preprocess = false;
                 arg.name_offset += "no-preprocess".len;
@@ -230,21 +237,21 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                     var msg_writer = err_details.msg.writer(allocator);
                     try msg_writer.print("missing output path after {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(2) });
                     try diagnostics.append(err_details);
-                    return error.ParseError;
+                    arg_i += 1;
+                    break :next_arg;
                 };
                 output_filename_context = .{ .index = arg_i, .arg = arg, .value = value };
                 output_filename = value.slice;
                 arg_i += value.index_increment;
                 continue :next_arg;
-            }
-            // Note: This must come before the "l" case to avoid becoming a dead branch
-            else if (std.ascii.startsWithIgnoreCase(arg_name, "ln")) {
+            } else if (std.ascii.startsWithIgnoreCase(arg_name, "ln")) {
                 const value = arg.value(2, arg_i, args) catch {
                     var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = arg.missingSpan() };
                     var msg_writer = err_details.msg.writer(allocator);
                     try msg_writer.print("missing language tag after {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(2) });
                     try diagnostics.append(err_details);
-                    return error.ParseError;
+                    arg_i += 1;
+                    break :next_arg;
                 };
                 const tag = value.slice;
                 options.default_language_id = lang.tagToInt(tag) catch {
@@ -252,7 +259,8 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                     var msg_writer = err_details.msg.writer(allocator);
                     try msg_writer.print("invalid language tag: {s}", .{tag});
                     try diagnostics.append(err_details);
-                    return error.ParseError;
+                    arg_i += value.index_increment;
+                    continue :next_arg;
                 };
                 if (options.default_language_id.? == lang.LOCALE_CUSTOM_UNSPECIFIED) {
                     var err_details = Diagnostics.ErrorDetails{ .type = .warning, .arg_index = arg_i, .arg_span = value.argSpan(arg) };
@@ -268,7 +276,8 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                     var msg_writer = err_details.msg.writer(allocator);
                     try msg_writer.print("missing language ID after {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(1) });
                     try diagnostics.append(err_details);
-                    return error.ParseError;
+                    arg_i += 1;
+                    break :next_arg;
                 };
                 const num_str = value.slice;
                 options.default_language_id = lang.parseInt(num_str) catch {
@@ -276,7 +285,8 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                     var msg_writer = err_details.msg.writer(allocator);
                     try msg_writer.print("invalid language ID: {s}", .{num_str});
                     try diagnostics.append(err_details);
-                    return error.ParseError;
+                    arg_i += value.index_increment;
+                    continue :next_arg;
                 };
                 arg_i += value.index_increment;
                 continue :next_arg;
@@ -286,7 +296,8 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                     var msg_writer = err_details.msg.writer(allocator);
                     try msg_writer.print("missing code page ID after {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(1) });
                     try diagnostics.append(err_details);
-                    return error.ParseError;
+                    arg_i += 1;
+                    break :next_arg;
                 };
                 const num_str = value.slice;
                 const code_page_id = std.fmt.parseUnsigned(u16, num_str, 10) catch {
@@ -294,7 +305,8 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                     var msg_writer = err_details.msg.writer(allocator);
                     try msg_writer.print("invalid code page ID: {s}", .{num_str});
                     try diagnostics.append(err_details);
-                    return error.ParseError;
+                    arg_i += value.index_increment;
+                    continue :next_arg;
                 };
                 options.default_code_page = CodePage.getByIdentifierEnsureSupported(code_page_id) catch |err| switch (err) {
                     error.InvalidCodePage => {
@@ -302,7 +314,8 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                         var msg_writer = err_details.msg.writer(allocator);
                         try msg_writer.print("invalid or unknown code page ID: {}", .{code_page_id});
                         try diagnostics.append(err_details);
-                        return error.ParseError;
+                        arg_i += value.index_increment;
+                        continue :next_arg;
                     },
                     error.UnsupportedCodePage => {
                         var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = value.argSpan(arg) };
@@ -312,7 +325,8 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                             code_page_id,
                         });
                         try diagnostics.append(err_details);
-                        return error.ParseError;
+                        arg_i += value.index_increment;
+                        continue :next_arg;
                     },
                 };
                 arg_i += value.index_increment;
@@ -329,7 +343,8 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                     var msg_writer = err_details.msg.writer(allocator);
                     try msg_writer.print("missing include path after {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(1) });
                     try diagnostics.append(err_details);
-                    return error.ParseError;
+                    arg_i += 1;
+                    break :next_arg;
                 };
                 const path = value.slice;
                 const duped = try allocator.dupe(u8, path);
@@ -344,7 +359,8 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                 var msg_writer = err_details.msg.writer(allocator);
                 try msg_writer.print("invalid option: {s}{s}", .{ arg.prefixSlice(), arg.name() });
                 try diagnostics.append(err_details);
-                return error.ParseError;
+                arg_i += 1;
+                continue :next_arg;
             }
         } else {
             arg_i += 1;
@@ -359,6 +375,8 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
         var msg_writer = err_details.msg.writer(allocator);
         try msg_writer.writeAll("missing input filename");
         try diagnostics.append(err_details);
+        // This is a fatal enough problem to justify an early return, since
+        // things after this rely on the value of the input filename.
         return error.ParseError;
     }
     options.input_filename = try allocator.dupe(u8, positionals[0]);
@@ -377,9 +395,9 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
             var note_writer = note_details.msg.writer(allocator);
             try note_writer.writeAll("output filename previously specified here");
             try diagnostics.append(note_details);
-            return error.ParseError;
+        } else {
+            output_filename = positionals[1];
         }
-        output_filename = positionals[1];
     }
     if (output_filename == null) {
         var buf = std.ArrayList(u8).init(allocator);
@@ -399,6 +417,10 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
         options.output_filename = try buf.toOwnedSlice();
     } else {
         options.output_filename = try allocator.dupe(u8, output_filename.?);
+    }
+
+    if (diagnostics.hasError()) {
+        return error.ParseError;
     }
 
     return options;
@@ -462,7 +484,7 @@ pub fn renderErrorMessage(writer: anytype, colors: utils.Colors, err_details: Di
     const last_shown_arg_index = if (err_details.arg_span.point_at_next_arg) err_details.arg_index + 1 else err_details.arg_index;
     if (last_shown_arg_index + 1 < args.len) {
         colors.set(writer, .dim);
-        try writer.writeAll(prefix);
+        try writer.writeAll(" ...");
         colors.set(writer, .reset);
     }
     try writer.writeByte('\n');
@@ -528,62 +550,78 @@ test "parse errors: basic" {
         \\<cli>: error: missing language tag after /ln option
         \\ ... /ln
         \\     ~~~~^
+        \\<cli>: error: missing input filename
+        \\
         \\
     );
     try testParseError(&.{ "foo.exe", "-vln" },
         \\<cli>: error: missing language tag after -ln option
         \\ ... -vln
         \\     ~ ~~~^
+        \\<cli>: error: missing input filename
+        \\
         \\
     );
     try testParseError(&.{ "foo.exe", "/not-an-option" },
         \\<cli>: error: invalid option: /not-an-option
         \\ ... /not-an-option
         \\     ~^~~~~~~~~~~~~
+        \\<cli>: error: missing input filename
+        \\
         \\
     );
     try testParseError(&.{ "foo.exe", "-not-an-option" },
         \\<cli>: error: invalid option: -not-an-option
         \\ ... -not-an-option
         \\     ~^~~~~~~~~~~~~
+        \\<cli>: error: missing input filename
+        \\
         \\
     );
     try testParseError(&.{ "foo.exe", "--not-an-option" },
         \\<cli>: error: invalid option: --not-an-option
         \\ ... --not-an-option
         \\     ~~^~~~~~~~~~~~~
+        \\<cli>: error: missing input filename
+        \\
         \\
     );
     try testParseError(&.{ "foo.exe", "/vnot-an-option" },
         \\<cli>: error: invalid option: /not-an-option
         \\ ... /vnot-an-option
         \\     ~ ^~~~~~~~~~~~~
+        \\<cli>: error: missing input filename
+        \\
         \\
     );
     try testParseError(&.{ "foo.exe", "-vnot-an-option" },
         \\<cli>: error: invalid option: -not-an-option
         \\ ... -vnot-an-option
         \\     ~ ^~~~~~~~~~~~~
+        \\<cli>: error: missing input filename
+        \\
         \\
     );
     try testParseError(&.{ "foo.exe", "--vnot-an-option" },
         \\<cli>: error: invalid option: --not-an-option
         \\ ... --vnot-an-option
         \\     ~~ ^~~~~~~~~~~~~
+        \\<cli>: error: missing input filename
+        \\
         \\
     );
 }
 
 test "parse errors: /ln" {
-    try testParseError(&.{ "foo.exe", "/ln", "invalid" },
+    try testParseError(&.{ "foo.exe", "/ln", "invalid", "foo.rc" },
         \\<cli>: error: invalid language tag: invalid
-        \\ ... /ln invalid
+        \\ ... /ln invalid ...
         \\     ~~~~^~~~~~~
         \\
     );
-    try testParseError(&.{ "foo.exe", "/lninvalid" },
+    try testParseError(&.{ "foo.exe", "/lninvalid", "foo.rc" },
         \\<cli>: error: invalid language tag: invalid
-        \\ ... /lninvalid
+        \\ ... /lninvalid ...
         \\     ~~~^~~~~~~
         \\
     );
