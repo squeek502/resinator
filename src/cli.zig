@@ -107,10 +107,7 @@ pub const Options = struct {
             try writer.writeAll(" The preprocessor will not be invoked\n");
         }
 
-        // TODO: This default language id stuff (specifically the stuff in this orelse branch
-        //       which ends up resolving to [LANG_ENGLISH, SUBLANG_ENGLISH_US])
-        //       is strewn about all over the place, it should be consolidated
-        const language_id = self.default_language_id orelse (res.Language{}).asInt();
+        const language_id = self.default_language_id orelse res.Language.default;
         const language_name = language_name: {
             if (std.meta.intToEnum(lang.LanguageId, language_id)) |lang_enum_val| {
                 break :language_name @tagName(lang_enum_val);

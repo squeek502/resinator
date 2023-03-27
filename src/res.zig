@@ -152,6 +152,9 @@ pub const Language = packed struct(u16) {
     primary_language_id: u10 = lang.LANG_ENGLISH,
     sublanguage_id: u6 = lang.SUBLANG_ENGLISH_US,
 
+    /// Default language ID as a u16
+    pub const default: u16 = (Language{}).asInt();
+
     pub fn fromInt(int: u16) Language {
         return @bitCast(Language, int);
     }
