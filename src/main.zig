@@ -67,6 +67,14 @@ pub fn main() !void {
                 try argv.append("--include-directory");
                 try argv.append(extra_include_path);
             }
+            var symbol_it = options.symbols.iterator();
+            while (symbol_it.next()) |entry| {
+                switch (entry.value_ptr.*) {
+                    .define => try argv.append("-D"),
+                    .undefine => try argv.append("-U"),
+                }
+                try argv.append(entry.key_ptr.*);
+            }
             try argv.append(options.input_filename);
 
             var result = try std.ChildProcess.exec(.{

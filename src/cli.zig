@@ -81,6 +81,33 @@ pub const Options = struct {
     default_language_id: ?u16 = null,
     default_code_page: ?CodePage = null,
     verbose: bool = false,
+    symbols: std.StringArrayHashMapUnmanaged(SymbolAction) = .{},
+
+    pub const SymbolAction = enum { define, undefine };
+
+    /// Does not check that identifier contains only valid characters
+    pub fn define(self: *Options, identifier: []const u8) !void {
+        // If the identifier is already in the symbols, then there's nothing
+        // we need to do:
+        // - If the symbol is already defined, then we don't need to do anything.
+        // - If the symbol is undefined, then that always takes precedence so
+        //   we shouldn't change anything.
+        if (self.symbols.contains(identifier)) return;
+        var duped_key = try self.allocator.dupe(u8, identifier);
+        errdefer self.allocator.free(duped_key);
+        try self.symbols.put(self.allocator, duped_key, .define);
+    }
+
+    /// Does not check that identifier contains only valid characters
+    pub fn undefine(self: *Options, identifier: []const u8) !void {
+        if (self.symbols.getPtr(identifier)) |action| {
+            action.* = .undefine;
+            return;
+        }
+        var duped_key = try self.allocator.dupe(u8, identifier);
+        errdefer self.allocator.free(duped_key);
+        try self.symbols.put(self.allocator, duped_key, .undefine);
+    }
 
     pub fn deinit(self: *Options) void {
         for (self.extra_include_paths.items) |extra_include_path| {
@@ -89,6 +116,10 @@ pub const Options = struct {
         self.extra_include_paths.deinit(self.allocator);
         self.allocator.free(self.input_filename);
         self.allocator.free(self.output_filename);
+        for (self.symbols.keys()) |name| {
+            self.allocator.free(name);
+        }
+        self.symbols.deinit(self.allocator);
     }
 
     pub fn dumpVerbose(self: *const Options, writer: anytype) !void {
@@ -105,6 +136,16 @@ pub const Options = struct {
         }
         if (!self.preprocess) {
             try writer.writeAll(" The preprocessor will not be invoked\n");
+        }
+        if (self.symbols.count() > 0) {
+            try writer.writeAll(" Symbols:\n");
+            var it = self.symbols.iterator();
+            while (it.next()) |symbol| {
+                try writer.print("  {s} {s}\n", .{ switch (symbol.value_ptr.*) {
+                    .define => "#define",
+                    .undefine => "#undef",
+                }, symbol.key_ptr.* });
+            }
         }
 
         const language_id = self.default_language_id orelse res.Language.default;
@@ -345,7 +386,52 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                 };
                 const path = value.slice;
                 const duped = try allocator.dupe(u8, path);
+                errdefer allocator.free(duped);
                 try options.extra_include_paths.append(options.allocator, duped);
+                arg_i += value.index_increment;
+                continue :next_arg;
+            } else if (std.ascii.startsWithIgnoreCase(arg_name, "r")) {
+                // From https://learn.microsoft.com/en-us/windows/win32/menurc/using-rc-the-rc-command-line-
+                // "Ignored. Provided for compatibility with existing makefiles."
+                arg.name_offset += 1;
+            } else if (std.ascii.startsWithIgnoreCase(arg_name, "d")) {
+                const value = arg.value(1, arg_i, args) catch {
+                    var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = arg.missingSpan() };
+                    var msg_writer = err_details.msg.writer(allocator);
+                    try msg_writer.print("missing symbol to define after {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(1) });
+                    try diagnostics.append(err_details);
+                    arg_i += 1;
+                    break :next_arg;
+                };
+                const symbol = value.slice;
+                if (isValidIdentifier(symbol)) {
+                    try options.define(symbol);
+                } else {
+                    var err_details = Diagnostics.ErrorDetails{ .type = .warning, .arg_index = arg_i, .arg_span = value.argSpan(arg) };
+                    var msg_writer = err_details.msg.writer(allocator);
+                    try msg_writer.print("symbol \"{s}\" is not a valid identifier and therefore cannot be defined", .{symbol});
+                    try diagnostics.append(err_details);
+                }
+                arg_i += value.index_increment;
+                continue :next_arg;
+            } else if (std.ascii.startsWithIgnoreCase(arg_name, "u")) {
+                const value = arg.value(1, arg_i, args) catch {
+                    var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = arg.missingSpan() };
+                    var msg_writer = err_details.msg.writer(allocator);
+                    try msg_writer.print("missing symbol to undefine after {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(1) });
+                    try diagnostics.append(err_details);
+                    arg_i += 1;
+                    break :next_arg;
+                };
+                const symbol = value.slice;
+                if (isValidIdentifier(symbol)) {
+                    try options.undefine(symbol);
+                } else {
+                    var err_details = Diagnostics.ErrorDetails{ .type = .warning, .arg_index = arg_i, .arg_span = value.argSpan(arg) };
+                    var msg_writer = err_details.msg.writer(allocator);
+                    try msg_writer.print("symbol \"{s}\" is not a valid identifier and therefore cannot be undefined", .{symbol});
+                    try diagnostics.append(err_details);
+                }
                 arg_i += value.index_increment;
                 continue :next_arg;
             } else {
@@ -421,6 +507,16 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
     }
 
     return options;
+}
+
+/// Returns true if the str is a valid C identifier for use in a #define/#undef macro
+pub fn isValidIdentifier(str: []const u8) bool {
+    for (str, 0..) |c, i| switch (c) {
+        '0'...'9' => if (i == 0) return false,
+        'a'...'z', 'A'...'Z', '_' => {},
+        else => return false,
+    };
+    return true;
 }
 
 pub fn renderErrorMessage(writer: anytype, colors: utils.Colors, err_details: Diagnostics.ErrorDetails, args: []const []const u8) !void {
