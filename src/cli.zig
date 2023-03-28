@@ -664,50 +664,50 @@ test "parse errors: basic" {
         \\
         \\
     );
-    try testParseError(&.{ "foo.exe", "/not-an-option" },
-        \\<cli>: error: invalid option: /not-an-option
-        \\ ... /not-an-option
-        \\     ~^~~~~~~~~~~~~
+    try testParseError(&.{ "foo.exe", "/_not-an-option" },
+        \\<cli>: error: invalid option: /_not-an-option
+        \\ ... /_not-an-option
+        \\     ~^~~~~~~~~~~~~~
         \\<cli>: error: missing input filename
         \\
         \\
     );
-    try testParseError(&.{ "foo.exe", "-not-an-option" },
-        \\<cli>: error: invalid option: -not-an-option
-        \\ ... -not-an-option
-        \\     ~^~~~~~~~~~~~~
+    try testParseError(&.{ "foo.exe", "-_not-an-option" },
+        \\<cli>: error: invalid option: -_not-an-option
+        \\ ... -_not-an-option
+        \\     ~^~~~~~~~~~~~~~
         \\<cli>: error: missing input filename
         \\
         \\
     );
-    try testParseError(&.{ "foo.exe", "--not-an-option" },
-        \\<cli>: error: invalid option: --not-an-option
-        \\ ... --not-an-option
-        \\     ~~^~~~~~~~~~~~~
+    try testParseError(&.{ "foo.exe", "--_not-an-option" },
+        \\<cli>: error: invalid option: --_not-an-option
+        \\ ... --_not-an-option
+        \\     ~~^~~~~~~~~~~~~~
         \\<cli>: error: missing input filename
         \\
         \\
     );
-    try testParseError(&.{ "foo.exe", "/vnot-an-option" },
-        \\<cli>: error: invalid option: /not-an-option
-        \\ ... /vnot-an-option
-        \\     ~ ^~~~~~~~~~~~~
+    try testParseError(&.{ "foo.exe", "/v_not-an-option" },
+        \\<cli>: error: invalid option: /_not-an-option
+        \\ ... /v_not-an-option
+        \\     ~ ^~~~~~~~~~~~~~
         \\<cli>: error: missing input filename
         \\
         \\
     );
-    try testParseError(&.{ "foo.exe", "-vnot-an-option" },
-        \\<cli>: error: invalid option: -not-an-option
-        \\ ... -vnot-an-option
-        \\     ~ ^~~~~~~~~~~~~
+    try testParseError(&.{ "foo.exe", "-v_not-an-option" },
+        \\<cli>: error: invalid option: -_not-an-option
+        \\ ... -v_not-an-option
+        \\     ~ ^~~~~~~~~~~~~~
         \\<cli>: error: missing input filename
         \\
         \\
     );
-    try testParseError(&.{ "foo.exe", "--vnot-an-option" },
-        \\<cli>: error: invalid option: --not-an-option
-        \\ ... --vnot-an-option
-        \\     ~~ ^~~~~~~~~~~~~
+    try testParseError(&.{ "foo.exe", "--v_not-an-option" },
+        \\<cli>: error: invalid option: --_not-an-option
+        \\ ... --v_not-an-option
+        \\     ~~ ^~~~~~~~~~~~~~
         \\<cli>: error: missing input filename
         \\
         \\
