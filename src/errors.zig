@@ -237,6 +237,8 @@ pub const ErrorDetails = struct {
         code_page_pragma_missing_left_paren,
         code_page_pragma_missing_right_paren,
         code_page_pragma_invalid_code_page,
+        code_page_pragma_not_integer,
+        code_page_pragma_overflow,
         code_page_pragma_unsupported_code_page,
 
         // Parser
@@ -343,6 +345,12 @@ pub const ErrorDetails = struct {
             },
             .code_page_pragma_invalid_code_page => {
                 return writer.writeAll("invalid or unknown code page in code_page #pragma");
+            },
+            .code_page_pragma_not_integer => {
+                return writer.writeAll("code page is not a valid integer in code_page #pragma");
+            },
+            .code_page_pragma_overflow => {
+                return writer.writeAll("code page too large in code_page #pragma");
             },
             .code_page_pragma_unsupported_code_page => {
                 // We know that the token slice is a well-formed #pragma code_page(N), so

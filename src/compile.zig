@@ -42,6 +42,7 @@ pub const CompileOptions = struct {
     ///       plus a null-terminator can always fit into a u16.
     max_string_literal_codepoints: u15 = lex.default_max_string_literal_codepoints,
     silent_duplicate_control_ids: bool = false,
+    warn_instead_of_error_on_invalid_code_page: bool = false,
 };
 
 pub fn compile(allocator: Allocator, source: []const u8, writer: anytype, options: CompileOptions) !void {
@@ -50,7 +51,9 @@ pub fn compile(allocator: Allocator, source: []const u8, writer: anytype, option
         .source_mappings = options.source_mappings,
         .max_string_literal_codepoints = options.max_string_literal_codepoints,
     });
-    var parser = Parser.init(&lexer);
+    var parser = Parser.init(&lexer, .{
+        .warn_instead_of_error_on_invalid_code_page = options.warn_instead_of_error_on_invalid_code_page,
+    });
     var tree = try parser.parse(allocator, options.diagnostics);
     defer tree.deinit();
 

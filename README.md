@@ -94,6 +94,10 @@ The plan is to use fuzz testing with the `rc` tool as an oracle to ensure that `
 - `resinator` will error on `BITMAP` resources with a color palette that contains too many missing bytes. The particular limit is configurable (note: this being configurable is still TODO) and the default is 4096.
   + The Win32 RC compiler does no checking of this, and will either give an out-of-memory error or just unconditionally write huge amounts of zeroes to the color palette (e.g. if the bit depth of the `.bmp` is 32 and the number of colors used is set to `200,000,000`, then `num_colors * 4` or `800,000,000` bytes will be written to the color palette). Such large amounts of colors are extremely likely be indicative of a malformed bitmap, as bit depths 16, 24, and 32 only use color tables for optimization purposes (["The bmiColors color table is used for optimizing colors used on palette-based devices, and must contain the number of entries specified by the biClrUsed member of the BITMAPINFOHEADER."](https://learn.microsoft.com/en-us/previous-versions//dd183376(v=vs.85))).
   + Note: Enforcing a limit here avoids malformed bitmaps potentially inducing really large `.res` files
+- `resinator` will always error if the code page specified in a `#pragma code_page` directive would overflow a `u32`.
+  + The Win32 RC compiler has different behavior depending on whether or not the value after wrapping on overflow ends up being a known code page ID or not:
+    - If the overflowed `u32` wraps and becomes a known code page ID, then it will error/warn with "Codepage not valid:  ignored" (depending on the `/w` option)
+    - If the overflowed `u32` wraps and does not become a known code page ID, then it will error with 'constant too big' and 'Codepage not integer'
 
 #### Resource data and `.res` filesize limits
 

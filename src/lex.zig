@@ -123,7 +123,10 @@ pub const LexError = error{
     FoundCStyleEscapedQuote,
     CodePagePragmaMissingLeftParen,
     CodePagePragmaMissingRightParen,
+    /// Can be caught and ignored
     CodePagePragmaInvalidCodePage,
+    CodePagePragmaNotInteger,
+    CodePagePragmaOverflow,
     CodePagePragmaUnsupportedCodePage,
     /// Can be caught and ignored
     CodePagePragmaInIncludedFile,
@@ -801,14 +804,14 @@ pub const Lexer = struct {
         }
 
         var num_str: []u8 = command[0..0];
-        while (command.len > 0 and std.ascii.isDigit(command[0])) {
+        while (command.len > 0 and (command[0] != ')' and !std.ascii.isWhitespace(command[0]))) {
             command = command[1..];
             num_str.len += 1;
         }
 
-        if (num_str.len == 0 or num_str[0] == '0') {
+        if (num_str.len == 0) {
             self.error_context_token = token;
-            return error.CodePagePragmaInvalidCodePage;
+            return error.CodePagePragmaNotInteger;
         }
 
         while (command.len > 0 and std.ascii.isWhitespace(command[0])) {
@@ -820,12 +823,41 @@ pub const Lexer = struct {
             return error.CodePagePragmaMissingRightParen;
         }
 
-        const num = std.fmt.parseUnsigned(u16, num_str, 10) catch {
-            self.error_context_token = token;
-            return error.CodePagePragmaInvalidCodePage;
+        // The Win32 compiler behaves fairly strangely around maxInt(u32):
+        // - If the overflowed u32 wraps and becomes a known code page ID, then
+        //   it will error/warn with "Codepage not valid:  ignored" (depending on /w)
+        // - If the overflowed u32 wraps and does not become a known code page ID,
+        //   then it will error with 'constant too big' and 'Codepage not integer'
+        //
+        // Instead of that, we just have a separate error specifically for overflow.
+        const num = parseCodePageNum(num_str) catch |err| switch (err) {
+            error.InvalidCharacter => {
+                self.error_context_token = token;
+                return error.CodePagePragmaNotInteger;
+            },
+            error.Overflow => {
+                self.error_context_token = token;
+                return error.CodePagePragmaOverflow;
+            },
         };
 
-        const code_page = code_pages.CodePage.getByIdentifierEnsureSupported(num) catch |err| switch (err) {
+        // Anything that starts with 0 but does not resolve to 0 is treated as invalid, e.g. 01252
+        if (num_str[0] == '0' and num != 0) {
+            self.error_context_token = token;
+            return error.CodePagePragmaInvalidCodePage;
+        }
+        // Anything that resolves to 0 is treated as 'not an integer' by the Win32 implementation.
+        else if (num == 0) {
+            self.error_context_token = token;
+            return error.CodePagePragmaNotInteger;
+        }
+        // Anything above u16 max is not going to be found since our CodePage enum is backed by a u16.
+        if (num > std.math.maxInt(u16)) {
+            self.error_context_token = token;
+            return error.CodePagePragmaInvalidCodePage;
+        }
+
+        const code_page = code_pages.CodePage.getByIdentifierEnsureSupported(@intCast(u16, num)) catch |err| switch (err) {
             error.InvalidCodePage => {
                 self.error_context_token = token;
                 return error.CodePagePragmaInvalidCodePage;
@@ -853,6 +885,16 @@ pub const Lexer = struct {
         self.current_code_page = code_page;
     }
 
+    fn parseCodePageNum(str: []const u8) !u32 {
+        var x: u32 = 0;
+        for (str) |c| {
+            const digit = try std.fmt.charToDigit(c, 10);
+            if (x != 0) x = try std.math.mul(u32, x, 10);
+            x = try std.math.add(u32, x, digit);
+        }
+        return x;
+    }
+
     pub fn getErrorDetails(self: Self, lex_err: LexError) ErrorDetails {
         const err = switch (lex_err) {
             error.UnfinishedStringLiteral => ErrorDetails.Error.unfinished_string_literal,
@@ -869,6 +911,8 @@ pub const Lexer = struct {
             error.CodePagePragmaMissingLeftParen => ErrorDetails.Error.code_page_pragma_missing_left_paren,
             error.CodePagePragmaMissingRightParen => ErrorDetails.Error.code_page_pragma_missing_right_paren,
             error.CodePagePragmaInvalidCodePage => ErrorDetails.Error.code_page_pragma_invalid_code_page,
+            error.CodePagePragmaNotInteger => ErrorDetails.Error.code_page_pragma_not_integer,
+            error.CodePagePragmaOverflow => ErrorDetails.Error.code_page_pragma_overflow,
             error.CodePagePragmaUnsupportedCodePage => ErrorDetails.Error.code_page_pragma_unsupported_code_page,
             error.CodePagePragmaInIncludedFile => ErrorDetails.Error.code_page_pragma_in_included_file,
         };

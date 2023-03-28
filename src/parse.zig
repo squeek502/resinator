@@ -22,12 +22,18 @@ pub const Parser = struct {
     lexer: *Lexer,
     /// values that need to be initialized per-parse
     state: Parser.State = undefined,
+    options: Parser.Options,
 
     pub const Error = error{ParseError} || Allocator.Error;
 
-    pub fn init(lexer: *Lexer) Parser {
+    pub const Options = struct {
+        warn_instead_of_error_on_invalid_code_page: bool = false,
+    };
+
+    pub fn init(lexer: *Lexer, options: Options) Parser {
         return Parser{
             .lexer = lexer,
+            .options = options,
         };
     }
 
@@ -1588,6 +1594,15 @@ pub const Parser = struct {
                     });
                     continue;
                 },
+                error.CodePagePragmaInvalidCodePage => {
+                    var details = self.lexer.getErrorDetails(err);
+                    if (!self.options.warn_instead_of_error_on_invalid_code_page) {
+                        return self.addErrorDetailsAndFail(details);
+                    }
+                    details.type = .warning;
+                    try self.addErrorDetails(details);
+                    continue;
+                },
                 else => return self.addErrorDetailsAndFail(self.lexer.getErrorDetails(err)),
             };
             break :token token;
@@ -1672,7 +1687,7 @@ fn testParse(source: []const u8, expected_ast_dump: []const u8) !void {
     defer diagnostics.deinit();
     // TODO: test different code pages
     var lexer = Lexer.init(source, .{});
-    var parser = Parser.init(&lexer);
+    var parser = Parser.init(&lexer, .{});
     var tree = parser.parse(allocator, &diagnostics) catch |err| switch (err) {
         error.ParseError => {
             diagnostics.renderToStdErr(std.fs.cwd(), source, null);
@@ -3298,6 +3313,49 @@ test "max dialog controls" {
     );
 }
 
+test "code page pragma" {
+    try testParseErrorDetails(
+        &.{},
+        "#pragma code_page(1252)",
+        null,
+    );
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "invalid or unknown code page in code_page #pragma" }},
+        "#pragma code_page(12)",
+        null,
+    );
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "unsupported code page 'utf7 (id=65000)' in #pragma code_page" }},
+        "#pragma code_page(65000)",
+        null,
+    );
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "code page is not a valid integer in code_page #pragma" }},
+        "#pragma code_page(0)",
+        null,
+    );
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "code page is not a valid integer in code_page #pragma" }},
+        "#pragma code_page(00)",
+        null,
+    );
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "code page is not a valid integer in code_page #pragma" }},
+        "#pragma code_page(123abc)",
+        null,
+    );
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "invalid or unknown code page in code_page #pragma" }},
+        "#pragma code_page(01252)",
+        null,
+    );
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "code page too large in code_page #pragma" }},
+        "#pragma code_page(4294967333)",
+        null,
+    );
+}
+
 const ExpectedErrorDetails = struct {
     str: []const u8,
     type: ErrorDetails.Type,
@@ -3314,7 +3372,7 @@ fn testParseErrorDetails(expected_details: []const ExpectedErrorDetails, source:
 
     const tree: ?*Tree = tree: {
         var lexer = Lexer.init(source, .{});
-        var parser = Parser.init(&lexer);
+        var parser = Parser.init(&lexer, .{});
         var tree = parser.parse(allocator, &diagnostics) catch |err| switch (err) {
             error.OutOfMemory => |e| return e,
             error.ParseError => {

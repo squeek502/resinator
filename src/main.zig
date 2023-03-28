@@ -153,6 +153,7 @@ pub fn main() !void {
         .null_terminate_string_table_strings = options.null_terminate_string_table_strings,
         .max_string_literal_codepoints = options.max_string_literal_codepoints,
         .silent_duplicate_control_ids = options.silent_duplicate_control_ids,
+        .warn_instead_of_error_on_invalid_code_page = options.warn_instead_of_error_on_invalid_code_page,
     }) catch |err| switch (err) {
         error.ParseError, error.CompileError => {
             diagnostics.renderToStdErr(std.fs.cwd(), final_input, mapping_results.mappings);

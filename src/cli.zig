@@ -89,6 +89,7 @@ pub const Options = struct {
     null_terminate_string_table_strings: bool = false,
     max_string_literal_codepoints: u15 = lex.default_max_string_literal_codepoints,
     silent_duplicate_control_ids: bool = false,
+    warn_instead_of_error_on_invalid_code_page: bool = false,
 
     pub const SymbolAction = enum { define, undefine };
 
@@ -444,6 +445,9 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                 arg.name_offset += 1;
             } else if (std.ascii.startsWithIgnoreCase(arg_name, "y")) {
                 options.silent_duplicate_control_ids = true;
+                arg.name_offset += 1;
+            } else if (std.ascii.startsWithIgnoreCase(arg_name, "w")) {
+                options.warn_instead_of_error_on_invalid_code_page = true;
                 arg.name_offset += 1;
             } else if (std.ascii.startsWithIgnoreCase(arg_name, "d")) {
                 const value = arg.value(1, arg_i, args) catch {
