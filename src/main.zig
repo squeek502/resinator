@@ -152,6 +152,7 @@ pub fn main() !void {
         .verbose = options.verbose,
         .null_terminate_string_table_strings = options.null_terminate_string_table_strings,
         .max_string_literal_codepoints = options.max_string_literal_codepoints,
+        .silent_duplicate_control_ids = options.silent_duplicate_control_ids,
     }) catch |err| switch (err) {
         error.ParseError, error.CompileError => {
             diagnostics.renderToStdErr(std.fs.cwd(), final_input, mapping_results.mappings);

@@ -41,6 +41,7 @@ pub const CompileOptions = struct {
     /// Note: This is a u15 to ensure that the maximum number of UTF-16 code units
     ///       plus a null-terminator can always fit into a u16.
     max_string_literal_codepoints: u15 = lex.default_max_string_literal_codepoints,
+    silent_duplicate_control_ids: bool = false,
 };
 
 pub fn compile(allocator: Allocator, source: []const u8, writer: anytype, options: CompileOptions) !void {
@@ -67,6 +68,7 @@ pub fn compile(allocator: Allocator, source: []const u8, writer: anytype, option
         .ignore_include_env_var = options.ignore_include_env_var,
         .extra_include_paths = options.extra_include_paths,
         .null_terminate_string_table_strings = options.null_terminate_string_table_strings,
+        .silent_duplicate_control_ids = options.silent_duplicate_control_ids,
     };
     if (options.default_language_id) |default_language_id| {
         compiler.state.language = res.Language.fromInt(default_language_id);
@@ -86,6 +88,7 @@ pub const Compiler = struct {
     extra_include_paths: []const []const u8,
     ignore_include_env_var: bool,
     null_terminate_string_table_strings: bool,
+    silent_duplicate_control_ids: bool,
 
     pub const State = struct {
         icon_id: u16 = 1,
@@ -1464,19 +1467,20 @@ pub const Compiler = struct {
         };
         const result = controls_by_id.getOrPutAssumeCapacity(control_id_for_map);
         if (result.found_existing) {
-            // TODO: /y option to disable these warnings
-            try self.addErrorDetails(.{
-                .err = .control_id_already_defined,
-                .type = .warning,
-                .token = control.id.getFirstToken(),
-                .extra = .{ .number = control_id_for_map },
-            });
-            try self.addErrorDetails(.{
-                .err = .control_id_already_defined,
-                .type = .note,
-                .token = result.value_ptr.*.id.getFirstToken(),
-                .extra = .{ .number = control_id_for_map },
-            });
+            if (!self.silent_duplicate_control_ids) {
+                try self.addErrorDetails(.{
+                    .err = .control_id_already_defined,
+                    .type = .warning,
+                    .token = control.id.getFirstToken(),
+                    .extra = .{ .number = control_id_for_map },
+                });
+                try self.addErrorDetails(.{
+                    .err = .control_id_already_defined,
+                    .type = .note,
+                    .token = result.value_ptr.*.id.getFirstToken(),
+                    .extra = .{ .number = control_id_for_map },
+                });
+            }
         } else {
             result.value_ptr.* = control;
         }
