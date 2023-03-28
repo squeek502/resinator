@@ -82,6 +82,7 @@ pub const Options = struct {
     default_code_page: ?CodePage = null,
     verbose: bool = false,
     symbols: std.StringArrayHashMapUnmanaged(SymbolAction) = .{},
+    null_terminate_string_table_strings: bool = false,
 
     pub const SymbolAction = enum { define, undefine };
 
@@ -393,6 +394,9 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
             } else if (std.ascii.startsWithIgnoreCase(arg_name, "r")) {
                 // From https://learn.microsoft.com/en-us/windows/win32/menurc/using-rc-the-rc-command-line-
                 // "Ignored. Provided for compatibility with existing makefiles."
+                arg.name_offset += 1;
+            } else if (std.ascii.startsWithIgnoreCase(arg_name, "n")) {
+                options.null_terminate_string_table_strings = true;
                 arg.name_offset += 1;
             } else if (std.ascii.startsWithIgnoreCase(arg_name, "d")) {
                 const value = arg.value(1, arg_i, args) catch {

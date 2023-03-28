@@ -37,6 +37,7 @@ pub const CompileOptions = struct {
     default_language_id: ?u16 = null,
     // TODO: Implement verbose output
     verbose: bool = false,
+    null_terminate_string_table_strings: bool = false,
 };
 
 pub fn compile(allocator: Allocator, source: []const u8, writer: anytype, options: CompileOptions) !void {
@@ -58,6 +59,7 @@ pub fn compile(allocator: Allocator, source: []const u8, writer: anytype, option
         .code_pages = &tree.code_pages,
         .ignore_include_env_var = options.ignore_include_env_var,
         .extra_include_paths = options.extra_include_paths,
+        .null_terminate_string_table_strings = options.null_terminate_string_table_strings,
     };
     if (options.default_language_id) |default_language_id| {
         compiler.state.language = res.Language.fromInt(default_language_id);
@@ -76,6 +78,7 @@ pub const Compiler = struct {
     code_pages: *const CodePageLookup,
     extra_include_paths: []const []const u8,
     ignore_include_env_var: bool,
+    null_terminate_string_table_strings: bool,
 
     pub const State = struct {
         icon_id: u16 = 1,
@@ -2404,6 +2407,24 @@ pub const StringTable = struct {
             }
         }
 
+        fn trimToDoubleNUL(comptime T: type, str: []const T) []const T {
+            var last_was_null = false;
+            for (str, 0..) |c, i| {
+                if (c == 0) {
+                    if (last_was_null) return str[0 .. i - 1];
+                    last_was_null = true;
+                } else {
+                    last_was_null = false;
+                }
+            }
+            return str;
+        }
+
+        test "trimToDoubleNUL" {
+            try std.testing.expectEqualStrings("a\x00b", trimToDoubleNUL(u8, "a\x00b"));
+            try std.testing.expectEqualStrings("a", trimToDoubleNUL(u8, "a\x00\x00b"));
+        }
+
         pub fn writeResData(self: *Block, compiler: *Compiler, language: res.Language, block_id: u16, writer: anytype) !void {
             var data_buffer = std.ArrayList(u8).init(compiler.allocator);
             defer data_buffer.deinit();
@@ -2442,13 +2463,28 @@ pub const StringTable = struct {
                 };
                 defer compiler.allocator.free(utf16_string);
 
-                // String literals are limited to approximately 4097 codepoints (see below comment), so
-                // these UTF-16 encoded strings are limited to approximately 4097 * 2 = 8194
+                const trimmed_string = trim: {
+                    // Two NUL characters in a row act as a terminator
+                    // Note: This is only the case for STRINGTABLE strings
+                    var trimmed = trimToDoubleNUL(u16, utf16_string);
+                    // We also want to trim any trailing NUL characters
+                    break :trim std.mem.trimRight(u16, trimmed, &[_]u16{0});
+                };
+
+                // String literals are limited to approximately 8192 codepoints (see below comment), so
+                // these UTF-16 encoded strings are limited to approximately 8192 * 2 = 16,384
                 // code units (since 2 is the maximum number of UTF-16 code units per codepoint),
                 // which is well within the u16 max.
-                try data_writer.writeIntLittle(u16, @intCast(u16, utf16_string.len));
-                for (utf16_string) |wc| {
+                var string_len_in_utf16_code_units = @intCast(u16, trimmed_string.len);
+                // If the option is set, then a NUL terminator is added unconditionally.
+                // We already trimmed any trailing NULs, so we know it will be a new addition to the string.
+                if (compiler.null_terminate_string_table_strings) string_len_in_utf16_code_units += 1;
+                try data_writer.writeIntLittle(u16, string_len_in_utf16_code_units);
+                for (trimmed_string) |wc| {
                     try data_writer.writeIntLittle(u16, wc);
+                }
+                if (compiler.null_terminate_string_table_strings) {
+                    try data_writer.writeIntLittle(u16, 0);
                 }
 
                 if (i == 15) break;
@@ -2458,13 +2494,13 @@ pub const StringTable = struct {
             // This intCast will never be able to fail due to the length constraints on string literals.
             //
             // - STRINGTABLE resource definitions can can only provide one string literal per index.
-            // - String literals are limited to approximately 4097 codepoints (not fully true
-            //   but close enough to true for this), which means that the approximate maximum number of
-            //   bytes per string literal is 4 * 4097 = 16,388 (since 4 is the maximum number of bytes
-            //   per codepoint).
+            // - String literals are limited to approximately 8192 codepoints (not fully true but close
+            //   enough to true for this, see also /sl CLI option). To be extra safe, let's round up
+            //   to 10,000, which means that the approximate maximum number of bytes per string literal
+            //   is 4 * 10,000 = 40,000 (since 4 is the maximum number of bytes per codepoint).
             // - Each Block/RT_STRING resource includes exactly 16 strings, so the
             //   maximum number of total bytes in a RT_STRING resource's data is approximately
-            //   16 * 16,388 = 262,208 which is well within the u32 max.
+            //   16 * 40,000 = 640,000 which is well within the u32 max.
             //
             // Note: The string literal maximum length is enforced by the lexer.
             const data_size = @intCast(u32, data_buffer.items.len);
@@ -3215,6 +3251,20 @@ test "basic stringtable" {
     try testCompileWithOutput(
         "STRINGTABLE { 1 \"hello \x93world\x94 i guess\" }",
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00J\x00\x00\x00 \x00\x00\x00\xff\xff\x06\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x15\x00h\x00e\x00l\x00l\x00o\x00 \x00\x1c w\x00o\x00r\x00l\x00d\x00\x1d  \x00i\x00 \x00g\x00u\x00e\x00s\x00s\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+        std.fs.cwd(),
+    );
+
+    // 1. single escaped NUL character *does not* act as a terminator
+    // 2. two escaped NUL characters *do* act as a terminator
+    // 3. trailing escaped NUL characters are trimmed unconditionally
+    try testCompileWithOutput(
+        \\STRINGTABLE {
+        \\ 1 "foo\000bar"
+        \\ 2 "foo\000\000bar"
+        \\ 3 "foo\000"
+        \\}
+    ,
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00:\x00\x00\x00 \x00\x00\x00\xff\xff\x06\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x07\x00f\x00o\x00o\x00\x00\x00b\x00a\x00r\x00\x03\x00f\x00o\x00o\x00\x03\x00f\x00o\x00o\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
         std.fs.cwd(),
     );
 }

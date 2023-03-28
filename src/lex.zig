@@ -313,6 +313,13 @@ pub const Lexer = struct {
         //       length for its 'string literal too long' errors; it isn't easily
         //       explained or intuitive (it's sort-of pre-parsed byte length but with
         //       a few of exceptions/edge cases).
+        //
+        // It also behaves strangely with non-ASCII codepoints, e.g. even though the default
+        // limit is 4097, you can only have 4094 € codepoints (1 UTF-16 code unit each),
+        // and 2048 𐐷 codepoints (2 UTF-16 code units each).
+        //
+        // TODO: Understand this more, bring it more in line with how the Win32 limits work.
+        //       Alternatively, do something that makes more sense but may be more permissive.
         var string_literal_length: usize = 0;
         var string_literal_collapsing_whitespace: bool = false;
         while (self.current_code_page.codepointAt(self.index, self.buffer)) |codepoint| : (self.index += codepoint.byte_len) {
