@@ -1269,6 +1269,11 @@ pub const Compiler = struct {
             else => |e| return e,
         };
 
+        var controls_by_id = std.AutoHashMap(u32, *const Node.ControlStatement).init(self.allocator);
+        // Number of controls are guaranteed by the parser to be within maxInt(u16).
+        try controls_by_id.ensureTotalCapacity(@intCast(u16, node.controls.len));
+        defer controls_by_id.deinit();
+
         for (node.controls) |control_node| {
             const control = @fieldParentPtr(Node.ControlStatement, "base", control_node);
 
@@ -1278,6 +1283,7 @@ pub const Compiler = struct {
                 resource,
                 // We know the data_buffer len is limited to u32 max.
                 @intCast(u32, data_buffer.items.len),
+                &controls_by_id,
             ) catch |err| switch (err) {
                 error.NoSpaceLeft => {
                     try self.addErrorDetails(.{
@@ -1381,6 +1387,7 @@ pub const Compiler = struct {
         data_writer: anytype,
         resource: Resource,
         bytes_written_so_far: u32,
+        controls_by_id: *std.AutoHashMap(u32, *const Node.ControlStatement),
     ) !void {
         const control_type = rc.Control.map.get(control.type.slice(self.source)).?;
 
@@ -1448,6 +1455,30 @@ pub const Compiler = struct {
             .dialog => try data_writer.writeIntLittle(u16, control_id.asWord()),
             .dialogex => try data_writer.writeIntLittle(u32, control_id.value),
             else => unreachable,
+        }
+
+        const control_id_for_map: u32 = switch (resource) {
+            .dialog => control_id.asWord(),
+            .dialogex => control_id.value,
+            else => unreachable,
+        };
+        const result = controls_by_id.getOrPutAssumeCapacity(control_id_for_map);
+        if (result.found_existing) {
+            // TODO: /y option to disable these warnings
+            try self.addErrorDetails(.{
+                .err = .control_id_already_defined,
+                .type = .warning,
+                .token = control.id.getFirstToken(),
+                .extra = .{ .number = control_id_for_map },
+            });
+            try self.addErrorDetails(.{
+                .err = .control_id_already_defined,
+                .type = .note,
+                .token = result.value_ptr.*.id.getFirstToken(),
+                .extra = .{ .number = control_id_for_map },
+            });
+        } else {
+            result.value_ptr.* = control;
         }
 
         if (res.ControlClass.fromControl(control_type)) |control_class| {
@@ -3459,7 +3490,13 @@ test "dialog, dialogex resource" {
         std.fs.cwd(),
     );
 
-    try testCompileWithOutput(
+    try testCompileErrorDetailsWithDir(
+        &.{
+            .{ .type = .warning, .str = "control with id 905 already defined for this dialog" },
+            .{ .type = .note, .str = "previous definition of control with id 905 here" },
+            .{ .type = .warning, .str = "control with id 905 already defined for this dialog" },
+            .{ .type = .note, .str = "previous definition of control with id 905 here" },
+        },
         \\1 DIALOGEX 1, 2, 3, 4
         \\{
         \\    CONTROL "mytext",, 905,, "\x42UTTON",, 1,, 2 3 4 0, 0, 100

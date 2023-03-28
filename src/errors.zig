@@ -300,6 +300,8 @@ pub const ErrorDetails = struct {
         control_extra_data_size_exceeds_max,
         version_node_size_exceeds_max,
         number_expression_as_filename,
+        /// `number` is populated and contains the control ID that is a duplicate
+        control_id_already_defined,
 
         // Literals
         /// `number` is populated
@@ -522,6 +524,10 @@ pub const ErrorDetails = struct {
             .number_expression_as_filename => switch (self.type) {
                 .err, .warning => return writer.writeAll("filename cannot be specified using a number expression, consider using a quoted string instead"),
                 .note => return writer.print("the Win32 RC compiler would evaluate this number expression as the filename '{s}'", .{strings[self.extra.number]}),
+            },
+            .control_id_already_defined => switch (self.type) {
+                .err, .warning => return writer.print("control with id {d} already defined for this dialog", .{self.extra.number}),
+                .note => return writer.print("previous definition of control with id {d} here", .{self.extra.number}),
             },
             .rc_would_miscompile_codepoint_byte_swap => switch (self.type) {
                 .err, .warning => return writer.print("codepoint U+{X} within a string literal would be miscompiled by the Win32 RC compiler (the bytes of the UTF-16 code unit would be swapped)", .{self.extra.number}),
