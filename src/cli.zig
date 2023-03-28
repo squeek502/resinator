@@ -604,38 +604,43 @@ pub fn renderErrorMessage(writer: anytype, colors: utils.Colors, err_details: Di
     colors.set(writer, .reset);
 }
 
-fn testParse(args: []const []const u8, expected: Options) !void {
-    var diagnostics = Diagnostics.init(std.testing.allocator);
-    defer diagnostics.deinit();
+fn testParse(args: []const []const u8) !Options {
+    return (try testParseOutput(args, "")).?;
+}
 
-    var options = parse(std.testing.allocator, args, &diagnostics) catch |err| {
-        diagnostics.renderToStdErr(args);
-        return err;
-    };
-    defer options.deinit();
-
-    try std.testing.expectEqualDeep(expected, options);
+fn testParseWarning(args: []const []const u8, expected_output: []const u8) !Options {
+    return (try testParseOutput(args, expected_output)).?;
 }
 
 fn testParseError(args: []const []const u8, expected_output: []const u8) !void {
+    var maybe_options = try testParseOutput(args, expected_output);
+    if (maybe_options != null) {
+        std.debug.print("expected error, got options: {}\n", .{maybe_options.?});
+        maybe_options.?.deinit();
+        return error.TestExpectedError;
+    }
+}
+
+fn testParseOutput(args: []const []const u8, expected_output: []const u8) !?Options {
     var diagnostics = Diagnostics.init(std.testing.allocator);
     defer diagnostics.deinit();
 
+    var output = std.ArrayList(u8).init(std.testing.allocator);
+    defer output.deinit();
+
     var options = parse(std.testing.allocator, args, &diagnostics) catch |err| switch (err) {
         error.ParseError => {
-            var output = std.ArrayList(u8).init(std.testing.allocator);
-            defer output.deinit();
-
             try diagnostics.renderToWriter(args, output.writer(), .no_color);
             try std.testing.expectEqualStrings(expected_output, output.items);
-            return;
+            return null;
         },
         else => |e| return e,
     };
-    defer options.deinit();
+    errdefer options.deinit();
 
-    std.debug.print("expected error, got options: {}\n", .{options});
-    return error.TestExpectedError;
+    try diagnostics.renderToWriter(args, output.writer(), .no_color);
+    try std.testing.expectEqualStrings(expected_output, output.items);
+    return options;
 }
 
 test "parse errors: basic" {
@@ -718,4 +723,92 @@ test "parse errors: /ln" {
         \\     ~~~^~~~~~~
         \\
     );
+}
+
+test "parse: options" {
+    {
+        var options = try testParse(&.{ "foo.exe", "/v", "foo.rc" });
+        defer options.deinit();
+
+        try std.testing.expectEqual(true, options.verbose);
+        try std.testing.expectEqualStrings("foo.rc", options.input_filename);
+        try std.testing.expectEqualStrings("foo.res", options.output_filename);
+    }
+    {
+        var options = try testParse(&.{ "foo.exe", "/vx", "foo.rc" });
+        defer options.deinit();
+
+        try std.testing.expectEqual(true, options.verbose);
+        try std.testing.expectEqual(true, options.ignore_include_env_var);
+        try std.testing.expectEqualStrings("foo.rc", options.input_filename);
+        try std.testing.expectEqualStrings("foo.res", options.output_filename);
+    }
+    {
+        var options = try testParse(&.{ "foo.exe", "/xv", "foo.rc" });
+        defer options.deinit();
+
+        try std.testing.expectEqual(true, options.verbose);
+        try std.testing.expectEqual(true, options.ignore_include_env_var);
+        try std.testing.expectEqualStrings("foo.rc", options.input_filename);
+        try std.testing.expectEqualStrings("foo.res", options.output_filename);
+    }
+    {
+        var options = try testParse(&.{ "foo.exe", "/xvFObar.res", "foo.rc" });
+        defer options.deinit();
+
+        try std.testing.expectEqual(true, options.verbose);
+        try std.testing.expectEqual(true, options.ignore_include_env_var);
+        try std.testing.expectEqualStrings("foo.rc", options.input_filename);
+        try std.testing.expectEqualStrings("bar.res", options.output_filename);
+    }
+}
+
+test "parse: define and undefine" {
+    {
+        var options = try testParse(&.{ "foo.exe", "/dfoo", "foo.rc" });
+        defer options.deinit();
+
+        const action = options.symbols.get("foo").?;
+        try std.testing.expectEqual(Options.SymbolAction.define, action);
+    }
+    {
+        var options = try testParse(&.{ "foo.exe", "/ufoo", "foo.rc" });
+        defer options.deinit();
+
+        const action = options.symbols.get("foo").?;
+        try std.testing.expectEqual(Options.SymbolAction.undefine, action);
+    }
+    {
+        // Once undefined, future defines are ignored
+        var options = try testParse(&.{ "foo.exe", "/ufoo", "/dfoo", "foo.rc" });
+        defer options.deinit();
+
+        const action = options.symbols.get("foo").?;
+        try std.testing.expectEqual(Options.SymbolAction.undefine, action);
+    }
+    {
+        // Undefined always takes precedence
+        var options = try testParse(&.{ "foo.exe", "/dfoo", "/ufoo", "/dfoo", "foo.rc" });
+        defer options.deinit();
+
+        const action = options.symbols.get("foo").?;
+        try std.testing.expectEqual(Options.SymbolAction.undefine, action);
+    }
+    {
+        // Warn + ignore invalid identifiers
+        var options = try testParseWarning(
+            &.{ "foo.exe", "/dfoo bar", "/u", "0leadingdigit", "foo.rc" },
+            \\<cli>: warning: symbol "foo bar" is not a valid identifier and therefore cannot be defined
+            \\ ... /dfoo bar ...
+            \\     ~~^~~~~~~
+            \\<cli>: warning: symbol "0leadingdigit" is not a valid identifier and therefore cannot be undefined
+            \\ ... /u 0leadingdigit ...
+            \\     ~~~^~~~~~~~~~~~~
+            \\
+            ,
+        );
+        defer options.deinit();
+
+        try std.testing.expectEqual(@as(usize, 0), options.symbols.count());
+    }
 }
