@@ -2,7 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const Node = @import("ast.zig").Node;
-const Lexer = @import("lex.zig").Lexer;
+const lex = @import("lex.zig");
 const Parser = @import("parse.zig").Parser;
 const Resource = @import("rc.zig").Resource;
 const Token = @import("lex.zig").Token;
@@ -38,10 +38,17 @@ pub const CompileOptions = struct {
     // TODO: Implement verbose output
     verbose: bool = false,
     null_terminate_string_table_strings: bool = false,
+    /// Note: This is a u15 to ensure that the maximum number of UTF-16 code units
+    ///       plus a null-terminator can always fit into a u16.
+    max_string_literal_codepoints: u15 = lex.default_max_string_literal_codepoints,
 };
 
 pub fn compile(allocator: Allocator, source: []const u8, writer: anytype, options: CompileOptions) !void {
-    var lexer = Lexer.init(source, options.default_code_page, options.source_mappings);
+    var lexer = lex.Lexer.init(source, .{
+        .default_code_page = options.default_code_page,
+        .source_mappings = options.source_mappings,
+        .max_string_literal_codepoints = options.max_string_literal_codepoints,
+    });
     var parser = Parser.init(&lexer);
     var tree = try parser.parse(allocator, options.diagnostics);
     defer tree.deinit();
@@ -2471,10 +2478,10 @@ pub const StringTable = struct {
                     break :trim std.mem.trimRight(u16, trimmed, &[_]u16{0});
                 };
 
-                // String literals are limited to approximately 8192 codepoints (see below comment), so
-                // these UTF-16 encoded strings are limited to approximately 8192 * 2 = 16,384
-                // code units (since 2 is the maximum number of UTF-16 code units per codepoint),
-                // which is well within the u16 max.
+                // String literals are limited to maxInt(u15) codepoints, so these UTF-16 encoded
+                // strings are limited to maxInt(u15) * 2 = 65,534 code units (since 2 is the
+                // maximum number of UTF-16 code units per codepoint).
+                // This leaves room for exactly one NUL terminator.
                 var string_len_in_utf16_code_units = @intCast(u16, trimmed_string.len);
                 // If the option is set, then a NUL terminator is added unconditionally.
                 // We already trimmed any trailing NULs, so we know it will be a new addition to the string.
@@ -2494,13 +2501,12 @@ pub const StringTable = struct {
             // This intCast will never be able to fail due to the length constraints on string literals.
             //
             // - STRINGTABLE resource definitions can can only provide one string literal per index.
-            // - String literals are limited to approximately 8192 codepoints (not fully true but close
-            //   enough to true for this, see also /sl CLI option). To be extra safe, let's round up
-            //   to 10,000, which means that the approximate maximum number of bytes per string literal
-            //   is 4 * 10,000 = 40,000 (since 4 is the maximum number of bytes per codepoint).
-            // - Each Block/RT_STRING resource includes exactly 16 strings, so the
-            //   maximum number of total bytes in a RT_STRING resource's data is approximately
-            //   16 * 40,000 = 640,000 which is well within the u32 max.
+            // - STRINGTABLE strings are limited to maxInt(u16) UTF-16 code units (see 'string_len_in_utf16_code_units'
+            //   above), which means that the maximum number of bytes per string literal is
+            //   2 * maxInt(u16) = 131,070 (since there are 2 bytes per UTF-16 code unit).
+            // - Each Block/RT_STRING resource includes exactly 16 strings and each have a 2 byte
+            //   length field, so the maximum number of total bytes in a RT_STRING resource's data is
+            //   16 * (131,070 + 2) = 2,097,152 which is well within the u32 max.
             //
             // Note: The string literal maximum length is enforced by the lexer.
             const data_size = @intCast(u32, data_buffer.items.len);

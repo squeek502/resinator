@@ -151,6 +151,7 @@ pub fn main() !void {
         .default_code_page = options.default_code_page orelse .windows1252,
         .verbose = options.verbose,
         .null_terminate_string_table_strings = options.null_terminate_string_table_strings,
+        .max_string_literal_codepoints = options.max_string_literal_codepoints,
     }) catch |err| switch (err) {
         error.ParseError, error.CompileError => {
             diagnostics.renderToStdErr(std.fs.cwd(), final_input, mapping_results.mappings);

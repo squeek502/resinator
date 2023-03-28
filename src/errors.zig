@@ -314,7 +314,7 @@ pub const ErrorDetails = struct {
                 return writer.print("unfinished string literal at '{s}', expected closing '\"'", .{self.token.nameForErrorDisplay(source)});
             },
             .string_literal_too_long => {
-                return writer.writeAll("string literal too long (max is 4097 characters)");
+                return writer.print("string literal too long (max is currently {} characters)", .{self.extra.number});
             },
             .illegal_byte => {
                 const byte = self.token.slice(source)[0];

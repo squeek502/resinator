@@ -4,6 +4,10 @@ const lang = @import("lang.zig");
 const utils = @import("utils.zig");
 const res = @import("res.zig");
 const Allocator = std.mem.Allocator;
+const lex = @import("lex.zig");
+
+/// This is what /SL 100 will set the maximum string literal length to
+pub const max_string_literal_length_100_percent = 8192;
 
 pub const Diagnostics = struct {
     errors: std.ArrayListUnmanaged(ErrorDetails) = .{},
@@ -83,6 +87,7 @@ pub const Options = struct {
     verbose: bool = false,
     symbols: std.StringArrayHashMapUnmanaged(SymbolAction) = .{},
     null_terminate_string_table_strings: bool = false,
+    max_string_literal_codepoints: u15 = lex.default_max_string_literal_codepoints,
 
     pub const SymbolAction = enum { define, undefine };
 
@@ -281,6 +286,44 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                 };
                 output_filename_context = .{ .index = arg_i, .arg = arg, .value = value };
                 output_filename = value.slice;
+                arg_i += value.index_increment;
+                continue :next_arg;
+            } else if (std.ascii.startsWithIgnoreCase(arg_name, "sl")) {
+                const value = arg.value(2, arg_i, args) catch {
+                    var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = arg.missingSpan() };
+                    var msg_writer = err_details.msg.writer(allocator);
+                    try msg_writer.print("missing language tag after {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(2) });
+                    try diagnostics.append(err_details);
+                    arg_i += 1;
+                    break :next_arg;
+                };
+                const percent_str = value.slice;
+                const percent: u32 = parsePercent(percent_str) catch {
+                    var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = value.argSpan(arg) };
+                    var msg_writer = err_details.msg.writer(allocator);
+                    try msg_writer.print("invalid percent format '{s}'", .{percent_str});
+                    try diagnostics.append(err_details);
+                    var note_details = Diagnostics.ErrorDetails{ .type = .note, .print_args = false, .arg_index = arg_i };
+                    var note_writer = note_details.msg.writer(allocator);
+                    try note_writer.writeAll("string length percent must be an integer between 1 and 100 (inclusive)");
+                    try diagnostics.append(note_details);
+                    arg_i += value.index_increment;
+                    continue :next_arg;
+                };
+                if (percent == 0 or percent > 100) {
+                    var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = value.argSpan(arg) };
+                    var msg_writer = err_details.msg.writer(allocator);
+                    try msg_writer.print("percent out of range: {} (parsed from '{s}')", .{ percent, percent_str });
+                    try diagnostics.append(err_details);
+                    var note_details = Diagnostics.ErrorDetails{ .type = .note, .print_args = false, .arg_index = arg_i };
+                    var note_writer = note_details.msg.writer(allocator);
+                    try note_writer.writeAll("string length percent must be an integer between 1 and 100 (inclusive)");
+                    try diagnostics.append(note_details);
+                    arg_i += value.index_increment;
+                    continue :next_arg;
+                }
+                const percent_float = @intToFloat(f32, percent) / 100;
+                options.max_string_literal_codepoints = @floatToInt(u15, percent_float * max_string_literal_length_100_percent);
                 arg_i += value.index_increment;
                 continue :next_arg;
             } else if (std.ascii.startsWithIgnoreCase(arg_name, "ln")) {
@@ -521,6 +564,67 @@ pub fn isValidIdentifier(str: []const u8) bool {
         else => return false,
     };
     return true;
+}
+
+/// This function is specific to how the Win32 RC command line interprets
+/// max string literal length percent.
+/// - Wraps on overflow of u32
+/// - Stops parsing on any invalid hexadecimal digits
+/// - Errors if a digit is not the first char
+/// - `-` (negative) prefix is allowed
+pub fn parsePercent(str: []const u8) error{InvalidFormat}!u32 {
+    var result: u32 = 0;
+    const radix: u8 = 10;
+    var buf = str;
+
+    const Prefix = enum { none, minus };
+    var prefix: Prefix = .none;
+    switch (buf[0]) {
+        '-' => {
+            prefix = .minus;
+            buf = buf[1..];
+        },
+        else => {},
+    }
+
+    for (buf, 0..) |c, i| {
+        const digit = switch (c) {
+            // On invalid digit for the radix, just stop parsing but don't fail
+            '0'...'9' => std.fmt.charToDigit(c, radix) catch break,
+            else => {
+                // First digit must be valid
+                if (i == 0) {
+                    return error.InvalidFormat;
+                }
+                break;
+            },
+        };
+
+        if (result != 0) {
+            result *%= radix;
+        }
+        result +%= digit;
+    }
+
+    switch (prefix) {
+        .none => {},
+        .minus => result = 0 -% result,
+    }
+
+    return result;
+}
+
+test parsePercent {
+    try std.testing.expectEqual(@as(u32, 16), try parsePercent("16"));
+    try std.testing.expectEqual(@as(u32, 0), try parsePercent("0x1A"));
+    try std.testing.expectEqual(@as(u32, 0x1), try parsePercent("1zzzz"));
+    try std.testing.expectEqual(@as(u32, 0xffffffff), try parsePercent("-1"));
+    try std.testing.expectEqual(@as(u32, 0xfffffff0), try parsePercent("-16"));
+    try std.testing.expectEqual(@as(u32, 1), try parsePercent("4294967297"));
+    try std.testing.expectError(error.InvalidFormat, parsePercent("--1"));
+    try std.testing.expectError(error.InvalidFormat, parsePercent("ha"));
+    try std.testing.expectError(error.InvalidFormat, parsePercent("¹"));
+    try std.testing.expectError(error.InvalidFormat, parsePercent("~1"));
 }
 
 pub fn renderErrorMessage(writer: anytype, colors: utils.Colors, err_details: Diagnostics.ErrorDetails, args: []const []const u8) !void {
@@ -814,5 +918,48 @@ test "parse: define and undefine" {
         defer options.deinit();
 
         try std.testing.expectEqual(@as(usize, 0), options.symbols.count());
+    }
+}
+
+test "parse: /sl" {
+    try testParseError(&.{ "foo.exe", "/sl", "0", "foo.rc" },
+        \\<cli>: error: percent out of range: 0 (parsed from '0')
+        \\ ... /sl 0 ...
+        \\     ~~~~^
+        \\<cli>: note: string length percent must be an integer between 1 and 100 (inclusive)
+        \\
+        \\
+    );
+    try testParseError(&.{ "foo.exe", "/sl", "abcd", "foo.rc" },
+        \\<cli>: error: invalid percent format 'abcd'
+        \\ ... /sl abcd ...
+        \\     ~~~~^~~~
+        \\<cli>: note: string length percent must be an integer between 1 and 100 (inclusive)
+        \\
+        \\
+    );
+    {
+        var options = try testParse(&.{ "foo.exe", "foo.rc" });
+        defer options.deinit();
+
+        try std.testing.expectEqual(@as(u15, lex.default_max_string_literal_codepoints), options.max_string_literal_codepoints);
+    }
+    {
+        var options = try testParse(&.{ "foo.exe", "/sl100", "foo.rc" });
+        defer options.deinit();
+
+        try std.testing.expectEqual(@as(u15, max_string_literal_length_100_percent), options.max_string_literal_codepoints);
+    }
+    {
+        var options = try testParse(&.{ "foo.exe", "-SL33", "foo.rc" });
+        defer options.deinit();
+
+        try std.testing.expectEqual(@as(u15, 2703), options.max_string_literal_codepoints);
+    }
+    {
+        var options = try testParse(&.{ "foo.exe", "/sl15", "foo.rc" });
+        defer options.deinit();
+
+        try std.testing.expectEqual(@as(u15, 1228), options.max_string_literal_codepoints);
     }
 }

@@ -13,6 +13,8 @@ const SourceMappings = @import("source_mapping.zig").SourceMappings;
 
 const dumpTokensDuringTests = false;
 
+pub const default_max_string_literal_codepoints = 4097;
+
 pub const Token = struct {
     id: Id,
     start: usize,
@@ -137,17 +139,23 @@ pub const Lexer = struct {
     error_context_token: ?Token = null,
     current_code_page: CodePage,
     source_mappings: ?*SourceMappings,
-
-    pub const string_literal_length_limit = 4097;
+    max_string_literal_codepoints: u15,
 
     pub const Error = LexError;
 
-    pub fn init(buffer: []const u8, default_code_page: CodePage, source_mappings: ?*SourceMappings) Self {
+    pub const LexerOptions = struct {
+        default_code_page: CodePage = .windows1252,
+        source_mappings: ?*SourceMappings = null,
+        max_string_literal_codepoints: u15 = default_max_string_literal_codepoints,
+    };
+
+    pub fn init(buffer: []const u8, options: LexerOptions) Self {
         return Self{
             .buffer = buffer,
             .index = 0,
-            .current_code_page = default_code_page,
-            .source_mappings = source_mappings,
+            .current_code_page = options.default_code_page,
+            .source_mappings = options.source_mappings,
+            .max_string_literal_codepoints = options.max_string_literal_codepoints,
         };
     }
 
@@ -653,7 +661,7 @@ pub const Lexer = struct {
         }
 
         if (result.id == .quoted_ascii_string or result.id == .quoted_wide_string) {
-            if (string_literal_length > string_literal_length_limit) {
+            if (string_literal_length > self.max_string_literal_codepoints) {
                 self.error_context_token = result;
                 return LexError.StringLiteralTooLong;
             }
@@ -848,7 +856,11 @@ pub const Lexer = struct {
     pub fn getErrorDetails(self: Self, lex_err: LexError) ErrorDetails {
         const err = switch (lex_err) {
             error.UnfinishedStringLiteral => ErrorDetails.Error.unfinished_string_literal,
-            error.StringLiteralTooLong => ErrorDetails.Error.string_literal_too_long,
+            error.StringLiteralTooLong => return .{
+                .err = .string_literal_too_long,
+                .token = self.error_context_token.?,
+                .extra = .{ .number = self.max_string_literal_codepoints },
+            },
             error.IllegalByte => ErrorDetails.Error.illegal_byte,
             error.IllegalByteOutsideStringLiterals => ErrorDetails.Error.illegal_byte_outside_string_literals,
             error.IllegalByteOrderMark => ErrorDetails.Error.illegal_byte_order_mark,
@@ -868,7 +880,7 @@ pub const Lexer = struct {
 };
 
 fn testLexNormal(source: []const u8, expected_tokens: []const Token.Id) !void {
-    var lexer = Lexer.init(source, CodePage.windows1252, null);
+    var lexer = Lexer.init(source, .{});
     if (dumpTokensDuringTests) std.debug.print("\n----------------------\n{s}\n----------------------\n", .{lexer.buffer});
     for (expected_tokens) |expected_token_id| {
         const token = try lexer.nextNormal();
@@ -900,7 +912,7 @@ test "normal: string literals" {
 test "superscript chars and code pages" {
     const firstToken = struct {
         pub fn firstToken(source: []const u8, default_code_page: CodePage, comptime lex_method: Lexer.LexMethod) LexError!Token {
-            var lexer = Lexer.init(source, default_code_page, null);
+            var lexer = Lexer.init(source, .{ .default_code_page = default_code_page });
             return lexer.next(lex_method);
         }
     }.firstToken;

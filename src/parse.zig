@@ -1671,7 +1671,7 @@ fn testParse(source: []const u8, expected_ast_dump: []const u8) !void {
     var diagnostics = Diagnostics.init(allocator);
     defer diagnostics.deinit();
     // TODO: test different code pages
-    var lexer = Lexer.init(source, .windows1252, null);
+    var lexer = Lexer.init(source, .{});
     var parser = Parser.init(&lexer);
     var tree = parser.parse(allocator, &diagnostics) catch |err| switch (err) {
         error.ParseError => {
@@ -3313,7 +3313,7 @@ fn testParseErrorDetails(expected_details: []const ExpectedErrorDetails, source:
     } else false;
 
     const tree: ?*Tree = tree: {
-        var lexer = Lexer.init(source, .windows1252, null);
+        var lexer = Lexer.init(source, .{});
         var parser = Parser.init(&lexer);
         var tree = parser.parse(allocator, &diagnostics) catch |err| switch (err) {
             error.OutOfMemory => |e| return e,
