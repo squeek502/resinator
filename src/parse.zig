@@ -3320,7 +3320,7 @@ test "code page pragma" {
         null,
     );
     try testParseErrorDetails(
-        &.{.{ .type = .err, .str = "invalid or unknown code page in code_page #pragma" }},
+        &.{.{ .type = .err, .str = "invalid or unknown code page in #pragma code_page" }},
         "#pragma code_page(12)",
         null,
     );
@@ -3330,27 +3330,27 @@ test "code page pragma" {
         null,
     );
     try testParseErrorDetails(
-        &.{.{ .type = .err, .str = "code page is not a valid integer in code_page #pragma" }},
+        &.{.{ .type = .err, .str = "code page is not a valid integer in #pragma code_page" }},
         "#pragma code_page(0)",
         null,
     );
     try testParseErrorDetails(
-        &.{.{ .type = .err, .str = "code page is not a valid integer in code_page #pragma" }},
+        &.{.{ .type = .err, .str = "code page is not a valid integer in #pragma code_page" }},
         "#pragma code_page(00)",
         null,
     );
     try testParseErrorDetails(
-        &.{.{ .type = .err, .str = "code page is not a valid integer in code_page #pragma" }},
+        &.{.{ .type = .err, .str = "code page is not a valid integer in #pragma code_page" }},
         "#pragma code_page(123abc)",
         null,
     );
     try testParseErrorDetails(
-        &.{.{ .type = .err, .str = "invalid or unknown code page in code_page #pragma" }},
+        &.{.{ .type = .err, .str = "invalid or unknown code page in #pragma code_page" }},
         "#pragma code_page(01252)",
         null,
     );
     try testParseErrorDetails(
-        &.{.{ .type = .err, .str = "code page too large in code_page #pragma" }},
+        &.{.{ .type = .err, .str = "code page too large in #pragma code_page" }},
         "#pragma code_page(4294967333)",
         null,
     );

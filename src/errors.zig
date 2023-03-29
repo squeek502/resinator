@@ -338,19 +338,19 @@ pub const ErrorDetails = struct {
                 return writer.writeAll("escaping quotes with \\\" is not allowed (use \"\" instead)");
             },
             .code_page_pragma_missing_left_paren => {
-                return writer.writeAll("expected left parenthesis after 'code_page' in code_page #pragma");
+                return writer.writeAll("expected left parenthesis after 'code_page' in #pragma code_page");
             },
             .code_page_pragma_missing_right_paren => {
-                return writer.writeAll("expected right parenthesis after '<number>' in code_page #pragma");
+                return writer.writeAll("expected right parenthesis after '<number>' in #pragma code_page");
             },
             .code_page_pragma_invalid_code_page => {
-                return writer.writeAll("invalid or unknown code page in code_page #pragma");
+                return writer.writeAll("invalid or unknown code page in #pragma code_page");
             },
             .code_page_pragma_not_integer => {
-                return writer.writeAll("code page is not a valid integer in code_page #pragma");
+                return writer.writeAll("code page is not a valid integer in #pragma code_page");
             },
             .code_page_pragma_overflow => {
-                return writer.writeAll("code page too large in code_page #pragma");
+                return writer.writeAll("code page too large in #pragma code_page");
             },
             .code_page_pragma_unsupported_code_page => {
                 // We know that the token slice is a well-formed #pragma code_page(N), so
