@@ -210,6 +210,13 @@ pub const Arg = struct {
         };
     }
 
+    pub fn optionSpan(self: Arg) Diagnostics.ErrorDetails.ArgSpan {
+        return .{
+            .name_offset = self.name_offset,
+            .prefix_len = self.prefixSlice().len,
+        };
+    }
+
     pub const Value = struct {
         slice: []const u8,
         index_increment: u2 = 1,
@@ -280,6 +287,35 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
             } else if (std.ascii.startsWithIgnoreCase(arg_name, "nologo")) {
                 // No-op, we don't display any 'logo' to suppress
                 arg.name_offset += "nologo".len;
+            }
+            // Unsupported MUI options that need a value
+            else if (std.ascii.startsWithIgnoreCase(arg_name, "fm") or
+                std.ascii.startsWithIgnoreCase(arg_name, "gn") or
+                std.ascii.startsWithIgnoreCase(arg_name, "g2"))
+            {
+                const value = arg.value(2, arg_i, args) catch no_value: {
+                    var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = arg.missingSpan() };
+                    var msg_writer = err_details.msg.writer(allocator);
+                    try msg_writer.print("missing value after {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(2) });
+                    try diagnostics.append(err_details);
+                    // dummy zero-length slice starting where the value would have been
+                    const value_start = arg.name_offset + 2;
+                    break :no_value Arg.Value{ .slice = arg.full[value_start..value_start] };
+                };
+                var err_details = Diagnostics.ErrorDetails{ .type = .err, .arg_index = arg_i, .arg_span = arg.optionSpan() };
+                var msg_writer = err_details.msg.writer(allocator);
+                try msg_writer.print("the {s}{s} option is unsupported", .{ arg.prefixSlice(), arg.optionWithoutPrefix(2) });
+                try diagnostics.append(err_details);
+                arg_i += value.index_increment;
+                continue :next_arg;
+            }
+            // Unsupported MUI options that do not need a value
+            else if (std.ascii.startsWithIgnoreCase(arg_name, "g1")) {
+                var err_details = Diagnostics.ErrorDetails{ .type = .err, .arg_index = arg_i, .arg_span = arg.optionSpan() };
+                var msg_writer = err_details.msg.writer(allocator);
+                try msg_writer.print("the {s}{s} option is unsupported", .{ arg.prefixSlice(), arg.optionWithoutPrefix(2) });
+                try diagnostics.append(err_details);
+                arg.name_offset += 2;
             } else if (std.ascii.startsWithIgnoreCase(arg_name, "fo")) {
                 const value = arg.value(2, arg_i, args) catch {
                     var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = arg.missingSpan() };
@@ -375,6 +411,26 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                     arg_i += value.index_increment;
                     continue :next_arg;
                 };
+                arg_i += value.index_increment;
+                continue :next_arg;
+            }
+            // 1 char unsupported MUI options that need a value
+            else if (std.ascii.startsWithIgnoreCase(arg_name, "q") or
+                std.ascii.startsWithIgnoreCase(arg_name, "g"))
+            {
+                const value = arg.value(1, arg_i, args) catch no_value: {
+                    var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = arg.missingSpan() };
+                    var msg_writer = err_details.msg.writer(allocator);
+                    try msg_writer.print("missing value after {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(1) });
+                    try diagnostics.append(err_details);
+                    // dummy zero-length slice starting where the value would have been
+                    const value_start = arg.name_offset + 1;
+                    break :no_value Arg.Value{ .slice = arg.full[value_start..value_start] };
+                };
+                var err_details = Diagnostics.ErrorDetails{ .type = .err, .arg_index = arg_i, .arg_span = arg.optionSpan() };
+                var msg_writer = err_details.msg.writer(allocator);
+                try msg_writer.print("the {s}{s} option is unsupported", .{ arg.prefixSlice(), arg.optionWithoutPrefix(1) });
+                try diagnostics.append(err_details);
                 arg_i += value.index_increment;
                 continue :next_arg;
             } else if (std.ascii.startsWithIgnoreCase(arg_name, "c")) {
@@ -493,10 +549,7 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                 arg_i += value.index_increment;
                 continue :next_arg;
             } else {
-                var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = .{
-                    .name_offset = arg.name_offset,
-                    .prefix_len = arg.prefixSlice().len,
-                } };
+                var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = arg.optionSpan() };
                 var msg_writer = err_details.msg.writer(allocator);
                 try msg_writer.print("invalid option: {s}{s}", .{ arg.prefixSlice(), arg.name() });
                 try diagnostics.append(err_details);
@@ -975,4 +1028,25 @@ test "parse: /sl" {
 
         try std.testing.expectEqual(@as(u15, 1228), options.max_string_literal_codepoints);
     }
+}
+
+test "parse: unsupported MUI-related options" {
+    try testParseError(&.{ "foo.exe", "/q", "blah", "/g1", "-G2", "blah", "/fm", "blah", "/g", "blah", "foo.rc" },
+        \\<cli>: error: the /q option is unsupported
+        \\ ... /q ...
+        \\     ~^
+        \\<cli>: error: the /g1 option is unsupported
+        \\ ... /g1 ...
+        \\     ~^~
+        \\<cli>: error: the -G2 option is unsupported
+        \\ ... -G2 ...
+        \\     ~^~
+        \\<cli>: error: the /fm option is unsupported
+        \\ ... /fm ...
+        \\     ~^~
+        \\<cli>: error: the /g option is unsupported
+        \\ ... /g ...
+        \\     ~^
+        \\
+    );
 }
