@@ -277,6 +277,9 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
             if (std.ascii.startsWithIgnoreCase(arg_name, "no-preprocess")) {
                 options.preprocess = false;
                 arg.name_offset += "no-preprocess".len;
+            } else if (std.ascii.startsWithIgnoreCase(arg_name, "nologo")) {
+                // No-op, we don't display any 'logo' to suppress
+                arg.name_offset += "nologo".len;
             } else if (std.ascii.startsWithIgnoreCase(arg_name, "fo")) {
                 const value = arg.value(2, arg_i, args) catch {
                     var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = arg.missingSpan() };
@@ -501,6 +504,8 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                 continue :next_arg;
             }
         } else {
+            // The while loop exited via its conditional, meaning we are done with
+            // the current arg and can move on the the next
             arg_i += 1;
             continue;
         }
