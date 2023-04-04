@@ -508,6 +508,14 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
             } else if (std.ascii.startsWithIgnoreCase(arg_name, "w")) {
                 options.warn_instead_of_error_on_invalid_code_page = true;
                 arg.name_offset += 1;
+            } else if (std.ascii.startsWithIgnoreCase(arg_name, "a")) {
+                // Undocumented option with unknown function
+                // TODO: More investigation to figure out what it does (if anything)
+                var err_details = Diagnostics.ErrorDetails{ .type = .warning, .arg_index = arg_i, .arg_span = arg.optionSpan() };
+                var msg_writer = err_details.msg.writer(allocator);
+                try msg_writer.print("option {s}{s} has no effect (it is undocumented and its function is unknown in the Win32 RC compiler)", .{ arg.prefixSlice(), arg.optionWithoutPrefix(1) });
+                try diagnostics.append(err_details);
+                arg.name_offset += 1;
             } else if (std.ascii.startsWithIgnoreCase(arg_name, "d")) {
                 const value = arg.value(1, arg_i, args) catch {
                     var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = arg.missingSpan() };
