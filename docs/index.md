@@ -22,6 +22,11 @@ Currently a dumping ground for various pieces of information related to `.rc` an
 
 - `/a` seems to be a recognized option but it's unclear what it does and is totally undocumented AFAICT
 - Either one of `/?c` or `/hc` will add a normally hidden 'Comments extracting switches:' section to the help menu, with `/t` and `/t`-prefixed options dealing with `.LCX` and `.LCE` files. Can find no info about any of this online. A generated `.LCE` file seems to be an XML file with some info about the comments and resources in the `.rc` file(s).
+- `/p` will output the preprocessed version of the `.rc` file to `<filename>.rcpp` *instead of* outputting a `.res` file (i.e. it will only run the preprocessor).
+  + There doesn't appear to be any way to control the name of the `.rcpp` file (`/fo` does not affect it)
+- `/s <unknown>` will insert a bunch of resources with name `HWB` into the `.res`. I can't find any info on this except a note [on this page](https://learn.microsoft.com/en-us/cpp/windows/how-to-create-a-resource-script-file?view=msvc-170) saying that `HWB` is a resource name that is reserved by Visual Studio. The option seems to need a value but the value doesn't seem to have any affect on the `.res` contents and it seems to accept any value without complaint.
+- `/z` seems to always error with `fatal error RC1212: invalid option - /z argument missing substitute font name`. Not sure what type of value it's looking for, or what it would affect if it were provided a valid value.
+  + A value with `/` in it seems to get past the `argument missing substitute font name` error and will allow `rc.exe` to compile successfully as long as there is not a `FONT` resource in the `.rc`. If there is a `FONT` resource, then it will start erroring with `fatal error RW1023: I/O error seeking in file` and I haven't found a way to provide a value to `/z` that doesn't cause that.
 
 ## Common Resource Attributes / Memory Flags
 
