@@ -26,6 +26,7 @@ pub const Diagnostics = struct {
             name_offset: usize = 0,
             prefix_len: usize = 0,
             value_offset: usize = 0,
+            name_len: usize = 0,
         };
     };
 
@@ -210,10 +211,15 @@ pub const Arg = struct {
         };
     }
 
-    pub fn optionSpan(self: Arg) Diagnostics.ErrorDetails.ArgSpan {
+    pub fn optionAndAfterSpan(self: Arg) Diagnostics.ErrorDetails.ArgSpan {
+        return self.optionSpan(0);
+    }
+
+    pub fn optionSpan(self: Arg, option_len: usize) Diagnostics.ErrorDetails.ArgSpan {
         return .{
             .name_offset = self.name_offset,
             .prefix_len = self.prefixSlice().len,
+            .name_len = option_len,
         };
     }
 
@@ -288,6 +294,44 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                 // No-op, we don't display any 'logo' to suppress
                 arg.name_offset += "nologo".len;
             }
+            // Unsupported LCX/LCE options that need a value (within the same arg only)
+            else if (std.ascii.startsWithIgnoreCase(arg_name, "tp:")) {
+                const rest = arg.full[arg.name_offset + 3 ..];
+                if (rest.len == 0) {
+                    var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = .{
+                        .name_offset = arg.name_offset,
+                        .prefix_len = arg.prefixSlice().len,
+                        .value_offset = arg.name_offset + 3,
+                    } };
+                    var msg_writer = err_details.msg.writer(allocator);
+                    try msg_writer.print("missing value for {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(3) });
+                    try diagnostics.append(err_details);
+                }
+                var err_details = Diagnostics.ErrorDetails{ .type = .err, .arg_index = arg_i, .arg_span = arg.optionAndAfterSpan() };
+                var msg_writer = err_details.msg.writer(allocator);
+                try msg_writer.print("the {s}{s} option is unsupported", .{ arg.prefixSlice(), arg.optionWithoutPrefix(3) });
+                try diagnostics.append(err_details);
+                arg_i += 1;
+                continue :next_arg;
+            }
+            // Unsupported LCX/LCE options that need a value
+            else if (std.ascii.startsWithIgnoreCase(arg_name, "tn")) {
+                const value = arg.value(2, arg_i, args) catch no_value: {
+                    var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = arg.missingSpan() };
+                    var msg_writer = err_details.msg.writer(allocator);
+                    try msg_writer.print("missing value after {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(2) });
+                    try diagnostics.append(err_details);
+                    // dummy zero-length slice starting where the value would have been
+                    const value_start = arg.name_offset + 2;
+                    break :no_value Arg.Value{ .slice = arg.full[value_start..value_start] };
+                };
+                var err_details = Diagnostics.ErrorDetails{ .type = .err, .arg_index = arg_i, .arg_span = arg.optionAndAfterSpan() };
+                var msg_writer = err_details.msg.writer(allocator);
+                try msg_writer.print("the {s}{s} option is unsupported", .{ arg.prefixSlice(), arg.optionWithoutPrefix(2) });
+                try diagnostics.append(err_details);
+                arg_i += value.index_increment;
+                continue :next_arg;
+            }
             // Unsupported MUI options that need a value
             else if (std.ascii.startsWithIgnoreCase(arg_name, "fm") or
                 std.ascii.startsWithIgnoreCase(arg_name, "gn") or
@@ -302,7 +346,7 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                     const value_start = arg.name_offset + 2;
                     break :no_value Arg.Value{ .slice = arg.full[value_start..value_start] };
                 };
-                var err_details = Diagnostics.ErrorDetails{ .type = .err, .arg_index = arg_i, .arg_span = arg.optionSpan() };
+                var err_details = Diagnostics.ErrorDetails{ .type = .err, .arg_index = arg_i, .arg_span = arg.optionAndAfterSpan() };
                 var msg_writer = err_details.msg.writer(allocator);
                 try msg_writer.print("the {s}{s} option is unsupported", .{ arg.prefixSlice(), arg.optionWithoutPrefix(2) });
                 try diagnostics.append(err_details);
@@ -311,7 +355,21 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
             }
             // Unsupported MUI options that do not need a value
             else if (std.ascii.startsWithIgnoreCase(arg_name, "g1")) {
-                var err_details = Diagnostics.ErrorDetails{ .type = .err, .arg_index = arg_i, .arg_span = arg.optionSpan() };
+                var err_details = Diagnostics.ErrorDetails{ .type = .err, .arg_index = arg_i, .arg_span = arg.optionSpan(2) };
+                var msg_writer = err_details.msg.writer(allocator);
+                try msg_writer.print("the {s}{s} option is unsupported", .{ arg.prefixSlice(), arg.optionWithoutPrefix(2) });
+                try diagnostics.append(err_details);
+                arg.name_offset += 2;
+            }
+            // Unsupported LCX/LCE options that do not need a value
+            else if (std.ascii.startsWithIgnoreCase(arg_name, "tm") or
+                std.ascii.startsWithIgnoreCase(arg_name, "tc") or
+                std.ascii.startsWithIgnoreCase(arg_name, "tw") or
+                std.ascii.startsWithIgnoreCase(arg_name, "te") or
+                std.ascii.startsWithIgnoreCase(arg_name, "ti") or
+                std.ascii.startsWithIgnoreCase(arg_name, "ta"))
+            {
+                var err_details = Diagnostics.ErrorDetails{ .type = .err, .arg_index = arg_i, .arg_span = arg.optionSpan(2) };
                 var msg_writer = err_details.msg.writer(allocator);
                 try msg_writer.print("the {s}{s} option is unsupported", .{ arg.prefixSlice(), arg.optionWithoutPrefix(2) });
                 try diagnostics.append(err_details);
@@ -427,12 +485,20 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                     const value_start = arg.name_offset + 1;
                     break :no_value Arg.Value{ .slice = arg.full[value_start..value_start] };
                 };
-                var err_details = Diagnostics.ErrorDetails{ .type = .err, .arg_index = arg_i, .arg_span = arg.optionSpan() };
+                var err_details = Diagnostics.ErrorDetails{ .type = .err, .arg_index = arg_i, .arg_span = arg.optionAndAfterSpan() };
                 var msg_writer = err_details.msg.writer(allocator);
                 try msg_writer.print("the {s}{s} option is unsupported", .{ arg.prefixSlice(), arg.optionWithoutPrefix(1) });
                 try diagnostics.append(err_details);
                 arg_i += value.index_increment;
                 continue :next_arg;
+            }
+            // 1 char unsupported LCX/LCE options that do not need a value
+            else if (std.ascii.startsWithIgnoreCase(arg_name, "t")) {
+                var err_details = Diagnostics.ErrorDetails{ .type = .err, .arg_index = arg_i, .arg_span = arg.optionSpan(1) };
+                var msg_writer = err_details.msg.writer(allocator);
+                try msg_writer.print("the {s}{s} option is unsupported", .{ arg.prefixSlice(), arg.optionWithoutPrefix(1) });
+                try diagnostics.append(err_details);
+                arg.name_offset += 1;
             } else if (std.ascii.startsWithIgnoreCase(arg_name, "c")) {
                 const value = arg.value(1, arg_i, args) catch {
                     var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = arg.missingSpan() };
@@ -511,7 +577,7 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
             } else if (std.ascii.startsWithIgnoreCase(arg_name, "a")) {
                 // Undocumented option with unknown function
                 // TODO: More investigation to figure out what it does (if anything)
-                var err_details = Diagnostics.ErrorDetails{ .type = .warning, .arg_index = arg_i, .arg_span = arg.optionSpan() };
+                var err_details = Diagnostics.ErrorDetails{ .type = .warning, .arg_index = arg_i, .arg_span = arg.optionSpan(1) };
                 var msg_writer = err_details.msg.writer(allocator);
                 try msg_writer.print("option {s}{s} has no effect (it is undocumented and its function is unknown in the Win32 RC compiler)", .{ arg.prefixSlice(), arg.optionWithoutPrefix(1) });
                 try diagnostics.append(err_details);
@@ -557,7 +623,7 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                 arg_i += value.index_increment;
                 continue :next_arg;
             } else {
-                var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = arg.optionSpan() };
+                var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = arg.optionAndAfterSpan() };
                 var msg_writer = err_details.msg.writer(allocator);
                 try msg_writer.print("invalid option: {s}{s}", .{ arg.prefixSlice(), arg.name() });
                 try diagnostics.append(err_details);
@@ -738,16 +804,25 @@ pub fn renderErrorMessage(writer: anytype, colors: utils.Colors, err_details: Di
     colors.set(writer, .reset);
 
     const arg_with_name = args[err_details.arg_index];
+    const prefix_slice = arg_with_name[0..err_details.arg_span.prefix_len];
+    const before_name_slice = arg_with_name[err_details.arg_span.prefix_len..err_details.arg_span.name_offset];
+    var name_slice = arg_with_name[err_details.arg_span.name_offset..];
+    if (err_details.arg_span.name_len > 0) name_slice.len = err_details.arg_span.name_len;
+    const after_name_slice = arg_with_name[err_details.arg_span.name_offset + name_slice.len ..];
 
-    if (err_details.arg_span.prefix_len == err_details.arg_span.name_offset) {
-        try writer.writeAll(arg_with_name);
-    } else {
-        try writer.writeAll(arg_with_name[0..err_details.arg_span.prefix_len]);
+    try writer.writeAll(prefix_slice);
+    if (before_name_slice.len > 0) {
         colors.set(writer, .dim);
-        try writer.writeAll(arg_with_name[err_details.arg_span.prefix_len..err_details.arg_span.name_offset]);
+        try writer.writeAll(before_name_slice);
         colors.set(writer, .reset);
-        try writer.writeAll(arg_with_name[err_details.arg_span.name_offset..]);
     }
+    try writer.writeAll(name_slice);
+    if (after_name_slice.len > 0) {
+        colors.set(writer, .dim);
+        try writer.writeAll(after_name_slice);
+        colors.set(writer, .reset);
+    }
+
     var next_arg_len: usize = 0;
     if (err_details.arg_span.point_at_next_arg and err_details.arg_index + 1 < args.len) {
         const next_arg = args[err_details.arg_index + 1];
@@ -758,6 +833,11 @@ pub fn renderErrorMessage(writer: anytype, colors: utils.Colors, err_details: Di
 
     const last_shown_arg_index = if (err_details.arg_span.point_at_next_arg) err_details.arg_index + 1 else err_details.arg_index;
     if (last_shown_arg_index + 1 < args.len) {
+        // special case for when pointing to a missing value within the same arg
+        // as the name
+        if (err_details.arg_span.value_offset >= arg_with_name.len) {
+            try writer.writeByte(' ');
+        }
         colors.set(writer, .dim);
         try writer.writeAll(" ...");
         colors.set(writer, .reset);
@@ -770,11 +850,13 @@ pub fn renderErrorMessage(writer: anytype, colors: utils.Colors, err_details: Di
     try writer.writeByteNTimes(' ', err_details.arg_span.name_offset - err_details.arg_span.prefix_len);
     if (!err_details.arg_span.point_at_next_arg and err_details.arg_span.value_offset == 0) {
         try writer.writeByte('^');
-        try writer.writeByteNTimes('~', arg_with_name.len - err_details.arg_span.name_offset - 1);
+        try writer.writeByteNTimes('~', name_slice.len - 1);
     } else if (err_details.arg_span.value_offset > 0) {
         try writer.writeByteNTimes('~', err_details.arg_span.value_offset - err_details.arg_span.name_offset);
         try writer.writeByte('^');
-        try writer.writeByteNTimes('~', arg_with_name.len - err_details.arg_span.value_offset - 1);
+        if (err_details.arg_span.value_offset < arg_with_name.len) {
+            try writer.writeByteNTimes('~', arg_with_name.len - err_details.arg_span.value_offset - 1);
+        }
     } else if (err_details.arg_span.point_at_next_arg) {
         try writer.writeByteNTimes('~', arg_with_name.len - err_details.arg_span.name_offset + 1);
         try writer.writeByte('^');
@@ -1055,6 +1137,45 @@ test "parse: unsupported MUI-related options" {
         \\<cli>: error: the /g option is unsupported
         \\ ... /g ...
         \\     ~^
+        \\
+    );
+}
+
+test "parse: unsupported LCX/LCE-related options" {
+    try testParseError(&.{ "foo.exe", "/t", "/tp:", "/tp:blah", "/tm", "/tc", "/tw", "-TEti", "/ta", "/tn", "blah", "foo.rc" },
+        \\<cli>: error: the /t option is unsupported
+        \\ ... /t ...
+        \\     ~^
+        \\<cli>: error: missing value for /tp: option
+        \\ ... /tp:  ...
+        \\     ~~~~^
+        \\<cli>: error: the /tp: option is unsupported
+        \\ ... /tp: ...
+        \\     ~^~~
+        \\<cli>: error: the /tp: option is unsupported
+        \\ ... /tp:blah ...
+        \\     ~^~~~~~~
+        \\<cli>: error: the /tm option is unsupported
+        \\ ... /tm ...
+        \\     ~^~
+        \\<cli>: error: the /tc option is unsupported
+        \\ ... /tc ...
+        \\     ~^~
+        \\<cli>: error: the /tw option is unsupported
+        \\ ... /tw ...
+        \\     ~^~
+        \\<cli>: error: the -TE option is unsupported
+        \\ ... -TEti ...
+        \\     ~^~
+        \\<cli>: error: the -ti option is unsupported
+        \\ ... -TEti ...
+        \\     ~  ^~
+        \\<cli>: error: the /ta option is unsupported
+        \\ ... /ta ...
+        \\     ~^~
+        \\<cli>: error: the /tn option is unsupported
+        \\ ... /tn ...
+        \\     ~^~
         \\
     );
 }
