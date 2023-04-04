@@ -262,6 +262,8 @@ pub fn parse(lang_tag: []const u8) error{InvalidLanguageTag}!Parsed {
             return error.InvalidLanguageTag;
         }
     } else {
+        // If there's no part besides a 1-len lang code, then it is malformed
+        if (lang_code.len == 1) return error.InvalidLanguageTag;
         return parsed;
     }
     if (parsed.script_tag != null) {
@@ -351,6 +353,9 @@ const valid_alternate_sorts = [_]Parsed{
 test "parse" {
     try std.testing.expectEqualDeep(Parsed{
         .language_code = "en",
+    }, try parse("en"));
+    try std.testing.expectEqualDeep(Parsed{
+        .language_code = "en",
         .country_code = "us",
     }, try parse("en-us"));
     try std.testing.expectEqualDeep(Parsed{
@@ -411,6 +416,8 @@ test "parse" {
     // suffix must be 3 numeric digits if neither script tag nor country code is present
     try std.testing.expectError(error.InvalidLanguageTag, parse("eng-suffix"));
     try std.testing.expectError(error.InvalidLanguageTag, parse("en-plocm"));
+    // 1-len lang code is not allowed if it's the only part
+    try std.testing.expectError(error.InvalidLanguageTag, parse("e"));
 }
 
 fn isAllAlphabetic(str: []const u8) bool {
