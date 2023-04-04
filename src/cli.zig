@@ -276,10 +276,23 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
     var arg_i: usize = 1; // start at 1 to skip past the exe name
     next_arg: while (arg_i < args.len) {
         var arg = Arg.fromString(args[arg_i]) orelse break;
-        // -- on its own ends arg parsing
-        if (arg.name().len == 0 and arg.prefix == .long) {
-            arg_i += 1;
-            break;
+        if (arg.name().len == 0) {
+            switch (arg.prefix) {
+                // -- on its own ends arg parsing
+                .long => {
+                    arg_i += 1;
+                    break;
+                },
+                // - or / on its own is an error
+                else => {
+                    var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = arg.optionAndAfterSpan() };
+                    var msg_writer = err_details.msg.writer(allocator);
+                    try msg_writer.print("invalid option: {s}", .{arg.prefixSlice()});
+                    try diagnostics.append(err_details);
+                    arg_i += 1;
+                    continue :next_arg;
+                },
+            }
         }
 
         while (arg.name().len > 0) {
@@ -846,22 +859,27 @@ pub fn renderErrorMessage(writer: anytype, colors: utils.Colors, err_details: Di
 
     colors.set(writer, .green);
     try writer.writeByteNTimes(' ', prefix.len);
-    try writer.writeByteNTimes('~', err_details.arg_span.prefix_len);
-    try writer.writeByteNTimes(' ', err_details.arg_span.name_offset - err_details.arg_span.prefix_len);
-    if (!err_details.arg_span.point_at_next_arg and err_details.arg_span.value_offset == 0) {
-        try writer.writeByte('^');
-        try writer.writeByteNTimes('~', name_slice.len - 1);
-    } else if (err_details.arg_span.value_offset > 0) {
-        try writer.writeByteNTimes('~', err_details.arg_span.value_offset - err_details.arg_span.name_offset);
-        try writer.writeByte('^');
-        if (err_details.arg_span.value_offset < arg_with_name.len) {
-            try writer.writeByteNTimes('~', arg_with_name.len - err_details.arg_span.value_offset - 1);
-        }
-    } else if (err_details.arg_span.point_at_next_arg) {
-        try writer.writeByteNTimes('~', arg_with_name.len - err_details.arg_span.name_offset + 1);
-        try writer.writeByte('^');
-        if (next_arg_len > 0) {
-            try writer.writeByteNTimes('~', next_arg_len - 1);
+    // Special case for when the option is *only* a prefix (e.g. invalid option: -)
+    if (err_details.arg_span.prefix_len == arg_with_name.len) {
+        try writer.writeByteNTimes('^', err_details.arg_span.prefix_len);
+    } else {
+        try writer.writeByteNTimes('~', err_details.arg_span.prefix_len);
+        try writer.writeByteNTimes(' ', err_details.arg_span.name_offset - err_details.arg_span.prefix_len);
+        if (!err_details.arg_span.point_at_next_arg and err_details.arg_span.value_offset == 0) {
+            try writer.writeByte('^');
+            try writer.writeByteNTimes('~', name_slice.len - 1);
+        } else if (err_details.arg_span.value_offset > 0) {
+            try writer.writeByteNTimes('~', err_details.arg_span.value_offset - err_details.arg_span.name_offset);
+            try writer.writeByte('^');
+            if (err_details.arg_span.value_offset < arg_with_name.len) {
+                try writer.writeByteNTimes('~', arg_with_name.len - err_details.arg_span.value_offset - 1);
+            }
+        } else if (err_details.arg_span.point_at_next_arg) {
+            try writer.writeByteNTimes('~', arg_with_name.len - err_details.arg_span.name_offset + 1);
+            try writer.writeByte('^');
+            if (next_arg_len > 0) {
+                try writer.writeByteNTimes('~', next_arg_len - 1);
+            }
         }
     }
     try writer.writeByte('\n');
@@ -908,6 +926,14 @@ fn testParseOutput(args: []const []const u8, expected_output: []const u8) !?Opti
 }
 
 test "parse errors: basic" {
+    try testParseError(&.{ "foo.exe", "/" },
+        \\<cli>: error: invalid option: /
+        \\ ... /
+        \\     ^
+        \\<cli>: error: missing input filename
+        \\
+        \\
+    );
     try testParseError(&.{ "foo.exe", "/ln" },
         \\<cli>: error: missing language tag after /ln option
         \\ ... /ln
