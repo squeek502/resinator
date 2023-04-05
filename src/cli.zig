@@ -505,6 +505,28 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                 arg_i += value.index_increment;
                 continue :next_arg;
             }
+            // Undocumented (and unsupported) options that need a value
+            //  /z has to do something with font substitution
+            //  /s has something to do with HWB resources being inserted into the .res
+            else if (std.ascii.startsWithIgnoreCase(arg_name, "z") or
+                std.ascii.startsWithIgnoreCase(arg_name, "s"))
+            {
+                const value = arg.value(1, arg_i, args) catch no_value: {
+                    var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = arg.missingSpan() };
+                    var msg_writer = err_details.msg.writer(allocator);
+                    try msg_writer.print("missing value after {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(1) });
+                    try diagnostics.append(err_details);
+                    // dummy zero-length slice starting where the value would have been
+                    const value_start = arg.name_offset + 1;
+                    break :no_value Arg.Value{ .slice = arg.full[value_start..value_start] };
+                };
+                var err_details = Diagnostics.ErrorDetails{ .type = .err, .arg_index = arg_i, .arg_span = arg.optionAndAfterSpan() };
+                var msg_writer = err_details.msg.writer(allocator);
+                try msg_writer.print("the {s}{s} option is unsupported", .{ arg.prefixSlice(), arg.optionWithoutPrefix(1) });
+                try diagnostics.append(err_details);
+                arg_i += value.index_increment;
+                continue :next_arg;
+            }
             // 1 char unsupported LCX/LCE options that do not need a value
             else if (std.ascii.startsWithIgnoreCase(arg_name, "t")) {
                 var err_details = Diagnostics.ErrorDetails{ .type = .err, .arg_index = arg_i, .arg_span = arg.optionSpan(1) };
