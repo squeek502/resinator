@@ -197,7 +197,10 @@ pub const Compiler = struct {
                         const parsed_as_utf8 = try std.unicode.utf16leToUtf8Alloc(self.allocator, parsed_string);
                         return .{ .utf8 = parsed_as_utf8, .needs_free = true };
                     },
-                    else => unreachable, // no other token types should be in a filename literal node
+                    else => {
+                        std.debug.print("unexpected filename token type: {}\n", .{literal_node.token});
+                        unreachable; // no other token types should be in a filename literal node
+                    },
                 }
             },
             .binary_expression => {

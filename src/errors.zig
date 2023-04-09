@@ -187,7 +187,8 @@ pub const ErrorDetails = struct {
         string_literal: bool = false,
         accelerator_type_or_option: bool = false,
         control_class: bool = false,
-        _: u27 = undefined,
+        literal: bool = false,
+        _: u26 = undefined,
 
         pub const strings = std.ComptimeStringMap([]const u8, .{
             .{ "number", "number" },
@@ -195,6 +196,7 @@ pub const ErrorDetails = struct {
             .{ "string_literal", "quoted string literal" },
             .{ "accelerator_type_or_option", "accelerator type or option [ASCII, VIRTKEY, etc]" },
             .{ "control_class", "control class [BUTTON, EDIT, etc]" },
+            .{ "literal", "unquoted literal" },
         });
 
         pub fn writeCommaSeparated(self: ExpectedTypes, writer: anytype) !void {

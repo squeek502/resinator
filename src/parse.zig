@@ -775,6 +775,19 @@ pub const Parser = struct {
                 }
 
                 var filename_expression = try self.parseExpression(.{});
+                // Single close paren as an expression is not allowed for filenames
+                if (filename_expression.cast(.literal)) |literal_node| {
+                    if (literal_node.token.id == .close_paren) {
+                        return self.addErrorDetailsAndFail(ErrorDetails{
+                            .err = .expected_something_else,
+                            .token = filename_expression.getFirstToken(),
+                            .extra = .{ .expected_types = .{
+                                .string_literal = true,
+                                .literal = true,
+                            } },
+                        });
+                    }
+                }
 
                 const node = try self.state.arena.create(Node.ResourceExternal);
                 node.* = .{
@@ -3184,6 +3197,11 @@ test "parse errors" {
     try testParseErrorDetails(
         &.{.{ .type = .err, .str = "unsupported code page 'utf7 (id=65000)' in #pragma code_page" }},
         "#pragma code_page( 65000 )",
+        null,
+    );
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "expected quoted string literal or unquoted literal; got ')'" }},
+        "1 RCDATA )",
         null,
     );
 }
