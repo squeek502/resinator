@@ -91,6 +91,7 @@ pub const Options = struct {
     max_string_literal_codepoints: u15 = lex.default_max_string_literal_codepoints,
     silent_duplicate_control_ids: bool = false,
     warn_instead_of_error_on_invalid_code_page: bool = false,
+    debug: bool = false,
 
     pub const SymbolAction = enum { define, undefine };
 
@@ -306,6 +307,9 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
             } else if (std.ascii.startsWithIgnoreCase(arg_name, "nologo")) {
                 // No-op, we don't display any 'logo' to suppress
                 arg.name_offset += "nologo".len;
+            } else if (std.ascii.startsWithIgnoreCase(arg_name, "debug")) {
+                options.debug = true;
+                arg.name_offset += "debug".len;
             }
             // Unsupported LCX/LCE options that need a value (within the same arg only)
             else if (std.ascii.startsWithIgnoreCase(arg_name, "tp:")) {

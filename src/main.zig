@@ -4,6 +4,8 @@ const parseAndRemoveLineCommands = @import("source_mapping.zig").parseAndRemoveL
 const compile = @import("compile.zig").compile;
 const Diagnostics = @import("errors.zig").Diagnostics;
 const cli = @import("cli.zig");
+const parse = @import("parse.zig");
+const lex = @import("lex.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{ .stack_trace_frames = 8 }){};
@@ -132,14 +134,31 @@ pub fn main() !void {
     var diagnostics = Diagnostics.init(allocator);
     defer diagnostics.deinit();
 
-    // std.debug.print("after preprocessor:\n------------------\n{s}\n------------------\n", .{final_input});
-    // std.debug.print("\nmappings:\n", .{});
-    // for (mapping_results.mappings.mapping.items, 0..) |span, i| {
-    //     const line_num = i + 1;
-    //     const filename = mapping_results.mappings.files.get(span.filename_offset);
-    //     std.debug.print("{}: {s}:{}-{}\n", .{ line_num, filename, span.start_line, span.end_line });
-    // }
-    // std.debug.print("\n", .{});
+    if (options.debug) {
+        std.debug.print("after preprocessor:\n------------------\n{s}\n------------------\n", .{final_input});
+        std.debug.print("\nmappings:\n", .{});
+        for (mapping_results.mappings.mapping.items, 0..) |span, i| {
+            const line_num = i + 1;
+            const filename = mapping_results.mappings.files.get(span.filename_offset);
+            std.debug.print("{}: {s}:{}-{}\n", .{ line_num, filename, span.start_line, span.end_line });
+        }
+        std.debug.print("\n", .{});
+
+        // Separately parse and dump the AST
+        ast: {
+            var parse_diagnostics = Diagnostics.init(allocator);
+            var lexer = lex.Lexer.init(final_input, .{});
+            var parser = parse.Parser.init(&lexer, .{});
+            var tree = parser.parse(allocator, &parse_diagnostics) catch {
+                std.debug.print("Failed to parse\n", .{});
+                break :ast;
+            };
+            defer tree.deinit();
+
+            try tree.dump(std.io.getStdErr().writer());
+            std.debug.print("\n", .{});
+        }
+    }
 
     compile(allocator, final_input, output_file.writer(), .{
         .cwd = std.fs.cwd(),
