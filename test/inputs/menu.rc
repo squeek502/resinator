@@ -1,0 +1,28 @@
+1 MENU { 
+	// Any empty menus are an error, including submenus:
+	// POPUP "hello" {}
+
+	POPUP "hello",, CHECKED,, { MENUITEM SEPARATOR,,,,, }
+
+	MENUITEM "HELLO",, 100, CHECKED,, GRAYED,,
+	//          ,* -^     ^- ,?    ^-- ,* --^
+
+	MENUITEM "HELLO" 100 GRAYED INACTIVE
+	//                     ^------^---- docs say these cannot be used
+	//                                  together but there is no error/warning
+
+	//                   v- result: number or number expression
+	MENUITEM L"hello" (100+2)
+	//          ^- text: string literal only
+}
+2 MENUEX FIXED VERSION 1 CHARACTERISTICS (1+2) {
+	MENUITEM "hello", /*id*/, /*type*/, /*state*/,
+	MENUITEM "", -1, 0x00000800L /* MFT_SEPARATOR */
+	MENUITEM "", 0
+	MENUITEM "hello",,,1,
+	POPUP "hello", /*id*/, /*type*/, /*state*/, /*helpID*/, { MENUITEM "" }
+}
+3 MENU {
+	MENUITEM SEPARATOR,,
+}
+4 MENU { POPUP "hello" { MENUITEM SEPARATOR } }

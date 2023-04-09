@@ -1,0 +1,25 @@
+1 VERSIONINFO FIXED
+FILEVERSION 1
+PRODUCTVERSION 1,3-1,3,4
+FILEFLAGSMASK 1
+FILEFLAGS (1|2)
+FILEOS 2
+FILETYPE 3
+FILESUBTYPE 4
+{}
+
+test VERSIONINFO
+FILEVERSION 1,2,3,4
+BEGIN
+  VALUE "key" 1 2 3 "a"
+  BLOCK "" BEGIN VALUE "key" "a" END
+  BLOCK "something"
+  BEGIN
+  	BLOCK "something else",, 1,, 2,, 3,, 4,, 5,,
+  	BEGIN
+  		VALUE "key",,
+  		VALUE "key",, 1,, 2,, 3,,
+  		VALUE "key" 1 2 3 "string"
+  	END
+  END
+END

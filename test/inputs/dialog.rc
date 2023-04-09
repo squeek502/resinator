@@ -1,0 +1,7 @@
+1 DIALOGEX 1, 2, 3, 4
+{
+    CONTROL "mytext",, 905,, "\x42UTTON",, 1,, 2 3 4 0, 0, 100
+    CONTROL "mytext",, 905,, L"EDIT",, 1,, 2 3 4 0, 0, 100
+    CONTROL "mytext",, 905,, COMBOBOX,, 1,, 2 3 4 0, 0, 100
+    CONTROL 1,, 9051,, 0xFF80,, 0,, 2 3 4 0, 0, 100
+}
