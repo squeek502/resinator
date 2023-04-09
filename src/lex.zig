@@ -83,6 +83,12 @@ pub const Token = struct {
         return column;
     }
 
+    // TODO: This doesn't necessarily match up with how we count line numbers, but where a line starts
+    //       has a knock-on effect on calculateColumn. More testing is needed to determine what needs
+    //       to be changed to make this both (1) match how line numbers are counted and (2) match how
+    //       the Win32 RC compiler counts tab columns.
+    //
+    //       (the TODO in currentIndexFormsLineEndingPair should be taken into account as well)
     pub fn getLineStart(token: Token, source: []const u8) usize {
         const line_start = line_start: {
             if (token.start != 0) {
@@ -113,6 +119,64 @@ pub const Token = struct {
     }
 };
 
+pub const LineHandler = struct {
+    line_number: usize = 1,
+    buffer: []const u8,
+    last_line_ending_index: ?usize = null,
+
+    /// Like incrementLineNumber but checks that the current char is a line ending first.
+    /// Returns the new line number if it was incremented, null otherwise.
+    pub fn maybeIncrementLineNumber(self: *LineHandler, cur_index: usize) ?usize {
+        const c = self.buffer[cur_index];
+        if (c == '\r' or c == '\n') {
+            return self.incrementLineNumber(cur_index);
+        }
+        return null;
+    }
+
+    /// Increments line_number appropriately (handling line ending pairs)
+    /// and returns the new line number if it was incremented, or null otherwise.
+    pub fn incrementLineNumber(self: *LineHandler, cur_index: usize) ?usize {
+        if (self.currentIndexFormsLineEndingPair(cur_index)) {
+            self.last_line_ending_index = null;
+            return null;
+        } else {
+            self.line_number += 1;
+            self.last_line_ending_index = cur_index;
+            return self.line_number;
+        }
+    }
+
+    /// \r\n and \n\r pairs are treated as a single line ending (but not \r\r \n\n)
+    /// expects self.index and last_line_ending_index (if non-null) to contain line endings
+    ///
+    /// TODO: This is not really how the Win32 RC compiler handles line endings. Instead, it
+    ///       seems to drop all carriage returns during preprocessing and then replace all
+    ///       remaining line endings with well-formed CRLF pairs (e.g. `<CR>a<CR>b<LF>c` becomes `ab<CR><LF>c`).
+    ///       Handling this the same as the Win32 RC compiler would need control over the preprocessor,
+    ///       since Clang converts unpaired <CR> into unpaired <LF>.
+    pub fn currentIndexFormsLineEndingPair(self: *const LineHandler, cur_index: usize) bool {
+        if (self.last_line_ending_index == null) return false;
+
+        // must immediately precede the current index, we know cur_index must
+        // be >= 1 since last_line_ending_index is non-null (so if the subtraction
+        // overflows it is a bug at the callsite of this function).
+        if (self.last_line_ending_index.? != cur_index - 1) return false;
+
+        const cur_line_ending = self.buffer[cur_index];
+        const last_line_ending = self.buffer[self.last_line_ending_index.?];
+
+        // sanity check
+        std.debug.assert(cur_line_ending == '\r' or cur_line_ending == '\n');
+        std.debug.assert(last_line_ending == '\r' or last_line_ending == '\n');
+
+        // can't be \n\n or \r\r
+        if (last_line_ending == cur_line_ending) return false;
+
+        return true;
+    }
+};
+
 pub const LexError = error{
     UnfinishedStringLiteral,
     StringLiteralTooLong,
@@ -137,7 +201,7 @@ pub const Lexer = struct {
 
     buffer: []const u8,
     index: usize,
-    line_number: usize = 1,
+    line_handler: LineHandler,
     at_start_of_line: bool = true,
     error_context_token: ?Token = null,
     current_code_page: CodePage,
@@ -159,6 +223,7 @@ pub const Lexer = struct {
             .current_code_page = options.default_code_page,
             .source_mappings = options.source_mappings,
             .max_string_literal_codepoints = options.max_string_literal_codepoints,
+            .line_handler = .{ .buffer = buffer },
         };
     }
 
@@ -193,11 +258,10 @@ pub const Lexer = struct {
             .id = .eof,
             .start = start_index,
             .end = undefined,
-            .line_number = self.line_number,
+            .line_number = self.line_handler.line_number,
         };
         var state = StateWhitespaceDelimiterOnly.start;
 
-        var last_line_ending_index: ?usize = null;
         while (self.current_code_page.codepointAt(self.index, self.buffer)) |codepoint| : (self.index += codepoint.byte_len) {
             const c = codepoint.value;
             try self.checkForIllegalCodepoint(codepoint, false);
@@ -205,7 +269,7 @@ pub const Lexer = struct {
                 .start => switch (c) {
                     '\r', '\n' => {
                         result.start = self.index + 1;
-                        result.line_number = self.incrementLineNumber(&last_line_ending_index);
+                        result.line_number = self.incrementLineNumber();
                     },
                     ' ', '\t', '\x05'...'\x08', '\x0B'...'\x0C', '\x0E'...'\x1F' => {
                         result.start = self.index + 1;
@@ -251,7 +315,7 @@ pub const Lexer = struct {
                         try self.evaluatePreprocessorCommand(result.start, self.index);
                         result.start = self.index + 1;
                         state = .start;
-                        result.line_number = self.incrementLineNumber(&last_line_ending_index);
+                        result.line_number = self.incrementLineNumber();
                     },
                     else => {},
                 },
@@ -259,7 +323,7 @@ pub const Lexer = struct {
                     '\r', '\n' => {
                         result.start = self.index + 1;
                         state = .start;
-                        result.line_number = self.incrementLineNumber(&last_line_ending_index);
+                        result.line_number = self.incrementLineNumber();
                     },
                     else => {},
                 },
@@ -315,11 +379,10 @@ pub const Lexer = struct {
             .id = .eof,
             .start = start_index,
             .end = undefined,
-            .line_number = self.line_number,
+            .line_number = self.line_handler.line_number,
         };
         var state = StateNormal.start;
 
-        var last_line_ending_index: ?usize = null;
         // Note: The Windows RC compiler uses a non-standard method of computing
         //       length for its 'string literal too long' errors; it isn't easily
         //       explained or intuitive (it's sort-of pre-parsed byte length but with
@@ -350,7 +413,7 @@ pub const Lexer = struct {
                 .start => switch (c) {
                     '\r', '\n' => {
                         result.start = self.index + 1;
-                        result.line_number = self.incrementLineNumber(&last_line_ending_index);
+                        result.line_number = self.incrementLineNumber();
                     },
                     ' ', '\t', '\x05'...'\x08', '\x0B'...'\x0C', '\x0E'...'\x1F' => {
                         result.start = self.index + 1;
@@ -442,7 +505,7 @@ pub const Lexer = struct {
                         try self.evaluatePreprocessorCommand(result.start, self.index);
                         result.start = self.index + 1;
                         state = .start;
-                        result.line_number = self.incrementLineNumber(&last_line_ending_index);
+                        result.line_number = self.incrementLineNumber();
                     },
                     else => {},
                 },
@@ -452,7 +515,7 @@ pub const Lexer = struct {
                     '\r', '\n' => {
                         result.start = self.index + 1;
                         state = .start;
-                        result.line_number = self.incrementLineNumber(&last_line_ending_index);
+                        result.line_number = self.incrementLineNumber();
                     },
                     else => {},
                 },
@@ -564,7 +627,10 @@ pub const Lexer = struct {
                     '\\' => {
                         state = if (state == .quoted_ascii_string) .quoted_ascii_string_escape else .quoted_wide_string_escape;
                     },
-                    '\r' => {}, // \r doesn't count towards string literal length
+                    '\r' => {
+                        // \r doesn't count towards string literal length
+                        // TODO: shouldn't this potentially increment line number?
+                    },
                     '\n' => {
                         // first \n expands to <space><\n>
                         if (!string_literal_collapsing_whitespace) {
@@ -572,6 +638,7 @@ pub const Lexer = struct {
                             string_literal_collapsing_whitespace = true;
                         }
                         // the rest are collapsed into the <space><\n>
+                        // TODO: shouldn't this potentially increment line number?
                     },
                     // only \t, space, Vertical Tab, and Form Feed count as whitespace when collapsing
                     '\t', ' ', '\x0b', '\x0c' => {
@@ -589,7 +656,7 @@ pub const Lexer = struct {
                                 var dummy_token = Token{
                                     .start = self.index,
                                     .end = self.index,
-                                    .line_number = self.line_number,
+                                    .line_number = self.line_handler.line_number,
                                     .id = .invalid,
                                 };
                                 dummy_token.start = self.index;
@@ -611,7 +678,7 @@ pub const Lexer = struct {
                             .id = .invalid,
                             .start = self.index - 1,
                             .end = self.index + 1,
-                            .line_number = self.line_number,
+                            .line_number = self.line_handler.line_number,
                         };
                         return error.FoundCStyleEscapedQuote;
                     },
@@ -656,7 +723,7 @@ pub const Lexer = struct {
                         .id = .eof,
                         .start = self.index,
                         .end = self.index,
-                        .line_number = self.line_number,
+                        .line_number = self.line_handler.line_number,
                     };
                     return LexError.UnfinishedStringLiteral;
                 },
@@ -674,48 +741,12 @@ pub const Lexer = struct {
         return result;
     }
 
-    /// Like incrementLineNumber but checks that the current char is a line ending first
-    fn maybeIncrementLineNumber(self: *Self, last_line_ending_index: *?usize) usize {
-        const c = self.buffer[self.index];
-        if (c == '\r' or c == '\n') {
-            return self.incrementLineNumber(last_line_ending_index);
-        }
-        return self.line_number;
-    }
-
     /// Increments line_number appropriately (handling line ending pairs)
     /// and returns the new line number.
-    /// note: mutates last_line_ending_index.*
-    fn incrementLineNumber(self: *Self, last_line_ending_index: *?usize) usize {
-        if (self.currentIndexFormsLineEndingPair(last_line_ending_index.*)) {
-            last_line_ending_index.* = null;
-        } else {
-            self.line_number += 1;
-            last_line_ending_index.* = self.index;
-        }
+    fn incrementLineNumber(self: *Self) usize {
+        _ = self.line_handler.incrementLineNumber(self.index);
         self.at_start_of_line = true;
-        return self.line_number;
-    }
-
-    /// \r\n and \n\r pairs are treated as a single line ending (but not \r\r \n\n)
-    /// expects self.index and last_line_ending_index (if non-null) to contain line endings
-    fn currentIndexFormsLineEndingPair(self: *Self, last_line_ending_index: ?usize) bool {
-        if (last_line_ending_index == null) return false;
-
-        // must immediately precede the current index
-        if (last_line_ending_index.? != self.index - 1) return false;
-
-        const cur_line_ending = self.buffer[self.index];
-        const last_line_ending = self.buffer[last_line_ending_index.?];
-
-        // sanity check
-        std.debug.assert(cur_line_ending == '\r' or cur_line_ending == '\n');
-        std.debug.assert(last_line_ending == '\r' or last_line_ending == '\n');
-
-        // can't be \n\n or \r\r
-        if (last_line_ending == cur_line_ending) return false;
-
-        return true;
+        return self.line_handler.line_number;
     }
 
     fn checkForIllegalCodepoint(self: *Self, codepoint: code_pages.Codepoint, in_string_literal: bool) LexError!void {
@@ -758,7 +789,7 @@ pub const Lexer = struct {
             .id = .invalid,
             .start = self.index,
             .end = self.index + codepoint.byte_len,
-            .line_number = self.line_number,
+            .line_number = self.line_handler.line_number,
         };
         return err;
     }
@@ -768,7 +799,7 @@ pub const Lexer = struct {
             .id = .preprocessor_command,
             .start = start,
             .end = end,
-            .line_number = self.line_number,
+            .line_number = self.line_handler.line_number,
         };
         const full_command = self.buffer[start..end];
         var command = full_command;

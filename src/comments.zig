@@ -17,6 +17,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const UncheckedSliceWriter = @import("utils.zig").UncheckedSliceWriter;
 const SourceMappings = @import("source_mapping.zig").SourceMappings;
+const LineHandler = @import("lex.zig").LineHandler;
 
 /// `buf` must be at least as long as `source`
 /// In-place transformation is supported (i.e. `source` and `buf` can be the same slice)
@@ -38,7 +39,7 @@ pub fn removeComments(source: []const u8, buf: []u8, source_mappings: ?*SourceMa
     var index: usize = 0;
     var pending_start: ?usize = null;
     var multiline_newline_count: usize = 0;
-    var line_number: usize = 1;
+    var line_handler = LineHandler{ .buffer = source };
     while (index < source.len) : (index += 1) {
         const c = source[index];
         switch (state) {
@@ -47,8 +48,8 @@ pub fn removeComments(source: []const u8, buf: []u8, source_mappings: ?*SourceMa
                     state = .forward_slash;
                     pending_start = index;
                 },
-                '\n' => {
-                    line_number += 1;
+                '\r', '\n' => {
+                    _ = line_handler.incrementLineNumber(index);
                     result.write(c);
                 },
                 else => {
@@ -67,21 +68,16 @@ pub fn removeComments(source: []const u8, buf: []u8, source_mappings: ?*SourceMa
                     state = .multiline_comment;
                 },
                 else => {
-                    if (c == '\n') line_number += 1;
+                    _ = line_handler.maybeIncrementLineNumber(index);
                     result.writeSlice(source[pending_start.? .. index + 1]);
                     pending_start = null;
                     state = .start;
                 },
             },
             .line_comment => switch (c) {
-                '\n' => {
-                    line_number += 1;
-                    // preserve newlines
-                    // (note: index is always > 0 here since we're in a line comment)
-                    if (source[index - 1] == '\r') {
-                        result.write('\r');
-                    }
-                    result.write('\n');
+                '\r', '\n' => {
+                    _ = line_handler.incrementLineNumber(index);
+                    result.write(c);
                     state = .start;
                 },
                 else => {},
@@ -100,7 +96,7 @@ pub fn removeComments(source: []const u8, buf: []u8, source_mappings: ?*SourceMa
                     if (multiline_newline_count > 0) {
                         result.write(' ');
                         if (source_mappings) |mappings| {
-                            mappings.collapse(line_number, multiline_newline_count);
+                            mappings.collapse(line_handler.line_number, multiline_newline_count);
                         }
                     }
                     multiline_newline_count = 0;
@@ -111,8 +107,8 @@ pub fn removeComments(source: []const u8, buf: []u8, source_mappings: ?*SourceMa
                 },
             },
             .single_quoted => switch (c) {
-                '\n' => {
-                    line_number += 1;
+                '\r', '\n' => {
+                    _ = line_handler.incrementLineNumber(index);
                     state = .start;
                     result.write(c);
                 },
@@ -129,8 +125,8 @@ pub fn removeComments(source: []const u8, buf: []u8, source_mappings: ?*SourceMa
                 },
             },
             .single_quoted_escape => switch (c) {
-                '\n' => {
-                    line_number += 1;
+                '\r', '\n' => {
+                    _ = line_handler.incrementLineNumber(index);
                     state = .start;
                     result.write(c);
                 },
@@ -140,8 +136,8 @@ pub fn removeComments(source: []const u8, buf: []u8, source_mappings: ?*SourceMa
                 },
             },
             .double_quoted => switch (c) {
-                '\n' => {
-                    line_number += 1;
+                '\r', '\n' => {
+                    _ = line_handler.incrementLineNumber(index);
                     state = .start;
                     result.write(c);
                 },
@@ -158,8 +154,8 @@ pub fn removeComments(source: []const u8, buf: []u8, source_mappings: ?*SourceMa
                 },
             },
             .double_quoted_escape => switch (c) {
-                '\n' => {
-                    line_number += 1;
+                '\r', '\n' => {
+                    _ = line_handler.incrementLineNumber(index);
                     state = .start;
                     result.write(c);
                 },

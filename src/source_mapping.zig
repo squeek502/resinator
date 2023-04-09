@@ -2,6 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const UncheckedSliceWriter = @import("utils.zig").UncheckedSliceWriter;
 const parseQuotedAsciiString = @import("literals.zig").parseQuotedAsciiString;
+const lex = @import("lex.zig");
 
 pub const ParseLineCommandsResult = struct {
     result: []u8,
@@ -60,7 +61,7 @@ pub fn parseAndRemoveLineCommands(allocator: Allocator, source: []const u8, buf:
     var index: usize = 0;
     var pending_start: ?usize = null;
     var preprocessor_start: usize = 0;
-    var line_number: usize = 1;
+    var line_handler = lex.LineHandler{ .buffer = source };
     while (index < source.len) : (index += 1) {
         const c = source[index];
         switch (state) {
@@ -72,11 +73,11 @@ pub fn parseAndRemoveLineCommands(allocator: Allocator, source: []const u8, buf:
                         pending_start = index;
                     }
                 },
-                '\n' => {
-                    try handleLineEnd(allocator, line_number, &parse_result.mappings, &current_mapping);
+                '\r', '\n' => {
+                    try handleLineEnd(allocator, line_handler.line_number, &parse_result.mappings, &current_mapping);
                     if (!current_mapping.ignore_contents) {
                         result.write(c);
-                        line_number += 1;
+                        _ = line_handler.incrementLineNumber(index);
                     }
                     pending_start = null;
                 },
@@ -100,16 +101,16 @@ pub fn parseAndRemoveLineCommands(allocator: Allocator, source: []const u8, buf:
                 },
             },
             .preprocessor => switch (c) {
-                '\n' => {
+                '\r', '\n' => {
                     // Now that we have the full line we can decide what to do with it
                     const preprocessor_str = source[preprocessor_start..index];
                     if (std.mem.startsWith(u8, preprocessor_str, "#line")) {
                         try handleLineCommand(allocator, preprocessor_str, &current_mapping);
                     } else {
-                        try handleLineEnd(allocator, line_number, &parse_result.mappings, &current_mapping);
+                        try handleLineEnd(allocator, line_handler.line_number, &parse_result.mappings, &current_mapping);
                         if (!current_mapping.ignore_contents) {
                             result.writeSlice(source[pending_start.? .. index + 1]);
-                            line_number += 1;
+                            _ = line_handler.incrementLineNumber(index);
                         }
                     }
                     state = .line_start;
@@ -118,11 +119,11 @@ pub fn parseAndRemoveLineCommands(allocator: Allocator, source: []const u8, buf:
                 else => {},
             },
             .non_preprocessor => switch (c) {
-                '\n' => {
-                    try handleLineEnd(allocator, line_number, &parse_result.mappings, &current_mapping);
+                '\r', '\n' => {
+                    try handleLineEnd(allocator, line_handler.line_number, &parse_result.mappings, &current_mapping);
                     if (!current_mapping.ignore_contents) {
                         result.write(c);
-                        line_number += 1;
+                        _ = line_handler.incrementLineNumber(index);
                     }
                     state = .line_start;
                     pending_start = null;
@@ -138,7 +139,7 @@ pub fn parseAndRemoveLineCommands(allocator: Allocator, source: []const u8, buf:
         switch (state) {
             .line_start => {},
             .non_preprocessor => {
-                try handleLineEnd(allocator, line_number, &parse_result.mappings, &current_mapping);
+                try handleLineEnd(allocator, line_handler.line_number, &parse_result.mappings, &current_mapping);
             },
             .preprocessor => {
                 // Now that we have the full line we can decide what to do with it
@@ -146,7 +147,7 @@ pub fn parseAndRemoveLineCommands(allocator: Allocator, source: []const u8, buf:
                 if (std.mem.startsWith(u8, preprocessor_str, "#line")) {
                     try handleLineCommand(allocator, preprocessor_str, &current_mapping);
                 } else {
-                    try handleLineEnd(allocator, line_number, &parse_result.mappings, &current_mapping);
+                    try handleLineEnd(allocator, line_handler.line_number, &parse_result.mappings, &current_mapping);
                     if (!current_mapping.ignore_contents) {
                         result.writeSlice(source[pending_start.?..index]);
                     }
@@ -172,7 +173,7 @@ pub fn parseAndRemoveLineCommands(allocator: Allocator, source: []const u8, buf:
     // In this case, we want to fake a line mapping just so that we return something
     // that is useable in the same way that a non-empty mapping would be.
     if (parse_result.mappings.mapping.items.len == 0) {
-        try handleLineEnd(allocator, line_number, &parse_result.mappings, &current_mapping);
+        try handleLineEnd(allocator, line_handler.line_number, &parse_result.mappings, &current_mapping);
     }
 
     return parse_result;
