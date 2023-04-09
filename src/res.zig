@@ -98,7 +98,8 @@ pub const MemoryFlags = packed struct(u16) {
                 // zig fmt: off
                 .RCDATA, .BITMAP, .HTML, .MANIFEST,
                 .ACCELERATOR, .VERSION, .MESSAGETABLE,
-                .DLGINIT, .TOOLBAR => MemoryFlags{ .value = MOVEABLE | SHARED },
+                .DLGINIT, .TOOLBAR, .PLUGPLAY,
+                .VXD, => MemoryFlags{ .value = MOVEABLE | SHARED },
 
                 .GROUP_ICON, .GROUP_CURSOR,
                 .STRING, .FONT, .DIALOG, .MENU,
@@ -107,10 +108,8 @@ pub const MemoryFlags = packed struct(u16) {
                 .ICON, .CURSOR, .ANIICON, .ANICURSOR => MemoryFlags{ .value = MOVEABLE | DISCARDABLE },
                 .FONTDIR => MemoryFlags{ .value = MOVEABLE | PRELOAD },
                 // zig fmt: on
-                else => {
-                    std.debug.print("TODO: {}\n", .{predefined_resource_type.?});
-                    @panic("TODO");
-                },
+                // Same as predefined_resource_type == null
+                _ => return MemoryFlags{ .value = MOVEABLE | SHARED },
             };
         }
     }
