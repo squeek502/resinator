@@ -168,6 +168,13 @@ pub fn parseAndRemoveLineCommands(allocator: Allocator, source: []const u8, buf:
         parse_result.result.len -= 1;
     }
 
+    // If there have been no line mappings at all, then we're dealing with an empty file.
+    // In this case, we want to fake a line mapping just so that we return something
+    // that is useable in the same way that a non-empty mapping would be.
+    if (parse_result.mappings.mapping.items.len == 0) {
+        try handleLineEnd(allocator, line_number, &parse_result.mappings, &current_mapping);
+    }
+
     return parse_result;
 }
 
@@ -400,7 +407,9 @@ fn expectEqualMappings(expected_spans: []const ExpectedSourceSpan, mappings: Sou
 }
 
 test "basic" {
-    try testParseAndRemoveLineCommands("", &[_]ExpectedSourceSpan{}, "#line 1 \"blah.rc\"", .{});
+    try testParseAndRemoveLineCommands("", &[_]ExpectedSourceSpan{
+        .{ .start_line = 1, .end_line = 1, .filename = "blah.rc" },
+    }, "#line 1 \"blah.rc\"", .{});
 }
 
 test "only removes line commands" {
