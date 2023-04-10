@@ -298,3 +298,19 @@ test "limitedWriter basic usage" {
     try std.testing.expectEqualSlices(u8, "1234", buf[0..4]);
     try std.testing.expectError(error.NoSpaceLeft, writer.write("5"));
 }
+
+/// Cross-platform 'std.fs.Dir.openFile' wrapper that will always return IsDir if
+/// a directory is attempted to be opened.
+/// TODO: Remove once https://github.com/ziglang/zig/issues/5732 is addressed.
+pub fn openFileNotDir(cwd: std.fs.Dir, path: []const u8, flags: std.fs.File.OpenFlags) std.fs.File.OpenError!std.fs.File {
+    const file = try cwd.openFile(path, flags);
+    errdefer file.close();
+    // https://github.com/ziglang/zig/issues/5732
+    if (builtin.os.tag != .windows) {
+        const stat = try file.stat();
+
+        if (stat.kind == .Directory)
+            return error.IsDir;
+    }
+    return file;
+}

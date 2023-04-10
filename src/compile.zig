@@ -223,7 +223,7 @@ pub const Compiler = struct {
     ///       thing of continuing to look for matching files until it finds a valid
     ///       one if a matching file is invalid.
     fn searchForFile(self: *Compiler, path: []const u8) !std.fs.File {
-        const file = self.cwd.openFile(path, .{}) catch |first_err| {
+        const file = utils.openFileNotDir(self.cwd, path, .{}) catch |first_err| {
             // If the path is absolute, then it is not resolved relative to any search
             // paths, so there's no point in checking them.
             //
@@ -291,7 +291,7 @@ pub const Compiler = struct {
         buf.appendAssumeCapacity(std.fs.path.sep);
         buf.appendSliceAssumeCapacity(sub_path);
 
-        return cwd.openFile(buf.items, .{});
+        return utils.openFileNotDir(cwd, buf.items, .{});
     }
 
     pub fn writeResourceExternal(self: *Compiler, node: *Node.ResourceExternal, writer: anytype) !void {
@@ -2964,6 +2964,21 @@ test "filenames as numeric expressions" {
             .{ .type = .note, .str = "the Win32 RC compiler would evaluate this number expression as the filename '-1'" },
         },
         "1 RCDATA (1+-1)",
+        null,
+        tmp_dir.dir,
+    );
+}
+
+test "filename that refers to a directory" {
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    try tmp_dir.dir.makeDir("dir");
+    try testCompileErrorDetailsWithDir(
+        &.{
+            .{ .type = .err, .str = "unable to open file 'dir': IsDir" },
+        },
+        "1 RCDATA dir",
         null,
         tmp_dir.dir,
     );

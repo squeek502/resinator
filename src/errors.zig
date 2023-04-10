@@ -718,7 +718,7 @@ const CorrespondingLines = struct {
         }
 
         var writer = corresponding_lines.lines.writer(allocator);
-        if (cwd.openFile(corresponding_file, .{})) |file| {
+        if (utils.openFileNotDir(cwd, corresponding_file, .{})) |file| {
             defer file.close();
             var buffered_reader = std.io.bufferedReader(file.reader());
             writeLinesFromStream(writer, buffered_reader.reader(), corresponding_span.start_line, corresponding_span.end_line) catch |err| switch (err) {
