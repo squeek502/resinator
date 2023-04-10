@@ -303,9 +303,12 @@ pub const ErrorDetails = struct {
         resource_data_size_exceeds_max,
         control_extra_data_size_exceeds_max,
         version_node_size_exceeds_max,
+        /// `number` is populated and contains a string index for the filename
         number_expression_as_filename,
         /// `number` is populated and contains the control ID that is a duplicate
         control_id_already_defined,
+        /// `number` is populated and contains the disallowed codepoint
+        invalid_filename,
 
         // Literals
         /// `number` is populated
@@ -538,6 +541,14 @@ pub const ErrorDetails = struct {
             .control_id_already_defined => switch (self.type) {
                 .err, .warning => return writer.print("control with id {d} already defined for this dialog", .{self.extra.number}),
                 .note => return writer.print("previous definition of control with id {d} here", .{self.extra.number}),
+            },
+            .invalid_filename => {
+                const disallowed_codepoint = self.extra.number;
+                if (disallowed_codepoint < 128 and std.ascii.isPrint(@intCast(u8, disallowed_codepoint))) {
+                    try writer.print("evaluated filename contains a disallowed character: '{c}'", .{@intCast(u8, disallowed_codepoint)});
+                } else {
+                    try writer.print("evaluated filename contains a disallowed codepoint: <U+{X:0>4}>", .{disallowed_codepoint});
+                }
             },
             .rc_would_miscompile_codepoint_byte_swap => switch (self.type) {
                 .err, .warning => return writer.print("codepoint U+{X} within a string literal would be miscompiled by the Win32 RC compiler (the bytes of the UTF-16 code unit would be swapped)", .{self.extra.number}),

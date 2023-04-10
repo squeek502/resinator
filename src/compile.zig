@@ -327,6 +327,19 @@ pub const Compiler = struct {
         const filename = try self.evaluateFilenameExpression(node.filename);
         defer filename.deinit(self.allocator);
 
+        // TODO: More robust checking of the validity of the filename.
+        //       This currently only checks for NUL bytes, but it should probably also check for
+        //       platform-specific invalid characters like '*', '?', '"', '<', '>', '|' (Windows)
+        //       Related: https://github.com/ziglang/zig/pull/14533#issuecomment-1416888193
+        if (std.mem.indexOfScalar(u8, filename.utf8, 0) != null) {
+            return self.addErrorDetailsAndFail(.{
+                .err = .invalid_filename,
+                // TODO: Make this point to the whole expression rather than just the first token
+                .token = node.filename.getFirstToken(),
+                .extra = .{ .number = 0 },
+            });
+        }
+
         // Allow plain number literals, but complex number expressions are evaluated strangely
         // and almost certainly lead to things not intended by the user (e.g. '(1+-1)' evaluates
         // to the filename '-1'), so error if the filename node is a grouped/binary expression.
@@ -3855,6 +3868,18 @@ test "popup as top-level resource is user-defined" {
         \\1 POPUP {}
     ,
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00(\x00\x00\x00P\x00O\x00P\x00U\x00P\x00\x00\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00",
+        std.fs.cwd(),
+    );
+}
+
+test "invalid char/codepoint in evaluated filename" {
+    try testCompileErrorDetailsWithDir(
+        &.{
+            .{ .type = .err, .str = "evaluated filename contains a disallowed codepoint: <U+0000>" },
+        },
+        \\1 RCDATA "hello\x00world"
+    ,
+        null,
         std.fs.cwd(),
     );
 }
