@@ -21,10 +21,6 @@ pub fn zigMain() !void {
     var mapping_results = try resinator.source_mapping.parseAndRemoveLineCommands(allocator, data, data, .{ .initial_filename = dummy_filename });
     defer mapping_results.mappings.deinit(allocator);
 
-    // Set the root file
-    const root_filename_offset = mapping_results.mappings.files.getOffset(dummy_filename).?;
-    mapping_results.mappings.root_filename_offset = root_filename_offset;
-
     var final_input = resinator.comments.removeComments(mapping_results.result, mapping_results.result, &mapping_results.mappings);
 
     var diagnostics = resinator.errors.Diagnostics.init(allocator);

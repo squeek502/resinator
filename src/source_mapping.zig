@@ -36,6 +36,9 @@ pub const ParseAndRemoveLineCommandsOptions = struct {
 ///
 /// `buf` must be at least as long as `source`
 /// In-place transformation is supported (i.e. `source` and `buf` can be the same slice)
+///
+/// If `options.initial_filename` is provided, that filename is guaranteed to be
+/// within the `mappings.files` table and `root_filename_offset` will be set appropriately.
 pub fn parseAndRemoveLineCommands(allocator: Allocator, source: []const u8, buf: []u8, options: ParseAndRemoveLineCommandsOptions) !ParseLineCommandsResult {
     var parse_result = ParseLineCommandsResult{
         .result = undefined,
@@ -48,6 +51,7 @@ pub fn parseAndRemoveLineCommands(allocator: Allocator, source: []const u8, buf:
 
     if (options.initial_filename) |initial_filename| {
         try current_mapping.filename.appendSlice(allocator, initial_filename);
+        parse_result.mappings.root_filename_offset = try parse_result.mappings.files.put(allocator, initial_filename);
     }
 
     std.debug.assert(buf.len >= source.len);
