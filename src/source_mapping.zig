@@ -212,12 +212,9 @@ pub fn handleLineCommand(allocator: Allocator, line_command: []const u8, current
     if (filename_literal.len < 2) return;
     const is_quoted = filename_literal[0] == '"' and filename_literal[filename_literal.len - 1] == '"';
     if (!is_quoted) return;
-    // TODO might need to use a more general C-style string parser
-    const filename = parseQuotedAsciiString(allocator, .{
-        .slice = filename_literal,
-        .code_page = .windows1252,
-    }, .{}) catch {
-        return;
+    const filename = parseFilename(allocator, filename_literal[1 .. filename_literal.len - 1]) catch |err| switch (err) {
+        error.OutOfMemory => |e| return e,
+        else => return,
     };
     defer allocator.free(filename);
 
@@ -234,6 +231,168 @@ pub fn parseAndRemoveLineCommandsAlloc(allocator: Allocator, source: []const u8,
     var result = try parseAndRemoveLineCommands(allocator, source, buf, options);
     result.result = try allocator.realloc(buf, result.result.len);
     return result;
+}
+
+/// C-style string parsing with a few caveats:
+/// - The str cannot contain newlines or carriage returns
+/// - Hex and octal escape are limited to u8
+/// - No handling/support for L, u, or U prefixed strings
+/// - The start and end double quotes should be omitted from the `str`
+/// - Other than the above, does not assume any validity of the strings (i.e. there
+///   may be unescaped double quotes within the str) and will return error.InvalidString
+///   on any problems found.
+///
+/// The result is a UTF-8 encoded string.
+fn parseFilename(allocator: Allocator, str: []const u8) error{ OutOfMemory, InvalidString }![]u8 {
+    const State = enum {
+        string,
+        escape,
+        escape_hex,
+        escape_octal,
+        escape_u,
+    };
+
+    var filename = try std.ArrayList(u8).initCapacity(allocator, str.len);
+    errdefer filename.deinit();
+    var state: State = .string;
+    var index: usize = 0;
+    var escape_len: usize = undefined;
+    var escape_val: u64 = undefined;
+    var escape_expected_len: u8 = undefined;
+    while (index < str.len) : (index += 1) {
+        const c = str[index];
+        switch (state) {
+            .string => switch (c) {
+                '\\' => state = .escape,
+                '"' => return error.InvalidString,
+                else => filename.appendAssumeCapacity(c),
+            },
+            .escape => switch (c) {
+                '\'', '"', '\\', '?', 'n', 'r', 't', 'a', 'b', 'e', 'f', 'v' => {
+                    const escaped_c = switch (c) {
+                        '\'', '"', '\\', '?' => c,
+                        'n' => '\n',
+                        'r' => '\r',
+                        't' => '\t',
+                        'a' => '\x07',
+                        'b' => '\x08',
+                        'e' => '\x1b', // non-standard
+                        'f' => '\x0c',
+                        'v' => '\x0b',
+                        else => unreachable,
+                    };
+                    filename.appendAssumeCapacity(escaped_c);
+                    state = .string;
+                },
+                'x' => {
+                    escape_val = 0;
+                    escape_len = 0;
+                    state = .escape_hex;
+                },
+                '0'...'7' => {
+                    escape_val = std.fmt.charToDigit(c, 8) catch unreachable;
+                    escape_len = 1;
+                    state = .escape_octal;
+                },
+                'u' => {
+                    escape_val = 0;
+                    escape_len = 0;
+                    state = .escape_u;
+                    escape_expected_len = 4;
+                },
+                'U' => {
+                    escape_val = 0;
+                    escape_len = 0;
+                    state = .escape_u;
+                    escape_expected_len = 8;
+                },
+                else => return error.InvalidString,
+            },
+            .escape_hex => switch (c) {
+                '0'...'9', 'a'...'f', 'A'...'F' => {
+                    const digit = std.fmt.charToDigit(c, 16) catch unreachable;
+                    if (escape_val != 0) escape_val = std.math.mul(u8, @intCast(u8, escape_val), 16) catch return error.InvalidString;
+                    escape_val = std.math.add(u8, @intCast(u8, escape_val), digit) catch return error.InvalidString;
+                    escape_len += 1;
+                },
+                else => {
+                    if (escape_len == 0) return error.InvalidString;
+                    filename.appendAssumeCapacity(@intCast(u8, escape_val));
+                    state = .string;
+                    index -= 1; // reconsume
+                },
+            },
+            .escape_octal => switch (c) {
+                '0'...'7' => {
+                    const digit = std.fmt.charToDigit(c, 8) catch unreachable;
+                    if (escape_val != 0) escape_val = std.math.mul(u8, @intCast(u8, escape_val), 8) catch return error.InvalidString;
+                    escape_val = std.math.add(u8, @intCast(u8, escape_val), digit) catch return error.InvalidString;
+                    escape_len += 1;
+                    if (escape_len == 3) {
+                        filename.appendAssumeCapacity(@intCast(u8, escape_val));
+                        state = .string;
+                    }
+                },
+                else => {
+                    if (escape_len == 0) return error.InvalidString;
+                    filename.appendAssumeCapacity(@intCast(u8, escape_val));
+                    state = .string;
+                    index -= 1; // reconsume
+                },
+            },
+            .escape_u => switch (c) {
+                '0'...'9', 'a'...'f', 'A'...'F' => {
+                    const digit = std.fmt.charToDigit(c, 16) catch unreachable;
+                    if (escape_val != 0) escape_val = std.math.mul(u21, @intCast(u21, escape_val), 16) catch return error.InvalidString;
+                    escape_val = std.math.add(u21, @intCast(u21, escape_val), digit) catch return error.InvalidString;
+                    escape_len += 1;
+                    if (escape_len == escape_expected_len) {
+                        var buf: [4]u8 = undefined;
+                        const utf8_len = std.unicode.utf8Encode(@intCast(u21, escape_val), &buf) catch return error.InvalidString;
+                        filename.appendSliceAssumeCapacity(buf[0..utf8_len]);
+                        state = .string;
+                    }
+                },
+                // Requires escape_expected_len valid hex digits
+                else => return error.InvalidString,
+            },
+        }
+    } else {
+        switch (state) {
+            .string => {},
+            .escape, .escape_u => return error.InvalidString,
+            .escape_hex => {
+                if (escape_len == 0) return error.InvalidString;
+                filename.appendAssumeCapacity(@intCast(u8, escape_val));
+            },
+            .escape_octal => {
+                filename.appendAssumeCapacity(@intCast(u8, escape_val));
+            },
+        }
+    }
+
+    return filename.toOwnedSlice();
+}
+
+fn testParseFilename(expected: []const u8, input: []const u8) !void {
+    const parsed = try parseFilename(std.testing.allocator, input);
+    defer std.testing.allocator.free(parsed);
+
+    return std.testing.expectEqualSlices(u8, expected, parsed);
+}
+
+test parseFilename {
+    try testParseFilename("'\"?\\\t\n\r\x11", "\\'\\\"\\?\\\\\\t\\n\\r\\x11");
+    try testParseFilename("\xABz\x53", "\\xABz\\123");
+    try testParseFilename("⚡⚡", "\\u26A1\\U000026A1");
+    try std.testing.expectError(error.InvalidString, parseFilename(std.testing.allocator, "\""));
+    try std.testing.expectError(error.InvalidString, parseFilename(std.testing.allocator, "\\"));
+    try std.testing.expectError(error.InvalidString, parseFilename(std.testing.allocator, "\\u"));
+    try std.testing.expectError(error.InvalidString, parseFilename(std.testing.allocator, "\\U"));
+    try std.testing.expectError(error.InvalidString, parseFilename(std.testing.allocator, "\\x"));
+    try std.testing.expectError(error.InvalidString, parseFilename(std.testing.allocator, "\\xZZ"));
+    try std.testing.expectError(error.InvalidString, parseFilename(std.testing.allocator, "\\xABCDEF"));
+    try std.testing.expectError(error.InvalidString, parseFilename(std.testing.allocator, "\\777"));
 }
 
 pub const SourceMappings = struct {
