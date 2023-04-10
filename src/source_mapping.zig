@@ -192,23 +192,29 @@ pub fn handleLineEnd(allocator: Allocator, post_processed_line_number: usize, ma
     current_mapping.pending = false;
 }
 
-pub fn handleLineCommand(allocator: Allocator, line_command: []const u8, current_mapping: *CurrentMapping) !void {
-    var tokenizer = std.mem.tokenize(u8, line_command, " \r");
-    _ = tokenizer.next(); // #line
+// TODO: Might want to provide diagnostics on invalid line commands instead of just returning
+pub fn handleLineCommand(allocator: Allocator, line_command: []const u8, current_mapping: *CurrentMapping) error{OutOfMemory}!void {
+    // TODO: Are there other whitespace characters that should be included?
+    var tokenizer = std.mem.tokenize(u8, line_command, " \t");
+    const line_directive = tokenizer.next() orelse return; // #line
+    if (!std.mem.eql(u8, line_directive, "#line")) return;
     const linenum_str = tokenizer.next() orelse return;
     const linenum = std.fmt.parseUnsigned(usize, linenum_str, 10) catch return;
 
-    // TODO handle edge-cases around string literals, garbage after the string literal, etc
     var filename_literal = tokenizer.rest();
-    while (std.ascii.isWhitespace(filename_literal[filename_literal.len - 1])) {
+    while (filename_literal.len > 0 and std.ascii.isWhitespace(filename_literal[filename_literal.len - 1])) {
         filename_literal.len -= 1;
     }
-    std.debug.assert(filename_literal[0] == '"' and filename_literal[filename_literal.len - 1] == '"');
+    if (filename_literal.len < 2) return;
+    const is_quoted = filename_literal[0] == '"' and filename_literal[filename_literal.len - 1] == '"';
+    if (!is_quoted) return;
     // TODO might need to use a more general C-style string parser
-    const filename = try parseQuotedAsciiString(allocator, .{
+    const filename = parseQuotedAsciiString(allocator, .{
         .slice = filename_literal,
         .code_page = .windows1252,
-    }, .{});
+    }, .{}) catch {
+        return;
+    };
     defer allocator.free(filename);
 
     current_mapping.line_num = linenum;
@@ -422,6 +428,12 @@ test "only removes line commands" {
         \\#line 1 "blah.rc"
         \\#pragma code_page(65001)
     , .{});
+}
+
+test "whitespace and line endings" {
+    try testParseAndRemoveLineCommands("", &[_]ExpectedSourceSpan{
+        .{ .start_line = 1, .end_line = 1, .filename = "blah.rc" },
+    }, "#line  \t 1 \t \"blah.rc\"\r\n", .{});
 }
 
 test "example" {
