@@ -53,7 +53,6 @@ pub const RT = enum(u8) {
             .menu => .MENU,
             .menuex => .MENU,
             .messagetable => .MESSAGETABLE,
-            .popup => null,
             .plugplay => .PLUGPLAY,
             .rcdata => .RCDATA,
             .stringtable => null, // TODO: Maybe unreachable?

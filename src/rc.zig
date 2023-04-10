@@ -22,7 +22,6 @@ pub const Resource = enum {
     menu,
     menuex,
     messagetable,
-    popup,
     plugplay, // Obsolete
     rcdata,
     stringtable,
@@ -62,7 +61,6 @@ pub const Resource = enum {
         .{ "MENU", .menu },
         .{ "MENUEX", .menuex },
         .{ "MESSAGETABLE", .messagetable },
-        .{ "POPUP", .popup },
         .{ "PLUGPLAY", .plugplay },
         .{ "RCDATA", .rcdata },
         .{ "STRINGTABLE", .stringtable },
