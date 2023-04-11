@@ -26,6 +26,7 @@ const CodePageLookup = @import("ast.zig").CodePageLookup;
 const SourceMappings = @import("source_mapping.zig").SourceMappings;
 const windows1252 = @import("windows1252.zig");
 const lang = @import("lang.zig");
+const code_pages = @import("code_pages.zig");
 
 pub const CompileOptions = struct {
     cwd: std.fs.Dir,
@@ -169,33 +170,43 @@ pub const Compiler = struct {
                 const literal_node = expression_node.cast(.literal).?;
                 switch (literal_node.token.id) {
                     .literal, .number => {
+                        // TODO: This needs conversion from the current code page to utf8
+                        //       for non-number literals
                         const literal_as_string = literal_node.token.slice(self.source);
                         return .{ .utf8 = literal_as_string };
                     },
-                    .quoted_ascii_string => {
+                    .quoted_ascii_string, .quoted_wide_string => {
                         const slice = literal_node.token.slice(self.source);
                         const column = literal_node.token.calculateColumn(self.source, 8, null);
                         const bytes = SourceBytes{ .slice = slice, .code_page = self.code_pages.getForToken(literal_node.token) };
-                        const parsed = try literals.parseQuotedAsciiString(self.allocator, bytes, .{
+
+                        var buf = std.ArrayList(u8).init(self.allocator);
+                        errdefer buf.deinit();
+
+                        // Filenames are sort-of parsed as if they were wide strings, but the max escape width of
+                        // hex/octal escapes is still determined by the L prefix. Since we want to end up with
+                        // UTF-8, we can parse either string type directly to UTF-8.
+                        var parser = literals.IterativeStringParser.init(bytes, .{
                             .start_column = column,
                             .diagnostics = .{ .diagnostics = self.diagnostics, .token = literal_node.token },
                         });
-                        return .{ .utf8 = parsed, .needs_free = true };
-                    },
-                    .quoted_wide_string => {
-                        // TODO: No need to parse this to UTF-16 and then back to UTF-8
-                        // if it's already UTF-8. Should have a function that parses wide
-                        // strings directly to UTF-8.
-                        const slice = literal_node.token.slice(self.source);
-                        const column = literal_node.token.calculateColumn(self.source, 8, null);
-                        const bytes = SourceBytes{ .slice = slice, .code_page = self.code_pages.getForToken(literal_node.token) };
-                        const parsed_string = try literals.parseQuotedWideString(self.allocator, bytes, .{
-                            .start_column = column,
-                            .diagnostics = .{ .diagnostics = self.diagnostics, .token = literal_node.token },
-                        });
-                        defer self.allocator.free(parsed_string);
-                        const parsed_as_utf8 = try std.unicode.utf16leToUtf8Alloc(self.allocator, parsed_string);
-                        return .{ .utf8 = parsed_as_utf8, .needs_free = true };
+
+                        while (parser.nextUnchecked()) |parsed| {
+                            const c = parsed.codepoint;
+                            if (c == code_pages.Codepoint.invalid) {
+                                try buf.appendSlice("�");
+                            } else {
+                                var codepoint_buf: [4]u8 = undefined;
+                                // If the codepoint cannot be encoded, we fall back to �
+                                if (std.unicode.utf8Encode(c, &codepoint_buf)) |len| {
+                                    try buf.appendSlice(codepoint_buf[0..len]);
+                                } else |_| {
+                                    try buf.appendSlice("�");
+                                }
+                            }
+                        }
+
+                        return .{ .utf8 = try buf.toOwnedSlice(), .needs_free = true };
                     },
                     else => {
                         std.debug.print("unexpected filename token type: {}\n", .{literal_node.token});
@@ -3881,5 +3892,67 @@ test "invalid char/codepoint in evaluated filename" {
     ,
         null,
         std.fs.cwd(),
+    );
+}
+
+test "filename evaluation" {
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    // Wide and non-wide quoted strings behave the same for UTF-8 text
+    try testCompileErrorDetailsWithDir(
+        &.{.{ .type = .err, .str = "unable to open file 'кириллица': FileNotFound" }},
+        \\#pragma code_page(65001)
+        \\1 RCDATA "кириллица"
+    ,
+        null,
+        tmp_dir.dir,
+    );
+    try testCompileErrorDetailsWithDir(
+        &.{.{ .type = .err, .str = "unable to open file 'кириллица': FileNotFound" }},
+        \\#pragma code_page(65001)
+        \\1 RCDATA L"кириллица"
+    ,
+        null,
+        tmp_dir.dir,
+    );
+
+    // Invalid UTF-8 gets converted to �
+    try testCompileErrorDetailsWithDir(
+        &.{.{ .type = .err, .str = "unable to open file '����': FileNotFound" }},
+        "#pragma code_page(65001)\n1 RCDATA \"\xf0\xf0\x80\x80\x80\"",
+        null,
+        tmp_dir.dir,
+    );
+    try testCompileErrorDetailsWithDir(
+        &.{.{ .type = .err, .str = "unable to open file '����': FileNotFound" }},
+        "#pragma code_page(65001)\n1 RCDATA L\"\xf0\xf0\x80\x80\x80\"",
+        null,
+        tmp_dir.dir,
+    );
+
+    // The max width of escapes is dependent on the string being wide
+    try testCompileErrorDetailsWithDir(
+        &.{.{ .type = .err, .str = "unable to open file ' AC': FileNotFound" }},
+        \\1 RCDATA "\x20AC"
+    ,
+        null,
+        tmp_dir.dir,
+    );
+    try testCompileErrorDetailsWithDir(
+        &.{.{ .type = .err, .str = "unable to open file '€': FileNotFound" }},
+        \\1 RCDATA L"\x20AC"
+    ,
+        null,
+        tmp_dir.dir,
+    );
+
+    // Codepoints that cannot be encoded in UTF-8 get converted to �
+    try testCompileErrorDetailsWithDir(
+        &.{.{ .type = .err, .str = "unable to open file '�': FileNotFound" }},
+        \\1 RCDATA L"\xD800"
+    ,
+        null,
+        tmp_dir.dir,
     );
 }
