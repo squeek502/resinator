@@ -29,21 +29,21 @@ pub fn zigMain() !void {
     var output_buf = std.ArrayList(u8).init(allocator);
     defer output_buf.deinit();
 
+    // TODO: Better seed, maybe taking the first few bytes and interpretting as u64
+    const prng_seed = data.len;
+    var prng = std.rand.DefaultPrng.init(prng_seed);
+    const rand = prng.random();
+
     resinator.compile.compile(allocator, final_input, output_buf.writer(), .{
         .cwd = std.fs.cwd(),
         .diagnostics = &diagnostics,
         .source_mappings = &mapping_results.mappings,
         .ignore_include_env_var = true,
-        // TODO: Randomize this?
-        //.default_language_id = options.default_language_id,
-        // TODO: Randomize this
-        //.default_code_page = options.default_code_page orelse .windows1252,
-        // TODO: Randomize this?
-        //.null_terminate_string_table_strings = options.null_terminate_string_table_strings,
-        // TODO: Randomize this?
-        //.max_string_literal_codepoints = options.max_string_literal_codepoints,
-        // TODO: Randomize this?
-        //.warn_instead_of_error_on_invalid_code_page = options.warn_instead_of_error_on_invalid_code_page,
+        .default_language_id = rand.int(u16),
+        .default_code_page = if (rand.boolean()) .utf8 else .windows1252,
+        .null_terminate_string_table_strings = rand.boolean(),
+        .max_string_literal_codepoints = rand.int(u15),
+        .warn_instead_of_error_on_invalid_code_page = rand.boolean(),
     }) catch |err| switch (err) {
         error.ParseError, error.CompileError => {
             diagnostics.renderToStdErr(std.fs.cwd(), final_input, mapping_results.mappings);
