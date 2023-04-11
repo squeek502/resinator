@@ -153,27 +153,33 @@ pub const Compiler = struct {
         }
     }
 
-    const Filename = struct {
-        utf8: []const u8,
-        needs_free: bool = false,
-
-        pub fn deinit(self: Filename, allocator: Allocator) void {
-            if (self.needs_free) {
-                allocator.free(self.utf8);
-            }
-        }
-    };
-
-    pub fn evaluateFilenameExpression(self: *Compiler, expression_node: *Node) !Filename {
+    /// Returns the filename encoded as UTF-8 (allocated by self.allocator)
+    pub fn evaluateFilenameExpression(self: *Compiler, expression_node: *Node) ![]u8 {
         switch (expression_node.id) {
             .literal => {
                 const literal_node = expression_node.cast(.literal).?;
                 switch (literal_node.token.id) {
                     .literal, .number => {
-                        // TODO: This needs conversion from the current code page to utf8
-                        //       for non-number literals
-                        const literal_as_string = literal_node.token.slice(self.source);
-                        return .{ .utf8 = literal_as_string };
+                        const slice = literal_node.token.slice(self.source);
+                        const code_page = self.code_pages.getForToken(literal_node.token);
+                        var buf = try std.ArrayList(u8).initCapacity(self.allocator, slice.len);
+                        errdefer buf.deinit();
+
+                        var index: usize = 0;
+                        while (code_page.codepointAt(index, slice)) |codepoint| : (index += codepoint.byte_len) {
+                            const c = codepoint.value;
+                            if (c == code_pages.Codepoint.invalid) {
+                                try buf.appendSlice("�");
+                            } else {
+                                // Anything that is not returned as an invalid codepoint must be encodable as UTF-8.
+                                const utf8_len = std.unicode.utf8CodepointSequenceLength(c) catch unreachable;
+                                try buf.ensureUnusedCapacity(utf8_len);
+                                _ = std.unicode.utf8Encode(c, buf.unusedCapacitySlice()) catch unreachable;
+                                buf.items.len += utf8_len;
+                            }
+                        }
+
+                        return buf.toOwnedSlice();
                     },
                     .quoted_ascii_string, .quoted_wide_string => {
                         const slice = literal_node.token.slice(self.source);
@@ -206,7 +212,7 @@ pub const Compiler = struct {
                             }
                         }
 
-                        return .{ .utf8 = try buf.toOwnedSlice(), .needs_free = true };
+                        return buf.toOwnedSlice();
                     },
                     else => {
                         std.debug.print("unexpected filename token type: {}\n", .{literal_node.token});
@@ -335,14 +341,14 @@ pub const Compiler = struct {
             return;
         }
 
-        const filename = try self.evaluateFilenameExpression(node.filename);
-        defer filename.deinit(self.allocator);
+        const filename_utf8 = try self.evaluateFilenameExpression(node.filename);
+        defer self.allocator.free(filename_utf8);
 
         // TODO: More robust checking of the validity of the filename.
         //       This currently only checks for NUL bytes, but it should probably also check for
         //       platform-specific invalid characters like '*', '?', '"', '<', '>', '|' (Windows)
         //       Related: https://github.com/ziglang/zig/pull/14533#issuecomment-1416888193
-        if (std.mem.indexOfScalar(u8, filename.utf8, 0) != null) {
+        if (std.mem.indexOfScalar(u8, filename_utf8, 0) != null) {
             return self.addErrorDetailsAndFail(.{
                 .err = .invalid_filename,
                 // TODO: Make this point to the whole expression rather than just the first token
@@ -355,7 +361,7 @@ pub const Compiler = struct {
         // and almost certainly lead to things not intended by the user (e.g. '(1+-1)' evaluates
         // to the filename '-1'), so error if the filename node is a grouped/binary expression.
         if (node.filename.id != .literal) {
-            const filename_string_index = try self.diagnostics.putString(filename.utf8);
+            const filename_string_index = try self.diagnostics.putString(filename_utf8);
             try self.addErrorDetails(.{
                 .err = .number_expression_as_filename,
                 // TODO: Make this point to the whole expression rather than just the first token
@@ -371,10 +377,10 @@ pub const Compiler = struct {
             });
         }
 
-        const file = self.searchForFile(filename.utf8) catch |err| switch (err) {
+        const file = self.searchForFile(filename_utf8) catch |err| switch (err) {
             error.OutOfMemory => |e| return e,
             else => |e| {
-                const filename_string_index = try self.diagnostics.putString(filename.utf8);
+                const filename_string_index = try self.diagnostics.putString(filename_utf8);
                 return self.addErrorDetailsAndFail(.{
                     .err = .file_open_error,
                     // TODO get the most relevant token for filename, e.g. in an expression like (1+-1), get the -1 token
@@ -420,7 +426,7 @@ pub const Compiler = struct {
                         else => |e| {
                             return self.iconReadError(
                                 e,
-                                filename.utf8,
+                                filename_utf8,
                                 // TODO get the most relevant token for filename, e.g. in an expression like (1+-1), get the -1 token
                                 node.filename.getFirstToken(),
                                 predefined_type,
@@ -483,7 +489,7 @@ pub const Compiler = struct {
                         const header_bytes = file.reader().readBytesNoEof(16) catch {
                             return self.iconReadError(
                                 error.UnexpectedEOF,
-                                filename.utf8,
+                                filename_utf8,
                                 // TODO get the most relevant token for filename, e.g. in an expression like (1+-1), get the -1 token
                                 node.filename.getFirstToken(),
                                 predefined_type,
@@ -494,7 +500,7 @@ pub const Compiler = struct {
                         if (!image_format.validate(&header_bytes)) {
                             return self.iconReadError(
                                 error.InvalidHeader,
-                                filename.utf8,
+                                filename_utf8,
                                 // TODO get the most relevant token for filename, e.g. in an expression like (1+-1), get the -1 token
                                 node.filename.getFirstToken(),
                                 predefined_type,
@@ -630,7 +636,7 @@ pub const Compiler = struct {
                     const file_size = try file.getEndPos();
 
                     const bitmap_info = bmp.read(file.reader(), file_size) catch |err| {
-                        const filename_string_index = try self.diagnostics.putString(filename.utf8);
+                        const filename_string_index = try self.diagnostics.putString(filename_utf8);
                         return self.addErrorDetailsAndFail(.{
                             .err = .bmp_read_error,
                             .token = node.filename.getFirstToken(),
@@ -3916,6 +3922,30 @@ test "filename evaluation" {
         null,
         tmp_dir.dir,
     );
+    // Unquoted too
+    try testCompileErrorDetailsWithDir(
+        &.{.{ .type = .err, .str = "unable to open file 'кириллица': FileNotFound" }},
+        \\#pragma code_page(65001)
+        \\1 RCDATA кириллица
+    ,
+        null,
+        tmp_dir.dir,
+    );
+    // Unquoted Windows-1252 should get converted to UTF-8, too
+    // (€ is 0x80 in Windows-1252 but codepoint U+20AC which is encoded as 0xE2 0x82 0xAC in UTF-8)
+    try testCompileErrorDetailsWithDir(
+        &.{.{ .type = .err, .str = "unable to open file '€€€': FileNotFound" }},
+        "#pragma code_page(1252)\n1 RCDATA \x80\x80\x80",
+        null,
+        tmp_dir.dir,
+    );
+    // Same with number literals (0xB2 is ² in Windows-1252)
+    try testCompileErrorDetailsWithDir(
+        &.{.{ .type = .err, .str = "unable to open file '-1²': FileNotFound" }},
+        "#pragma code_page(1252)\n1 RCDATA -1\xB2",
+        null,
+        tmp_dir.dir,
+    );
 
     // Invalid UTF-8 gets converted to �
     try testCompileErrorDetailsWithDir(
@@ -3927,6 +3957,13 @@ test "filename evaluation" {
     try testCompileErrorDetailsWithDir(
         &.{.{ .type = .err, .str = "unable to open file '����': FileNotFound" }},
         "#pragma code_page(65001)\n1 RCDATA L\"\xf0\xf0\x80\x80\x80\"",
+        null,
+        tmp_dir.dir,
+    );
+    // Same with unquoted literals
+    try testCompileErrorDetailsWithDir(
+        &.{.{ .type = .err, .str = "unable to open file '����': FileNotFound" }},
+        "#pragma code_page(65001)\n1 RCDATA \xf0\xf0\x80\x80\x80",
         null,
         tmp_dir.dir,
     );
