@@ -15,6 +15,7 @@ const res = @import("res.zig");
 // TODO: Make these configurable?
 pub const max_nested_menu_level: u32 = 512;
 pub const max_nested_version_level: u32 = 512;
+pub const max_nested_expression_level: u32 = 200;
 
 pub const Parser = struct {
     const Self = @This();
@@ -911,7 +912,8 @@ pub const Parser = struct {
             class = try self.parseExpression(.{});
             if (class.?.id == .literal) {
                 const class_literal = @fieldParentPtr(Node.Literal, "base", class.?);
-                if (class_literal.token.id == .literal and !rc.ControlClass.map.has(class_literal.token.slice(self.lexer.buffer))) {
+                const is_invalid_control_class = class_literal.token.id == .literal and !rc.ControlClass.map.has(class_literal.token.slice(self.lexer.buffer));
+                if (class_literal.token.id == .close_paren or is_invalid_control_class) {
                     return self.addErrorDetailsAndFail(.{
                         .err = .expected_something_else,
                         .token = self.state.token,
@@ -1445,13 +1447,41 @@ pub const Parser = struct {
     pub const ParseExpressionOptions = struct {
         is_known_to_be_number_expression: bool = false,
         can_contain_not_expressions: bool = false,
+        nesting_context: NestingContext = .{},
+
+        pub const NestingContext = struct {
+            first_token: ?Token = null,
+            last_token: ?Token = null,
+            level: u32 = 0,
+
+            /// Returns a new NestingContext with values modified appropriately for an increased nesting level
+            fn incremented(ctx: NestingContext, first_token: Token, most_recent_token: Token) NestingContext {
+                return .{
+                    .first_token = ctx.first_token orelse first_token,
+                    .last_token = most_recent_token,
+                    .level = ctx.level + 1,
+                };
+            }
+        };
     };
 
     /// Expects the current token to have already been dealt with, and that the
     /// expression will start on the next token.
     /// After return, the current token will have been dealt with.
     fn parseExpression(self: *Self, options: ParseExpressionOptions) Error!*Node {
+        if (options.nesting_context.level > max_nested_expression_level) {
+            try self.addErrorDetails(.{
+                .err = .nested_expression_level_exceeds_max,
+                .token = options.nesting_context.first_token.?,
+            });
+            return self.addErrorDetailsAndFail(.{
+                .err = .nested_expression_level_exceeds_max,
+                .type = .note,
+                .token = options.nesting_context.last_token.?,
+            });
+        }
         try self.nextToken(.normal);
+        const first_token = self.state.token;
         const possible_lhs: *Node = lhs: {
             switch (self.state.token.id) {
                 .quoted_ascii_string, .quoted_wide_string => {
@@ -1486,6 +1516,7 @@ pub const Parser = struct {
                     const expression = try self.parseExpression(.{
                         .is_known_to_be_number_expression = true,
                         .can_contain_not_expressions = options.can_contain_not_expressions,
+                        .nesting_context = options.nesting_context.incremented(first_token, open_paren_token),
                     });
 
                     if (!expression.isNumberExpression()) {
@@ -1545,6 +1576,7 @@ pub const Parser = struct {
         const rhs_node = try self.parseExpression(.{
             .is_known_to_be_number_expression = true,
             .can_contain_not_expressions = options.can_contain_not_expressions,
+            .nesting_context = options.nesting_context.incremented(first_token, possible_operator),
         });
 
         if (!rhs_node.isNumberExpression()) {
@@ -3325,6 +3357,51 @@ test "max dialog controls" {
         &.{
             .{ .type = .err, .str = "dialogex contains too many controls (max is 65535)" },
             .{ .type = .note, .str = "maximum number of controls exceeded here" },
+        },
+        source_buffer.items,
+        null,
+    );
+}
+
+test "max expression level" {
+    var source_buffer = std.ArrayList(u8).init(std.testing.allocator);
+    defer source_buffer.deinit();
+
+    try source_buffer.appendSlice("1 RCDATA {\n");
+    for (0..max_nested_expression_level) |_| {
+        try source_buffer.appendSlice("(\n");
+    }
+    try source_buffer.append('1');
+    for (0..max_nested_expression_level) |_| {
+        try source_buffer.appendSlice(")\n");
+    }
+    try source_buffer.appendSlice("}");
+
+    // This should succeed, but we don't care about validating the tree since it's
+    // just a raw data block with a 1 surrounded by a bunch of parens
+    try testParseErrorDetails(
+        &.{},
+        source_buffer.items,
+        null,
+    );
+
+    // Now reset and add 1 more than the max expression level.
+    source_buffer.clearRetainingCapacity();
+    try source_buffer.appendSlice("1 RCDATA {\n");
+    for (0..max_nested_expression_level + 1) |_| {
+        try source_buffer.appendSlice("(\n");
+    }
+    try source_buffer.append('1');
+    for (0..max_nested_expression_level + 1) |_| {
+        try source_buffer.appendSlice(")\n");
+    }
+    try source_buffer.appendSlice("}");
+
+    // Now we should get the 'too many controls' error.
+    try testParseErrorDetails(
+        &.{
+            .{ .type = .err, .str = "expression contains too many syntax levels (max is 200)" },
+            .{ .type = .note, .str = "maximum expression level exceeded here" },
         },
         source_buffer.items,
         null,
