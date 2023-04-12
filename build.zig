@@ -36,6 +36,19 @@ pub fn build(b: *std.build.Builder) void {
     const test_filter = b.option([]const u8, "test-filter", "Skip tests that do not match filter");
     exe_tests.setFilter(test_filter);
 
+    const coverage = b.option(bool, "test-coverage", "Generate test coverage") orelse false;
+
+    if (coverage) {
+        // with kcov
+        exe_tests.setExecCmd(&[_]?[]const u8{
+            "kcov",
+            //"--path-strip-level=3", // any kcov flags can be specified here
+            "--include-pattern=resinator",
+            "kcov-output", // output dir for kcov
+            null, // to get zig to use the --test-cmd-bin flag
+        });
+    }
+
     const test_step = b.step("test", "Run library tests");
     test_step.dependOn(&exe_tests.step);
 
