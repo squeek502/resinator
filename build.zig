@@ -17,24 +17,15 @@ pub fn build(b: *std.build.Builder) void {
         .target = target,
         .optimize = mode,
     });
-    exe.install();
+    b.installArtifact(exe);
 
-    const run_cmd = exe.run();
-    run_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
-    }
-
-    const run_step = b.step("run", "Run the app");
-    run_step.dependOn(&run_cmd.step);
-
+    const test_filter = b.option([]const u8, "test-filter", "Skip tests that do not match filter");
     const exe_tests = b.addTest(.{
         .root_source_file = .{ .path = "src/resinator.zig" },
         .target = target,
         .optimize = mode,
+        .filter = test_filter,
     });
-    const test_filter = b.option([]const u8, "test-filter", "Skip tests that do not match filter");
-    exe_tests.setFilter(test_filter);
 
     const coverage = b.option(bool, "test-coverage", "Generate test coverage") orelse false;
 
@@ -49,8 +40,10 @@ pub fn build(b: *std.build.Builder) void {
         });
     }
 
+    const run_tests = b.addRunArtifact(exe_tests);
+
     const test_step = b.step("test", "Run library tests");
-    test_step.dependOn(&exe_tests.step);
+    test_step.dependOn(&run_tests.step);
 
     const try_all_rcs_exe = b.addExecutable(.{
         .name = "try_all_rcs",
@@ -62,11 +55,9 @@ pub fn build(b: *std.build.Builder) void {
     const install_try_all_rcs_exe = b.addInstallArtifact(try_all_rcs_exe);
     try_all_rcs_compile.dependOn(&install_try_all_rcs_exe.step);
 
-    b.addModule(.{
-        .name = "resinator",
+    const resinator = b.addModule("resinator", .{
         .source_file = .{ .path = "src/resinator.zig" },
     });
-    const resinator = b.modules.get("resinator").?;
 
     const fuzzy_max_iterations = b.option(u64, "fuzzy-iterations", "The max iterations for fuzzy tests (default: 1000)") orelse 1000;
 
@@ -104,10 +95,13 @@ fn addFuzzyTest(
     });
     test_step.addModule("resinator", resinator);
     test_step.addOptions("fuzzy_options", fuzzy_options);
-    const test_run_step = b.step("test_fuzzy_" ++ name, "Some fuzz/property-testing-like tests for " ++ name);
-    test_run_step.dependOn(&test_step.step);
 
-    all_fuzzy_tests_step.dependOn(&test_step.step);
+    const run_test = b.addRunArtifact(test_step);
+
+    var test_run_step = b.step("test_fuzzy_" ++ name, "Some fuzz/property-testing-like tests for " ++ name);
+    test_run_step.dependOn(&run_test.step);
+
+    all_fuzzy_tests_step.dependOn(test_run_step);
 
     return test_step;
 }
