@@ -512,6 +512,10 @@ pub const Parser = struct {
                 // common resource attributes must all be contiguous and come before optional-statements
                 const common_resource_attributes = try self.parseCommonResourceAttributes();
 
+                // TODO: Express to parseExpression that the expression must be a number
+                //       expression so that the error if there's some unexpected token
+                //       makes sense. This should probably be separate from
+                //       `is_known_to_be_number_expression`, like `must_be_number_expression`.
                 const x = try self.parseExpression(.{});
                 try self.checkNumberExpression(x);
                 _ = try self.parseOptionalToken(.comma);
@@ -2742,6 +2746,48 @@ test "dialog controls" {
         \\}
     ,
         null,
+    );
+}
+
+test "optional parameters" {
+    // TODO
+    if (true) return error.SkipZigTest;
+
+    // Optional values (like style, exstyle, helpid) can be empty
+    try testParse(
+        \\1 DIALOGEX 1, 2, 3, 4
+        \\{
+        \\    AUTO3STATE, "text", 900,, 1 2 3 4
+        \\    AUTO3STATE, "text", 901,, 1 2 3 4,
+        \\    AUTO3STATE, "text", 902,, 1 2 3 4, 1
+        \\    AUTO3STATE, "text", 903,, 1 2 3 4, 1,
+        \\    AUTO3STATE, "text", 904,, 1 2 3 4,  ,
+        \\    AUTO3STATE, "text", 905,, 1 2 3 4, 1, 2
+        \\    AUTO3STATE, "text", 906,, 1 2 3 4,  , 2
+        \\    AUTO3STATE, "text", 907,, 1 2 3 4, 1, 2,
+        \\    AUTO3STATE, "text", 908,, 1 2 3 4, 1,  ,
+        \\    AUTO3STATE, "text", 909,, 1 2 3 4,  ,  ,
+        \\    AUTO3STATE, "text", 910,, 1 2 3 4, 1, 2, 3
+        \\    AUTO3STATE, "text", 911,, 1 2 3 4,  , 2, 3
+        \\    AUTO3STATE, "text", 912,, 1 2 3 4,  ,  , 3
+        \\    AUTO3STATE, "text", 913,, 1 2 3 4,  ,  ,
+        \\}
+    ,
+        \\root
+        \\ dialog 1 DIALOGEX [0 common_resource_attributes]
+        \\  x:
+        \\   literal 1
+        \\  y:
+        \\   literal 2
+        \\  width:
+        \\   literal 3
+        \\  height:
+        \\   literal 4
+        \\ {
+        \\  control_statement AUTO3STATE text: "text"
+        \\   TODO
+        \\ }
+        \\
     );
 }
 

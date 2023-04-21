@@ -728,6 +728,12 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
         options.output_filename = try allocator.dupe(u8, output_filename.?);
     }
 
+    // TODO: Check for existence of input file, if it does not exist and
+    //       does not have an extension, append .rc and try again. If the
+    //       .rc appended version exists, then switch input_filename to that.
+    // Note: The Win32 compiler auto-appends .RC if the filename does not have
+    //       a . in it and does not even try the verbatim name.
+
     if (diagnostics.hasError()) {
         return error.ParseError;
     }

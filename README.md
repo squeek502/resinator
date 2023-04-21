@@ -126,6 +126,19 @@ The plan is to use fuzz testing with the `rc` tool as an oracle to ensure that `
 - `.rc` files that use splices (`\` at the end of a line) within strings that include whitespace after the splice will be handled differently.
   + The Win32 RC compiler's preprocessor seems to collapse whitespace after a splice that's within a string, while `clang`'s preprocessor does not. An example of a file for which this behavior difference can be reproduced can be found [here](https://github.com/microsoft/Windows-classic-samples/blob/7cbd99ac1d2b4a0beffbaba29ea63d024ceff700/Samples/Win7Samples/winui/shell/appshellintegration/NonDefaultDropMenuVerb/NonDefaultDropMenuVerb.rc#L10-L20).
 
+### Found divergences that haven't been decided on yet
+
+- The Win32 RC compiler allows unclosed parentheses in certain locations. Examples: `1 DIALOGEX 1( 2, 3, 4 {}`, `1 DIALOGEX 1,(2, 3, 4`, and many more.
+  + This only happens with some things, e.g. `1 RCDATA { 1,(2, 3, 4 }` will error with `mismatched parentheses`.
+  + **Current thoughts:** Seems like a bug in the Win32 implementation to not error with `mismatched parentheses`. Don't really see a reason to be bug-for-bug compatible with this one.
+  + **Current `resinator` behavior:** `error: expected ')', got ','`
+- The Win32 RC compiler allows the `style` parameter of `CONTROL`s within `DIALOG`/`DIALOGEX` resources to be specified as a quoted string, which is then always evaluated as `0`. Example: `CONTROL "text", 1, BUTTON, "50", 1, 2, 3, 4`; the `"50"` is the style parameter and gets written to the `.res` as `0x00000000`.
+  + This does not apply to `x`, `y`, `w`, or `h`: Win32 compiler errors with `expected numerical dialog constant` if they are specified as a quoted string
+  + This does not apply to `exstyle` or `helpid`, which seems to make it parse differently and gives errors like `invalid control type`, `END expected in dialog`.
+  + This does not apply to non-`CONTROL` dialog statements, if e.g. `"50"` is specified as the `style` parameter of a `CHECKBOX` then it behaves like `exstyle` or `helpid` in the previous bullet point.
+  + **Current thoughts:** Seems like a bug in the Win32 implementation to accept quoted strings here. Don't really see a reason to be bug-for-bug compatible with this one.
+  + **Current `resinator` behavior:** `error: expected number or number expression; got '"50"'`
+
 ## Status
 
 Pretty much all known/documented resource types are supported (pending further investigation). `resinator` can successfully compile every `.rc` file in the [Windows-classic-samples repo](https://github.com/microsoft/Windows-classic-samples) byte-for-byte identically to the Win32 RC compiler (this may not be technically true, there are some `.rc` files that need intermediate generated files that aren't fully tested yet).
