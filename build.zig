@@ -77,6 +77,17 @@ pub fn build(b: *std.build.Builder) void {
     _ = addFuzzyTest(b, "bitmaps", mode, target, resinator, all_fuzzy_tests_step, test_options);
 
     _ = addFuzzer(b, "fuzz_rc", &.{}, resinator, target);
+
+    const fuzz_winafl_exe = b.addExecutable(.{
+        .name = "fuzz_winafl",
+        .root_source_file = .{ .path = "test/fuzz_winafl.zig" },
+        .target = target,
+        .optimize = mode,
+    });
+    fuzz_winafl_exe.addModule("resinator", resinator);
+    const fuzz_winafl_compile = b.step("fuzz_winafl", "Build/install fuzz_winafl exe");
+    const install_fuzz_winafl = b.addInstallArtifact(fuzz_winafl_exe);
+    fuzz_winafl_compile.dependOn(&install_fuzz_winafl.step);
 }
 
 fn addFuzzyTest(
