@@ -79,6 +79,15 @@ pub const Diagnostics = struct {
         }
         return false;
     }
+
+    pub fn containsAny(self: *const Diagnostics, errors: []const ErrorDetails.Error) bool {
+        for (self.errors.items) |details| {
+            for (errors) |err| {
+                if (details.err == err) return true;
+            }
+        }
+        return false;
+    }
 };
 
 /// Contains enough context to append errors/warnings/notes etc
@@ -264,6 +273,7 @@ pub const ErrorDetails = struct {
         nested_resource_level_exceeds_max,
         too_many_dialog_controls,
         nested_expression_level_exceeds_max,
+        close_paren_expression,
 
         // Compiler
         /// `string_and_language` is populated
@@ -438,6 +448,9 @@ pub const ErrorDetails = struct {
             .nested_expression_level_exceeds_max => switch (self.type) {
                 .err, .warning => return writer.print("expression contains too many syntax levels (max is {})", .{parse.max_nested_expression_level}),
                 .note => return writer.print("maximum expression level exceeded here", .{}),
+            },
+            .close_paren_expression => {
+                try writer.writeAll("the Win32 RC compiler would accept ')' as a valid expression, but it would be skipped over and potentially lead to unexpected outcomes");
             },
             .string_already_defined => switch (self.type) {
                 // TODO: better printing of language, using constant names from WinNT.h

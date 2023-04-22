@@ -476,22 +476,6 @@ pub const Node = struct {
         }
     }
 
-    /// Some "expressions" are special cases that need to be considered "valid" expressions
-    /// but that don't contribute to anything and are evaluated as if they don't exist at all.
-    /// Currently this is only the case for a single ')' as an expression.
-    pub fn isExpressionAlwaysSkipped(node: *const Node) bool {
-        switch (node.id) {
-            .literal => {
-                const literal = @fieldParentPtr(Node.Literal, "base", node);
-                return switch (literal.token.id) {
-                    .close_paren => true,
-                    else => false,
-                };
-            },
-            else => return false,
-        }
-    }
-
     pub fn getFirstToken(node: *const Node) Token {
         switch (node.id) {
             .root => unreachable,

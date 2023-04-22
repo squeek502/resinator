@@ -780,19 +780,6 @@ pub const Parser = struct {
                 }
 
                 var filename_expression = try self.parseExpression(.{});
-                // Single close paren as an expression is not allowed for filenames
-                if (filename_expression.cast(.literal)) |literal_node| {
-                    if (literal_node.token.id == .close_paren) {
-                        return self.addErrorDetailsAndFail(ErrorDetails{
-                            .err = .expected_something_else,
-                            .token = filename_expression.getFirstToken(),
-                            .extra = .{ .expected_types = .{
-                                .string_literal = true,
-                                .literal = true,
-                            } },
-                        });
-                    }
-                }
 
                 const node = try self.state.arena.create(Node.ResourceExternal);
                 node.* = .{
@@ -846,7 +833,7 @@ pub const Parser = struct {
             const expression = try self.parseExpression(.{});
             try raw_data.append(expression);
 
-            if (!expression.isExpressionAlwaysSkipped() and !expression.isNumberExpression() and !expression.isStringLiteral()) {
+            if (!expression.isNumberExpression() and !expression.isStringLiteral()) {
                 return self.addErrorDetailsAndFail(ErrorDetails{
                     .err = .expected_something_else,
                     .token = expression.getFirstToken(),
@@ -917,7 +904,7 @@ pub const Parser = struct {
             if (class.?.id == .literal) {
                 const class_literal = @fieldParentPtr(Node.Literal, "base", class.?);
                 const is_invalid_control_class = class_literal.token.id == .literal and !rc.ControlClass.map.has(class_literal.token.slice(self.lexer.buffer));
-                if (class_literal.token.id == .close_paren or is_invalid_control_class) {
+                if (is_invalid_control_class) {
                     return self.addErrorDetailsAndFail(.{
                         .err = .expected_something_else,
                         .token = self.state.token,
@@ -1486,6 +1473,7 @@ pub const Parser = struct {
         }
         try self.nextToken(.normal);
         const first_token = self.state.token;
+        var is_close_paren_expression = false;
         const possible_lhs: *Node = lhs: {
             switch (self.state.token.id) {
                 .quoted_ascii_string, .quoted_wide_string => {
@@ -1523,17 +1511,6 @@ pub const Parser = struct {
                         .nesting_context = options.nesting_context.incremented(first_token, open_paren_token),
                     });
 
-                    if (!expression.isNumberExpression()) {
-                        return self.addErrorDetailsAndFail(ErrorDetails{
-                            .err = .expected_something_else,
-                            .token = expression.getFirstToken(),
-                            .extra = .{ .expected_types = .{
-                                .number = true,
-                                .number_expression = true,
-                            } },
-                        });
-                    }
-
                     try self.nextToken(.normal);
                     // TODO: Add context to error about where the open paren is
                     try self.check(.close_paren);
@@ -1547,20 +1524,27 @@ pub const Parser = struct {
                     break :lhs &node.base;
                 },
                 .close_paren => {
-                    // A single close paren counts as a valid "expression", but
-                    // only when its the first and only token in the expression.
-                    // Very strange.
+                    // Note: In the Win32 implementation, a single close paren
+                    // counts as a valid "expression", but only when its the first and
+                    // only token in the expression. Such an expression is then treated
+                    // as a 'skip this expression' instruction. For example:
+                    //   1 RCDATA { 1, ), ), ), 2 }
+                    // will be evaluated as if it were `1 RCDATA { 1, 2 }` and only
+                    // 0x0001 and 0x0002 will be written to the .res data.
+                    //
+                    // This behavior is not emulated because it almost certainly has
+                    // no valid use cases and only introduces edge cases that are
+                    // not worth the effort to track down and deal with. Instead,
+                    // we error but also add a note about the Win32 RC behavior if
+                    // this edge case is detected.
                     if (!options.is_known_to_be_number_expression) {
-                        const node = try self.state.arena.create(Node.Literal);
-                        node.* = .{ .token = self.state.token };
-                        return &node.base;
+                        is_close_paren_expression = true;
                     }
                 },
                 else => {},
             }
 
-            // TODO: This may not be the correct way to handle this in all cases?
-            return self.addErrorDetailsAndFail(ErrorDetails{
+            try self.addErrorDetails(ErrorDetails{
                 .err = .expected_something_else,
                 .token = self.state.token,
                 .extra = .{ .expected_types = .{
@@ -1569,6 +1553,14 @@ pub const Parser = struct {
                     .string_literal = !options.is_known_to_be_number_expression,
                 } },
             });
+            if (is_close_paren_expression) {
+                try self.addErrorDetails(ErrorDetails{
+                    .err = .close_paren_expression,
+                    .type = .note,
+                    .token = self.state.token,
+                });
+            }
+            return error.ParseError;
         };
 
         const possible_operator = try self.lookaheadToken(.normal_expect_operator);
@@ -3278,8 +3270,20 @@ test "parse errors" {
         null,
     );
     try testParseErrorDetails(
-        &.{.{ .type = .err, .str = "expected quoted string literal or unquoted literal; got ')'" }},
+        &.{
+            // TODO: this should only say 'quoted string literal or unquoted literal'
+            .{ .type = .err, .str = "expected number, number expression, or quoted string literal; got ')'" },
+            .{ .type = .note, .str = "the Win32 RC compiler would accept ')' as a valid expression, but it would be skipped over and potentially lead to unexpected outcomes" },
+        },
         "1 RCDATA )",
+        null,
+    );
+    try testParseErrorDetails(
+        &.{
+            .{ .type = .err, .str = "expected number, number expression, or quoted string literal; got ')'" },
+            .{ .type = .note, .str = "the Win32 RC compiler would accept ')' as a valid expression, but it would be skipped over and potentially lead to unexpected outcomes" },
+        },
+        "1 RCDATA { 1, ), 2 }",
         null,
     );
 }

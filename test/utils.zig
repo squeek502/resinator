@@ -27,6 +27,7 @@ pub fn expectSameResOutput(allocator: Allocator, source: []const u8, buffer: *st
                 },
                 else => {},
             }
+            if (diagnostics.contains(.close_paren_expression)) return;
             if (expected_res == null) {
                 return;
             } else {

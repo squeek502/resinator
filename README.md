@@ -98,8 +98,11 @@ The plan is to use fuzz testing with the `rc` tool as an oracle to ensure that `
   + The Win32 RC compiler has different behavior depending on whether or not the value after wrapping on overflow ends up being a known code page ID or not:
     - If the overflowed `u32` wraps and becomes a known code page ID, then it will error/warn with "Codepage not valid:  ignored" (depending on the `/w` option)
     - If the overflowed `u32` wraps and does not become a known code page ID, then it will error with 'constant too big' and 'Codepage not integer'
-- `resinator` will error if a resource's filename is a single unquoted `)` character.
-  + The Win32 RC compiler treats a single `)` as a 'valid' expression that essentially evaluates to an empty string, but when used as a filename it causes strange behavior where it parses as if it were the filename but then it uses the preceding token when actually doing the filename lookup. For example, `1 RCDATA )` will give the error `file not found: RCDATA` rather than the expected `file not found: )`.
+- `resinator` will error if any expression is a single unquoted `)` character.
+  + The Win32 RC compiler treats a single `)` as a 'valid' expression that essentially evaluates to something akin to a 'skip this' instruction when parsing.
+    - When used as a filename it causes strange behavior where it parses as if it were the filename but then it uses the preceding token when actually doing the filename lookup. For example, `1 RCDATA )` will give the error `file not found: RCDATA` rather than the expected `file not found: )`.
+    - When used within a raw data block, it will just skip it as if it wasn't there at all. For example, `1 RCDATA { 1, ), 2 }` will be treated as if it were `1 RCDATA { 1, 2 }`.
+  + Note: The Win32 behavior is not emulated because it very likely has many unexplored edge cases that have very bizarre behavior, and it's very unlikely that (1) this is anything but a bug in the Win32 implementation and (2) there are any valid use-cases of this bug
 - `resinator` will error if a resource's evaluated filename contains a `NUL` (`<0x00>`) character.
   + The Win32 RC compiler will treat the `NUL` character as a terminator (e.g. `1 RCDATA "hello\x00world"` will look for a file named `hello`), but that behavior seems unlikely to be useful and worth disallowing.
 

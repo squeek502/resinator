@@ -90,7 +90,7 @@ pub fn compare(win32_result: *Win32Result, resinator_result: *ResinatorResult) !
     const source = resinator_result.preprocessed.?;
 
     if (win32_result.res == null and resinator_result.res != null) {
-        if (resinator_result.containsError(&.{
+        if (resinator_result.diagnostics.containsAny(&.{
             .rc_would_error_on_bitmap_version,
             .rc_would_error_on_icon_dir,
         })) {
@@ -99,11 +99,12 @@ pub fn compare(win32_result: *Win32Result, resinator_result: *ResinatorResult) !
         return error.ExpectedErrorButDidntGetOne;
     }
     if (win32_result.res != null and resinator_result.res == null) {
-        if (resinator_result.containsError(&.{
+        if (resinator_result.diagnostics.containsAny(&.{
             .illegal_byte_order_mark,
             .illegal_private_use_character,
             .illegal_byte_outside_string_literals,
             .illegal_byte,
+            .close_paren_expression,
         })) {
             return;
         }
@@ -112,7 +113,7 @@ pub fn compare(win32_result: *Win32Result, resinator_result: *ResinatorResult) !
     }
 
     std.testing.expectEqualSlices(u8, win32_result.res.?, resinator_result.res.?) catch |err| {
-        if (resinator_result.containsError(&.{
+        if (resinator_result.diagnostics.containsAny(&.{
             .rc_would_miscompile_version_value_padding,
             .rc_would_miscompile_control_padding,
             .rc_would_miscompile_control_class_ordinal,
@@ -145,15 +146,6 @@ const ResinatorResult = struct {
 
     pub fn didPreproccessorError(self: *const ResinatorResult) bool {
         return self.preprocessor.term != .Exited or self.preprocessor.term.Exited != 0;
-    }
-
-    pub fn containsError(self: *const ResinatorResult, errors: []const resinator.errors.ErrorDetails.Error) bool {
-        for (self.diagnostics.errors.items) |err_details| {
-            for (errors) |err| {
-                if (err_details.err == err) return true;
-            }
-        }
-        return false;
     }
 };
 
