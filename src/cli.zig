@@ -119,6 +119,35 @@ pub const Options = struct {
         try self.symbols.put(self.allocator, duped_key, .undefine);
     }
 
+    /// If the current input filename both:
+    /// - does not have an extension, and
+    /// - does not exist in the cwd
+    /// then this function will append `.rc` to the input filename
+    ///
+    /// Note: This behavior is different from the Win32 compiler.
+    ///       It always appends .RC if the filename does not have
+    ///       a `.` in it and it does not even try the verbatim name
+    ///       in that scenario.
+    ///
+    /// The approach taken here is meant to give us a 'best of both
+    /// worlds' situation where we'll be compatible with most use-cases
+    /// of the .rc extension being omitted from the CLI args, but still
+    /// work fine if the file itself does not have an extension.
+    pub fn maybeAppendRC(options: *Options, cwd: std.fs.Dir) !void {
+        if (std.fs.path.extension(options.input_filename).len == 0) {
+            cwd.access(options.input_filename, .{}) catch |err| switch (err) {
+                error.FileNotFound => {
+                    var filename_bytes = try options.allocator.alloc(u8, options.input_filename.len + 3);
+                    std.mem.copy(u8, filename_bytes, options.input_filename);
+                    std.mem.copy(u8, filename_bytes[filename_bytes.len - 3 ..], ".rc");
+                    options.allocator.free(options.input_filename);
+                    options.input_filename = filename_bytes;
+                },
+                else => {},
+            };
+        }
+    }
+
     pub fn deinit(self: *Options) void {
         for (self.extra_include_paths.items) |extra_include_path| {
             self.allocator.free(extra_include_path);
@@ -267,6 +296,8 @@ pub const Arg = struct {
 
 pub const ParseError = error{ParseError} || Allocator.Error;
 
+/// Note: Does not run `Options.maybeAppendRC` automatically. If that behavior is desired,
+///       it must be called separately.
 pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagnostics) ParseError!Options {
     var options = Options{ .allocator = allocator };
     errdefer options.deinit();
@@ -727,12 +758,6 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
     } else {
         options.output_filename = try allocator.dupe(u8, output_filename.?);
     }
-
-    // TODO: Check for existence of input file, if it does not exist and
-    //       does not have an extension, append .rc and try again. If the
-    //       .rc appended version exists, then switch input_filename to that.
-    // Note: The Win32 compiler auto-appends .RC if the filename does not have
-    //       a . in it and does not even try the verbatim name.
 
     if (diagnostics.hasError()) {
         return error.ParseError;
@@ -1236,4 +1261,26 @@ test "parse: unsupported LCX/LCE-related options" {
         \\     ~^~
         \\
     );
+}
+
+test "maybeAppendRC" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var options = try testParse(&.{ "foo.exe", "foo" });
+    defer options.deinit();
+    try std.testing.expectEqualStrings("foo", options.input_filename);
+
+    // Create the file so that it's found. In this scenario, .rc should not get
+    // appended.
+    var file = try tmp.dir.createFile("foo", .{});
+    file.close();
+    try options.maybeAppendRC(tmp.dir);
+    try std.testing.expectEqualStrings("foo", options.input_filename);
+
+    // Now delete the file and try again. Since the verbatim name is no longer found
+    // and the input filename does not have an extension, .rc should get appended.
+    try tmp.dir.deleteFile("foo");
+    try options.maybeAppendRC(tmp.dir);
+    try std.testing.expectEqualStrings("foo.rc", options.input_filename);
 }

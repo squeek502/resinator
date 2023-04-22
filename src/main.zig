@@ -25,6 +25,7 @@ pub fn main() !void {
             },
             else => |e| return e,
         };
+        try options.maybeAppendRC(std.fs.cwd());
 
         // print any warnings/notes
         cli_diagnostics.renderToStdErr(args);
