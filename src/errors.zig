@@ -197,7 +197,9 @@ pub const ErrorDetails = struct {
         accelerator_type_or_option: bool = false,
         control_class: bool = false,
         literal: bool = false,
-        _: u26 = undefined,
+        // Note: This being 0 instead of undefined is arbitrary and something of a workaround,
+        //       see https://github.com/ziglang/zig/issues/15395
+        _: u26 = 0,
 
         pub const strings = std.ComptimeStringMap([]const u8, .{
             .{ "number", "number" },

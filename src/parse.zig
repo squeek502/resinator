@@ -147,8 +147,8 @@ pub const Parser = struct {
                     const identifier = self.state.token;
                     const value = try self.parseExpression(.{
                         .can_contain_not_expressions = optional_statement_type == .style or optional_statement_type == .exstyle,
+                        .allowed_types = .{ .number = true },
                     });
-                    try self.checkNumberExpression(value);
                     const node = try self.state.arena.create(Node.SimpleStatement);
                     node.* = .{
                         .identifier = identifier,
@@ -186,18 +186,7 @@ pub const Parser = struct {
                 // String or number
                 .class => {
                     const identifier = self.state.token;
-                    const value = try self.parseExpression(.{});
-                    if (!value.isNumberExpression() and !value.isStringLiteral()) {
-                        return self.addErrorDetailsAndFail(ErrorDetails{
-                            .err = .expected_something_else,
-                            .token = value.getFirstToken(),
-                            .extra = .{ .expected_types = .{
-                                .number = true,
-                                .number_expression = true,
-                                .string_literal = true,
-                            } },
-                        });
-                    }
+                    const value = try self.parseExpression(.{ .allowed_types = .{ .number = true, .string = true } });
                     const node = try self.state.arena.create(Node.SimpleStatement);
                     node.* = .{
                         .identifier = identifier,
@@ -225,8 +214,7 @@ pub const Parser = struct {
                 },
                 .font => {
                     const identifier = self.state.token;
-                    const point_size = try self.parseExpression(.{});
-                    try self.checkNumberExpression(point_size);
+                    const point_size = try self.parseExpression(.{ .allowed_types = .{ .number = true } });
 
                     // The comma between point_size and typeface is both optional and
                     // there can be any number of them
@@ -256,20 +244,17 @@ pub const Parser = struct {
                                 {
                                     if (!(try self.parseOptionalToken(.comma))) break :ex_specific;
 
-                                    ex_specific.weight = try self.parseExpression(.{});
-                                    try self.checkNumberExpression(ex_specific.weight.?);
+                                    ex_specific.weight = try self.parseExpression(.{ .allowed_types = .{ .number = true } });
                                 }
                                 {
                                     if (!(try self.parseOptionalToken(.comma))) break :ex_specific;
 
-                                    ex_specific.italic = try self.parseExpression(.{});
-                                    try self.checkNumberExpression(ex_specific.italic.?);
+                                    ex_specific.italic = try self.parseExpression(.{ .allowed_types = .{ .number = true } });
                                 }
                                 {
                                     if (!(try self.parseOptionalToken(.comma))) break :ex_specific;
 
-                                    ex_specific.char_set = try self.parseExpression(.{});
-                                    try self.checkNumberExpression(ex_specific.char_set.?);
+                                    ex_specific.char_set = try self.parseExpression(.{ .allowed_types = .{ .number = true } });
                                 }
                             },
                             .dialog => {},
@@ -346,8 +331,7 @@ pub const Parser = struct {
                         },
                         else => {},
                     }
-                    const id_expression = try self.parseExpression(.{});
-                    try self.checkNumberExpression(id_expression);
+                    const id_expression = try self.parseExpression(.{ .allowed_types = .{ .number = true } });
 
                     const comma_token: ?Token = if (try self.parseOptionalToken(.comma)) self.state.token else null;
 
@@ -448,24 +432,12 @@ pub const Parser = struct {
                         },
                         else => {},
                     }
-                    const event = try self.parseExpression(.{});
-                    if (!event.isNumberExpression() and !event.isStringLiteral()) {
-                        return self.addErrorDetailsAndFail(.{
-                            .err = .expected_something_else,
-                            .token = self.state.token,
-                            .extra = .{ .expected_types = .{
-                                .number = true,
-                                .number_expression = true,
-                                .string_literal = true,
-                            } },
-                        });
-                    }
+                    const event = try self.parseExpression(.{ .allowed_types = .{ .number = true, .string = true } });
 
                     try self.nextToken(.normal);
                     try self.check(.comma);
 
-                    const idvalue = try self.parseExpression(.{});
-                    try self.checkNumberExpression(idvalue);
+                    const idvalue = try self.parseExpression(.{ .allowed_types = .{ .number = true } });
 
                     var type_and_options = std.ArrayListUnmanaged(Token){};
                     while (true) {
@@ -512,29 +484,20 @@ pub const Parser = struct {
                 // common resource attributes must all be contiguous and come before optional-statements
                 const common_resource_attributes = try self.parseCommonResourceAttributes();
 
-                // TODO: Express to parseExpression that the expression must be a number
-                //       expression so that the error if there's some unexpected token
-                //       makes sense. This should probably be separate from
-                //       `is_known_to_be_number_expression`, like `must_be_number_expression`.
-                const x = try self.parseExpression(.{});
-                try self.checkNumberExpression(x);
+                const x = try self.parseExpression(.{ .allowed_types = .{ .number = true } });
                 _ = try self.parseOptionalToken(.comma);
 
-                const y = try self.parseExpression(.{});
-                try self.checkNumberExpression(y);
+                const y = try self.parseExpression(.{ .allowed_types = .{ .number = true } });
                 _ = try self.parseOptionalToken(.comma);
 
-                const width = try self.parseExpression(.{});
-                try self.checkNumberExpression(width);
+                const width = try self.parseExpression(.{ .allowed_types = .{ .number = true } });
                 _ = try self.parseOptionalToken(.comma);
 
-                const height = try self.parseExpression(.{});
-                try self.checkNumberExpression(height);
+                const height = try self.parseExpression(.{ .allowed_types = .{ .number = true } });
 
                 const help_id: ?*Node = help_id: {
                     if (resource == .dialogex and try self.parseOptionalToken(.comma)) {
-                        const expression = try self.parseExpression(.{});
-                        try self.checkNumberExpression(expression);
+                        const expression = try self.parseExpression(.{ .allowed_types = .{ .number = true } });
                         break :help_id expression;
                     }
                     break :help_id null;
@@ -593,14 +556,12 @@ pub const Parser = struct {
                 // common resource attributes must all be contiguous and come before optional-statements
                 const common_resource_attributes = try self.parseCommonResourceAttributes();
 
-                const button_width = try self.parseExpression(.{});
-                try self.checkNumberExpression(button_width);
+                const button_width = try self.parseExpression(.{ .allowed_types = .{ .number = true } });
 
                 try self.nextToken(.normal);
                 try self.check(.comma);
 
-                const button_height = try self.parseExpression(.{});
-                try self.checkNumberExpression(button_height);
+                const button_height = try self.parseExpression(.{ .allowed_types = .{ .number = true } });
 
                 try self.nextToken(.normal);
                 const begin_token = self.state.token;
@@ -717,16 +678,9 @@ pub const Parser = struct {
             .dlginclude => {
                 const common_resource_attributes = try self.parseCommonResourceAttributes();
 
-                var filename_expression = try self.parseExpression(.{});
-                if (!filename_expression.isStringLiteral()) {
-                    return self.addErrorDetailsAndFail(ErrorDetails{
-                        .err = .expected_something_else,
-                        .token = filename_expression.getFirstToken(),
-                        .extra = .{ .expected_types = .{
-                            .string_literal = true,
-                        } },
-                    });
-                }
+                var filename_expression = try self.parseExpression(.{
+                    .allowed_types = .{ .string = true },
+                });
 
                 const node = try self.state.arena.create(Node.ResourceExternal);
                 node.* = .{
@@ -779,7 +733,16 @@ pub const Parser = struct {
                     return &node.base;
                 }
 
-                var filename_expression = try self.parseExpression(.{});
+                var filename_expression = try self.parseExpression(.{
+                    // Don't tell the user that numbers are accepted since we error on
+                    // number expressions and regular number literals are treated as unquoted
+                    // literals rather than numbers, so from the users perspective
+                    // numbers aren't really allowed.
+                    .expected_types_override = .{
+                        .literal = true,
+                        .string_literal = true,
+                    },
+                });
 
                 const node = try self.state.arena.create(Node.ResourceExternal);
                 node.* = .{
@@ -830,20 +793,8 @@ pub const Parser = struct {
                 },
                 else => {},
             }
-            const expression = try self.parseExpression(.{});
+            const expression = try self.parseExpression(.{ .allowed_types = .{ .number = true, .string = true } });
             try raw_data.append(expression);
-
-            if (!expression.isNumberExpression() and !expression.isStringLiteral()) {
-                return self.addErrorDetailsAndFail(ErrorDetails{
-                    .err = .expected_something_else,
-                    .token = expression.getFirstToken(),
-                    .extra = .{ .expected_types = .{
-                        .number = true,
-                        .number_expression = true,
-                        .string_literal = true,
-                    } },
-                });
-            }
 
             if (expression.isNumberExpression()) {
                 const maybe_close_paren = try self.lookaheadToken(.normal);
@@ -892,8 +843,7 @@ pub const Parser = struct {
             try self.skipAnyCommas();
         }
 
-        const id = try self.parseExpression(.{});
-        try self.checkNumberExpression(id);
+        const id = try self.parseExpression(.{ .allowed_types = .{ .number = true } });
 
         try self.skipAnyCommas();
 
@@ -915,39 +865,40 @@ pub const Parser = struct {
                 }
             }
             try self.skipAnyCommas();
-            style = try self.parseExpression(.{ .can_contain_not_expressions = true });
-            try self.checkNumberExpression(style.?);
+            style = try self.parseExpression(.{
+                .can_contain_not_expressions = true,
+                .allowed_types = .{ .number = true },
+            });
             try self.skipAnyCommas();
         }
 
-        const x = try self.parseExpression(.{});
-        try self.checkNumberExpression(x);
+        const x = try self.parseExpression(.{ .allowed_types = .{ .number = true } });
         _ = try self.parseOptionalToken(.comma);
-        const y = try self.parseExpression(.{});
-        try self.checkNumberExpression(y);
+        const y = try self.parseExpression(.{ .allowed_types = .{ .number = true } });
         _ = try self.parseOptionalToken(.comma);
-        const width = try self.parseExpression(.{});
-        try self.checkNumberExpression(width);
+        const width = try self.parseExpression(.{ .allowed_types = .{ .number = true } });
         _ = try self.parseOptionalToken(.comma);
-        const height = try self.parseExpression(.{});
-        try self.checkNumberExpression(height);
+        const height = try self.parseExpression(.{ .allowed_types = .{ .number = true } });
 
         if (control != .control) {
             if (try self.parseOptionalToken(.comma)) {
-                style = try self.parseExpression(.{ .can_contain_not_expressions = true });
-                try self.checkNumberExpression(style.?);
+                style = try self.parseExpression(.{
+                    .can_contain_not_expressions = true,
+                    .allowed_types = .{ .number = true },
+                });
             }
         }
 
         var exstyle: ?*Node = null;
         if (style != null and try self.parseOptionalToken(.comma)) {
-            exstyle = try self.parseExpression(.{ .can_contain_not_expressions = true });
-            try self.checkNumberExpression(exstyle.?);
+            exstyle = try self.parseExpression(.{
+                .can_contain_not_expressions = true,
+                .allowed_types = .{ .number = true },
+            });
         }
         var help_id: ?*Node = null;
         if (resource == .dialogex and exstyle != null and try self.parseOptionalToken(.comma)) {
-            help_id = try self.parseExpression(.{});
-            try self.checkNumberExpression(help_id.?);
+            help_id = try self.parseExpression(.{ .allowed_types = .{ .number = true } });
         }
 
         var extra_data: []*Node = &[_]*Node{};
@@ -993,8 +944,7 @@ pub const Parser = struct {
                 return &node.base;
             },
             .button => {
-                const button_id = try self.parseExpression(.{});
-                try self.checkNumberExpression(button_id);
+                const button_id = try self.parseExpression(.{ .allowed_types = .{ .number = true } });
 
                 const node = try self.state.arena.create(Node.SimpleStatement);
                 node.* = .{
@@ -1056,8 +1006,7 @@ pub const Parser = struct {
                         }
                         try self.skipAnyCommas();
 
-                        const result = try self.parseExpression(.{});
-                        try self.checkNumberExpression(result);
+                        const result = try self.parseExpression(.{ .allowed_types = .{ .number = true } });
 
                         _ = try self.parseOptionalToken(.comma);
 
@@ -1227,8 +1176,7 @@ pub const Parser = struct {
         if ((try self.lookaheadToken(.normal)).id == .comma) {
             return null;
         }
-        const node = try self.parseExpression(.{});
-        try self.checkNumberExpression(node);
+        const node = try self.parseExpression(.{ .allowed_types = .{ .number = true } });
         return node;
     }
 
@@ -1245,8 +1193,7 @@ pub const Parser = struct {
                 var parts = std.BoundedArray(*Node, 4){};
 
                 while (parts.len < 4) {
-                    const value = try self.parseExpression(.{});
-                    try self.checkNumberExpression(value);
+                    const value = try self.parseExpression(.{ .allowed_types = .{ .number = true } });
                     parts.addOneAssumeCapacity().* = value;
 
                     if (parts.len == 4 or !(try self.parseOptionalToken(.comma))) {
@@ -1262,8 +1209,7 @@ pub const Parser = struct {
                 return &node.base;
             },
             else => {
-                const value = try self.parseExpression(.{});
-                try self.checkNumberExpression(value);
+                const value = try self.parseExpression(.{ .allowed_types = .{ .number = true } });
 
                 const node = try self.state.arena.create(Node.SimpleStatement);
                 node.* = .{
@@ -1399,32 +1345,12 @@ pub const Parser = struct {
     fn parseLanguageStatement(self: *Self) Error!*Node {
         const language_token = self.state.token;
 
-        const primary_language = try self.parseExpression(.{});
-        if (!primary_language.isNumberExpression()) {
-            return self.addErrorDetailsAndFail(ErrorDetails{
-                .err = .expected_something_else,
-                .token = primary_language.getFirstToken(),
-                .extra = .{ .expected_types = .{
-                    .number = true,
-                    .number_expression = true,
-                } },
-            });
-        }
+        const primary_language = try self.parseExpression(.{ .allowed_types = .{ .number = true } });
 
         try self.nextToken(.normal);
         try self.check(.comma);
 
-        const sublanguage = try self.parseExpression(.{});
-        if (!sublanguage.isNumberExpression()) {
-            return self.addErrorDetailsAndFail(ErrorDetails{
-                .err = .expected_something_else,
-                .token = sublanguage.getFirstToken(),
-                .extra = .{ .expected_types = .{
-                    .number = true,
-                    .number_expression = true,
-                } },
-            });
-        }
+        const sublanguage = try self.parseExpression(.{ .allowed_types = .{ .number = true } });
 
         const node = try self.state.arena.create(Node.LanguageStatement);
         node.* = .{
@@ -1439,6 +1365,14 @@ pub const Parser = struct {
         is_known_to_be_number_expression: bool = false,
         can_contain_not_expressions: bool = false,
         nesting_context: NestingContext = .{},
+        allowed_types: AllowedTypes = .{ .literal = true, .number = true, .string = true },
+        expected_types_override: ?ErrorDetails.ExpectedTypes = null,
+
+        pub const AllowedTypes = struct {
+            literal: bool = false,
+            number: bool = false,
+            string: bool = false,
+        };
 
         pub const NestingContext = struct {
             first_token: ?Token = null,
@@ -1454,6 +1388,21 @@ pub const Parser = struct {
                 };
             }
         };
+
+        pub fn toErrorDetails(options: ParseExpressionOptions, token: Token) ErrorDetails {
+            // TODO: expected_types_override interaction with is_known_to_be_number_expression?
+            var expected_types = options.expected_types_override orelse ErrorDetails.ExpectedTypes{
+                .number = options.allowed_types.number,
+                .number_expression = options.allowed_types.number,
+                .string_literal = options.allowed_types.string and !options.is_known_to_be_number_expression,
+                .literal = options.allowed_types.literal and !options.is_known_to_be_number_expression,
+            };
+            return ErrorDetails{
+                .err = .expected_something_else,
+                .token = token,
+                .extra = .{ .expected_types = expected_types },
+            };
+        }
     };
 
     /// Expects the current token to have already been dealt with, and that the
@@ -1477,6 +1426,7 @@ pub const Parser = struct {
         const possible_lhs: *Node = lhs: {
             switch (self.state.token.id) {
                 .quoted_ascii_string, .quoted_wide_string => {
+                    if (!options.allowed_types.string) return self.addErrorDetailsAndFail(options.toErrorDetails(self.state.token));
                     const node = try self.state.arena.create(Node.Literal);
                     node.* = .{ .token = self.state.token };
                     return &node.base;
@@ -1486,6 +1436,7 @@ pub const Parser = struct {
                         const not_token = self.state.token;
                         try self.nextToken(.normal);
                         try self.check(.number);
+                        if (!options.allowed_types.number) return self.addErrorDetailsAndFail(options.toErrorDetails(self.state.token));
                         const node = try self.state.arena.create(Node.NotExpression);
                         node.* = .{
                             .not_token = not_token,
@@ -1493,11 +1444,13 @@ pub const Parser = struct {
                         };
                         break :lhs &node.base;
                     }
+                    if (!options.allowed_types.literal) return self.addErrorDetailsAndFail(options.toErrorDetails(self.state.token));
                     const node = try self.state.arena.create(Node.Literal);
                     node.* = .{ .token = self.state.token };
                     return &node.base;
                 },
                 .number => {
+                    if (!options.allowed_types.number) return self.addErrorDetailsAndFail(options.toErrorDetails(self.state.token));
                     const node = try self.state.arena.create(Node.Literal);
                     node.* = .{ .token = self.state.token };
                     break :lhs &node.base;
@@ -1509,12 +1462,14 @@ pub const Parser = struct {
                         .is_known_to_be_number_expression = true,
                         .can_contain_not_expressions = options.can_contain_not_expressions,
                         .nesting_context = options.nesting_context.incremented(first_token, open_paren_token),
+                        .allowed_types = options.allowed_types,
                     });
 
                     try self.nextToken(.normal);
                     // TODO: Add context to error about where the open paren is
                     try self.check(.close_paren);
 
+                    if (!options.allowed_types.number) return self.addErrorDetailsAndFail(options.toErrorDetails(open_paren_token));
                     const node = try self.state.arena.create(Node.GroupedExpression);
                     node.* = .{
                         .open_token = open_paren_token,
@@ -1544,15 +1499,7 @@ pub const Parser = struct {
                 else => {},
             }
 
-            try self.addErrorDetails(ErrorDetails{
-                .err = .expected_something_else,
-                .token = self.state.token,
-                .extra = .{ .expected_types = .{
-                    .number = true,
-                    .number_expression = true,
-                    .string_literal = !options.is_known_to_be_number_expression,
-                } },
-            });
+            try self.addErrorDetails(options.toErrorDetails(self.state.token));
             if (is_close_paren_expression) {
                 try self.addErrorDetails(ErrorDetails{
                     .err = .close_paren_expression,
@@ -1573,6 +1520,7 @@ pub const Parser = struct {
             .is_known_to_be_number_expression = true,
             .can_contain_not_expressions = options.can_contain_not_expressions,
             .nesting_context = options.nesting_context.incremented(first_token, possible_operator),
+            .allowed_types = options.allowed_types,
         });
 
         if (!rhs_node.isNumberExpression()) {
@@ -1705,19 +1653,6 @@ pub const Parser = struct {
                     .extra = .{ .expected = .literal },
                 });
             },
-        }
-    }
-
-    fn checkNumberExpression(self: *Self, expression: *Node) !void {
-        if (!expression.isNumberExpression()) {
-            return self.addErrorDetailsAndFail(ErrorDetails{
-                .err = .expected_something_else,
-                .token = expression.getFirstToken(),
-                .extra = .{ .expected_types = .{
-                    .number = true,
-                    .number_expression = true,
-                } },
-            });
         }
     }
 };
@@ -3271,8 +3206,7 @@ test "parse errors" {
     );
     try testParseErrorDetails(
         &.{
-            // TODO: this should only say 'quoted string literal or unquoted literal'
-            .{ .type = .err, .str = "expected number, number expression, or quoted string literal; got ')'" },
+            .{ .type = .err, .str = "expected quoted string literal or unquoted literal; got ')'" },
             .{ .type = .note, .str = "the Win32 RC compiler would accept ')' as a valid expression, but it would be skipped over and potentially lead to unexpected outcomes" },
         },
         "1 RCDATA )",
