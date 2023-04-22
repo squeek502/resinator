@@ -360,7 +360,8 @@ pub const Compiler = struct {
         // Allow plain number literals, but complex number expressions are evaluated strangely
         // and almost certainly lead to things not intended by the user (e.g. '(1+-1)' evaluates
         // to the filename '-1'), so error if the filename node is a grouped/binary expression.
-        // TODO: This check could be done during parsing instead
+        // Note: This is done here instead of during parsing so that we can easily include
+        //       the evaluated filename as part of the error messages.
         if (node.filename.id != .literal) {
             const filename_string_index = try self.diagnostics.putString(filename_utf8);
             try self.addErrorDetails(.{
