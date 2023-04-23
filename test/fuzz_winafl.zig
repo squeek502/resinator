@@ -112,6 +112,7 @@ pub fn compare(win32_result: *Win32Result, resinator_result: *ResinatorResult) !
             .illegal_byte,
             .close_paren_expression,
             .found_c_style_escaped_quote,
+            .unary_plus_expression,
         })) {
             return;
         }

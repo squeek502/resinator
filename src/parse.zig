@@ -1412,6 +1412,11 @@ pub const Parser = struct {
             } else return false,
             .number => return true,
             .open_paren => return true,
+            .operator => {
+                // + can be a unary operator, see parseExpression's handling of unary +
+                const operator_char = lookahead_token.slice(self.lexer.buffer)[0];
+                return operator_char == '+';
+            },
             else => return false,
         }
     }
@@ -1434,6 +1439,7 @@ pub const Parser = struct {
         try self.nextToken(.normal);
         const first_token = self.state.token;
         var is_close_paren_expression = false;
+        var is_unary_plus_expression = false;
         const possible_lhs: *Node = lhs: {
             switch (self.state.token.id) {
                 .quoted_ascii_string, .quoted_wide_string => {
@@ -1507,6 +1513,38 @@ pub const Parser = struct {
                         is_close_paren_expression = true;
                     }
                 },
+                .operator => {
+                    // In the Win32 implementation, something akin to a unary +
+                    // is allowed but it doesn't behave exactly like a unary +.
+                    // Instead of emulating the Win32 behavior, we instead error
+                    // and add a note about unary plus not being allowed.
+                    //
+                    // This is done because unary + only works in some places,
+                    // and there's no real use-case for it since it's so limited
+                    // in how it can be used (e.g. +1 is accepted but (+1) will error)
+                    //
+                    // Even understanding when unary plus is allowed is difficult, so
+                    // we don't do any fancy detection of when the Win32 RC compiler would
+                    // allow a unary + and instead just output the note in all cases.
+                    //
+                    // Some examples of allowed expressions by the Win32 compiler:
+                    //  +1
+                    //  0|+5
+                    //  +1+2
+                    //  +~-5
+                    //  +(1)
+                    //
+                    // Some examples of disallowed expressions by the Win32 compiler:
+                    //  (+1)
+                    //  ++5
+                    //
+                    // TODO: Potentially re-evaluate and support the unary plus in a bug-for-bug
+                    //       compatible way.
+                    const operator_char = self.state.token.slice(self.lexer.buffer)[0];
+                    if (operator_char == '+') {
+                        is_unary_plus_expression = true;
+                    }
+                },
                 else => {},
             }
 
@@ -1516,6 +1554,15 @@ pub const Parser = struct {
                     .err = .close_paren_expression,
                     .type = .note,
                     .token = self.state.token,
+                    .print_source_line = false,
+                });
+            }
+            if (is_unary_plus_expression) {
+                try self.addErrorDetails(ErrorDetails{
+                    .err = .unary_plus_expression,
+                    .type = .note,
+                    .token = self.state.token,
+                    .print_source_line = false,
                 });
             }
             return error.ParseError;
@@ -3671,6 +3718,17 @@ test "numbers with exponents" {
     try testParseErrorDetails(
         &.{},
         "1 RCDATA { -002e }",
+        null,
+    );
+}
+
+test "unary plus" {
+    try testParseErrorDetails(
+        &.{
+            .{ .type = .err, .str = "expected number, number expression, or quoted string literal; got '+'" },
+            .{ .type = .note, .str = "the Win32 RC compiler may accept '+' as a unary operator here, but it is not supported in this implementation; consider omitting the unary +" },
+        },
+        "1 RCDATA { +2 }",
         null,
     );
 }

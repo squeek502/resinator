@@ -105,6 +105,8 @@ The plan is to use fuzz testing with the `rc` tool as an oracle to ensure that `
   + Note: The Win32 behavior is not emulated because it very likely has many unexplored edge cases that have very bizarre behavior, and it's very unlikely that (1) this is anything but a bug in the Win32 implementation and (2) there are any valid use-cases of this bug
 - `resinator` will error if a resource's evaluated filename contains a `NUL` (`<0x00>`) character.
   + The Win32 RC compiler will treat the `NUL` character as a terminator (e.g. `1 RCDATA "hello\x00world"` will look for a file named `hello`), but that behavior seems unlikely to be useful and worth disallowing.
+- `resinator` will error whenever a unary + operator is used, and emit a note about unary + not being supported in `resinator`'s implementation.
+  + The Win32 RC compiler allows `+` as a unary operator in some places but not others. In things like raw data blocks, it gives an error like `unexpected value in RCDATA`. In `DIALOG` parameters, it does not always give an error (e.g. `+1` is allowed but `(+1)` gives an error).
 
 #### Resource data and `.res` filesize limits
 
@@ -146,10 +148,6 @@ The plan is to use fuzz testing with the `rc` tool as an oracle to ensure that `
   + If the extra expression is a number expression it will no longer ignore it but will behave strangely, e.g. if it is `(30+5)` then `5` will be used as the `x` parameter
   + **Current thoughts:** Definitely a bug in the Win32 implementation. Don't really see a reason to be bug-for-bug compatible with this one, but will need to warn/error when it would affect the output. Most foolproof thing might be to warn whenever the comma is omitted after the style parameter of a `CONTROL` statement, since accounting for all the various miscompilations possible here is not worth the effort.
   + **Current `resinator` behavior:** `error: expected number or number expression; got '"30"'` if the extra expression is not a number expression, or it will treat the extra expression as the `x` parameter (this can lead to different `.res` outputs)
-- The Win32 RC compiler allows `+` as part of a number literal in some places but not others. In things like raw data blocks, it gives an error like `unexpected value in RCDATA`. In `DIALOG` parameters, it does not give an error.
-  + When it is allowed, `-+5` evaluates to `5`, while `+-5` evalutes to `-5`
-  + **Current thoughts:** Very bizarre, but will likely need to add compatibility
-  + **Current `resinator` behavior:** `expected number or number expression; got '+'`
 
 ## Status
 

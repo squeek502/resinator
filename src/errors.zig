@@ -277,6 +277,7 @@ pub const ErrorDetails = struct {
         too_many_dialog_controls,
         nested_expression_level_exceeds_max,
         close_paren_expression,
+        unary_plus_expression,
 
         // Compiler
         /// `string_and_language` is populated
@@ -457,6 +458,9 @@ pub const ErrorDetails = struct {
             },
             .close_paren_expression => {
                 try writer.writeAll("the Win32 RC compiler would accept ')' as a valid expression, but it would be skipped over and potentially lead to unexpected outcomes");
+            },
+            .unary_plus_expression => {
+                try writer.writeAll("the Win32 RC compiler may accept '+' as a unary operator here, but it is not supported in this implementation; consider omitting the unary +");
             },
             .string_already_defined => switch (self.type) {
                 // TODO: better printing of language, using constant names from WinNT.h
