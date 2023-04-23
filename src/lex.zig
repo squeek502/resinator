@@ -1,7 +1,7 @@
 //! Expects to be run after the C preprocessor and after `removeComments`.
 //! This means that the lexer assumes that:
-//! - Splices (\ at the end of a line) have been handled/collapsed.
-//! - Preprocessor directives and macros have been expanded (any remaing should be skipped with the exception of `#pragma code_page`).
+//! - Splices ('\' at the end of a line) have been handled/collapsed.
+//! - Preprocessor directives and macros have been expanded (any remaining should be skipped with the exception of `#pragma code_page`).
 //! - All comments have been removed.
 
 const std = @import("std");

@@ -42,6 +42,9 @@ pub fn removeComments(source: []const u8, buf: []u8, source_mappings: ?*SourceMa
     var line_handler = LineHandler{ .buffer = source };
     while (index < source.len) : (index += 1) {
         const c = source[index];
+        // TODO: Disallow \x1A, \x00, \x7F in comments. At least \x1A and \x00 can definitely
+        //       cause errors or parsing weirdness in the Win32 RC compiler. These are disallowed
+        //       in the lexer, but comments are stripped before getting to the lexer.
         switch (state) {
             .start => switch (c) {
                 '/' => {
