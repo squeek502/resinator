@@ -148,6 +148,12 @@ The plan is to use fuzz testing with the `rc` tool as an oracle to ensure that `
   + If the extra expression is a number expression it will no longer ignore it but will behave strangely, e.g. if it is `(30+5)` then `5` will be used as the `x` parameter
   + **Current thoughts:** Definitely a bug in the Win32 implementation. Don't really see a reason to be bug-for-bug compatible with this one, but will need to warn/error when it would affect the output. Most foolproof thing might be to warn whenever the comma is omitted after the style parameter of a `CONTROL` statement, since accounting for all the various miscompilations possible here is not worth the effort.
   + **Current `resinator` behavior:** `error: expected number or number expression; got '"30"'` if the extra expression is not a number expression, or it will treat the extra expression as the `x` parameter (this can lead to different `.res` outputs)
+- The Win32 RC compiler will sometimes error if subtraction is performed with the right-hand-side evaluating to 0. Example: `1 DIALOGEX 1, 2, 3, 4-0 {}` will error with `BEGIN expected in dialog` (note: the lack of whitespace between the two operands seems to matter). Such expressions never seem to be errors within raw data blocks (e.g. `1 RCDATA { 4-0 }` works fine).
+  + Some more expressions that error: `4-0x0`, `(4-0)`
+  + Some allowed expressions: `4 - 0`, `100--0`, `4-(0)`
+  + Some insight into the ramifications: `1 DIALOGEX 1, 2, 3, 10-0x0+5 {} hello` will error with `file not found: hello` and the verbose output will show `Writing {}:+5`, meaning it is interpreting the `+5 {} hello` after the `10-0x0` as a new resource with a name of `+5` and a resource type of `{}`.
+  + **Current thoughts:** Ideally, `resinator` should successfully parse/compile such expressions, but emit a warning that the Win32 RC compiler would fail to compile them. This is easier said than done, though, since the conditions for when the error would occur are tough to pin down or understand.
+  + **Current `resinator` behavior:** Successful compilation, e.g. `1 DIALOGEX 1, 2, 3, 4-0 {}` compiles as if it were `1 DIALOGEX 1, 2, 3, 4 {}`
 
 ## Status
 
