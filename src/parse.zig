@@ -495,13 +495,8 @@ pub const Parser = struct {
 
                 const height = try self.parseExpression(.{ .allowed_types = .{ .number = true } });
 
-                const help_id: ?*Node = help_id: {
-                    if (resource == .dialogex and try self.parseOptionalToken(.comma)) {
-                        const expression = try self.parseExpression(.{ .allowed_types = .{ .number = true } });
-                        break :help_id expression;
-                    }
-                    break :help_id null;
-                };
+                var optional_param_parser = OptionalParamParser{ .parser = self };
+                const help_id: ?*Node = try optional_param_parser.parse(.{});
 
                 const optional_statements = try self.parseOptionalStatements(resource);
 
@@ -595,16 +590,12 @@ pub const Parser = struct {
                 const optional_statements = try self.parseOptionalStatements(.stringtable);
 
                 var help_id: ?*Node = null;
-                if (resource == .menuex) {
-                    const maybe_number_expression_start = try self.lookaheadToken(.normal);
-                    switch (maybe_number_expression_start.id) {
-                        .number, .open_paren => {
-                            help_id = try self.parseExpression(.{
-                                .is_known_to_be_number_expression = true,
-                            });
-                        },
-                        else => {},
-                    }
+                // Note: No comma is allowed before or after help_id of MENUEX and help_id is not
+                //       a possible field of MENU.
+                if (resource == .menuex and try self.lookaheadCouldBeNumberExpression(.not_disallowed)) {
+                    help_id = try self.parseExpression(.{
+                        .is_known_to_be_number_expression = true,
+                    });
                 }
 
                 try self.nextToken(.normal);
@@ -880,26 +871,16 @@ pub const Parser = struct {
         _ = try self.parseOptionalToken(.comma);
         const height = try self.parseExpression(.{ .allowed_types = .{ .number = true } });
 
+        var optional_param_parser = OptionalParamParser{ .parser = self };
         if (control != .control) {
-            if (try self.parseOptionalToken(.comma)) {
-                style = try self.parseExpression(.{
-                    .can_contain_not_expressions = true,
-                    .allowed_types = .{ .number = true },
-                });
-            }
+            style = try optional_param_parser.parse(.{ .not_expression_allowed = true });
         }
 
-        var exstyle: ?*Node = null;
-        if (style != null and try self.parseOptionalToken(.comma)) {
-            exstyle = try self.parseExpression(.{
-                .can_contain_not_expressions = true,
-                .allowed_types = .{ .number = true },
-            });
-        }
-        var help_id: ?*Node = null;
-        if (resource == .dialogex and exstyle != null and try self.parseOptionalToken(.comma)) {
-            help_id = try self.parseExpression(.{ .allowed_types = .{ .number = true } });
-        }
+        var exstyle: ?*Node = try optional_param_parser.parse(.{ .not_expression_allowed = true });
+        var help_id: ?*Node = switch (resource) {
+            .dialogex => try optional_param_parser.parse(.{}),
+            else => null,
+        };
 
         var extra_data: []*Node = &[_]*Node{};
         var extra_data_begin: ?Token = null;
@@ -1101,10 +1082,10 @@ pub const Parser = struct {
                     });
                 }
 
-                var params_finished = false;
-                const id = try self.parseMenuItemExParam(&params_finished);
-                const item_type = try self.parseMenuItemExParam(&params_finished);
-                const state = try self.parseMenuItemExParam(&params_finished);
+                var param_parser = OptionalParamParser{ .parser = self };
+                const id = try param_parser.parse(.{});
+                const item_type = try param_parser.parse(.{});
+                const state = try param_parser.parse(.{});
 
                 if (menuitem == .menuitem) {
                     // trailing comma is allowed, skip it
@@ -1121,7 +1102,7 @@ pub const Parser = struct {
                     return &node.base;
                 }
 
-                const help_id = try self.parseMenuItemExParam(&params_finished);
+                const help_id = try param_parser.parse(.{});
 
                 // trailing comma is allowed, skip it
                 _ = try self.parseOptionalToken(.comma);
@@ -1165,20 +1146,36 @@ pub const Parser = struct {
         @compileError("unreachable");
     }
 
-    fn parseMenuItemExParam(self: *Self, finished: *bool) Error!?*Node {
-        if (finished.*) return null;
-        if (!(try self.parseOptionalToken(.comma))) {
-            finished.* = true;
+    pub const OptionalParamParser = struct {
+        finished: bool = false,
+        parser: *Self,
+
+        pub const Options = struct {
+            not_expression_allowed: bool = false,
+        };
+
+        pub fn parse(self: *OptionalParamParser, options: OptionalParamParser.Options) Error!?*Node {
+            if (self.finished) return null;
+            if (!(try self.parser.parseOptionalToken(.comma))) {
+                self.finished = true;
+                return null;
+            }
+            // If the next lookahead token could be part of a number expression,
+            // then parse it. Otherwise, treat it as an 'empty' expression and
+            // continue parsing, since 'empty' values are allowed.
+            if (try self.parser.lookaheadCouldBeNumberExpression(switch (options.not_expression_allowed) {
+                true => .not_allowed,
+                false => .not_disallowed,
+            })) {
+                const node = try self.parser.parseExpression(.{
+                    .allowed_types = .{ .number = true },
+                    .can_contain_not_expressions = options.not_expression_allowed,
+                });
+                return node;
+            }
             return null;
         }
-        // consecutive commas is treated as a blank parameter and
-        // there can still be more parameters afterwards
-        if ((try self.lookaheadToken(.normal)).id == .comma) {
-            return null;
-        }
-        const node = try self.parseExpression(.{ .allowed_types = .{ .number = true } });
-        return node;
-    }
+    };
 
     /// Expects the current token to be handled, and that the version statement will
     /// begin on the next token.
@@ -1404,6 +1401,20 @@ pub const Parser = struct {
             };
         }
     };
+
+    /// Returns true if the next lookahead token is a number or could be the start of a number expression.
+    /// Only useful when looking for empty expressions in optional fields.
+    fn lookaheadCouldBeNumberExpression(self: *Self, not_allowed: enum { not_allowed, not_disallowed }) Error!bool {
+        var lookahead_token = try self.lookaheadToken(.normal);
+        switch (lookahead_token.id) {
+            .literal => if (not_allowed == .not_allowed) {
+                return std.ascii.eqlIgnoreCase("NOT", lookahead_token.slice(self.lexer.buffer));
+            } else return false,
+            .number => return true,
+            .open_paren => return true,
+            else => return false,
+        }
+    }
 
     /// Expects the current token to have already been dealt with, and that the
     /// expression will start on the next token.
@@ -2677,12 +2688,9 @@ test "dialog controls" {
 }
 
 test "optional parameters" {
-    // TODO
-    if (true) return error.SkipZigTest;
-
     // Optional values (like style, exstyle, helpid) can be empty
     try testParse(
-        \\1 DIALOGEX 1, 2, 3, 4
+        \\1 DIALOGEX 1, 2, 3, 4,
         \\{
         \\    AUTO3STATE, "text", 900,, 1 2 3 4
         \\    AUTO3STATE, "text", 901,, 1 2 3 4,
@@ -2712,9 +2720,200 @@ test "optional parameters" {
         \\   literal 4
         \\ {
         \\  control_statement AUTO3STATE text: "text"
-        \\   TODO
+        \\   id:
+        \\    literal 900
+        \\   x:
+        \\    literal 1
+        \\   y:
+        \\    literal 2
+        \\   width:
+        \\    literal 3
+        \\   height:
+        \\    literal 4
+        \\  control_statement AUTO3STATE text: "text"
+        \\   id:
+        \\    literal 901
+        \\   x:
+        \\    literal 1
+        \\   y:
+        \\    literal 2
+        \\   width:
+        \\    literal 3
+        \\   height:
+        \\    literal 4
+        \\  control_statement AUTO3STATE text: "text"
+        \\   id:
+        \\    literal 902
+        \\   x:
+        \\    literal 1
+        \\   y:
+        \\    literal 2
+        \\   width:
+        \\    literal 3
+        \\   height:
+        \\    literal 4
+        \\   style:
+        \\    literal 1
+        \\  control_statement AUTO3STATE text: "text"
+        \\   id:
+        \\    literal 903
+        \\   x:
+        \\    literal 1
+        \\   y:
+        \\    literal 2
+        \\   width:
+        \\    literal 3
+        \\   height:
+        \\    literal 4
+        \\   style:
+        \\    literal 1
+        \\  control_statement AUTO3STATE text: "text"
+        \\   id:
+        \\    literal 904
+        \\   x:
+        \\    literal 1
+        \\   y:
+        \\    literal 2
+        \\   width:
+        \\    literal 3
+        \\   height:
+        \\    literal 4
+        \\  control_statement AUTO3STATE text: "text"
+        \\   id:
+        \\    literal 905
+        \\   x:
+        \\    literal 1
+        \\   y:
+        \\    literal 2
+        \\   width:
+        \\    literal 3
+        \\   height:
+        \\    literal 4
+        \\   style:
+        \\    literal 1
+        \\   exstyle:
+        \\    literal 2
+        \\  control_statement AUTO3STATE text: "text"
+        \\   id:
+        \\    literal 906
+        \\   x:
+        \\    literal 1
+        \\   y:
+        \\    literal 2
+        \\   width:
+        \\    literal 3
+        \\   height:
+        \\    literal 4
+        \\   exstyle:
+        \\    literal 2
+        \\  control_statement AUTO3STATE text: "text"
+        \\   id:
+        \\    literal 907
+        \\   x:
+        \\    literal 1
+        \\   y:
+        \\    literal 2
+        \\   width:
+        \\    literal 3
+        \\   height:
+        \\    literal 4
+        \\   style:
+        \\    literal 1
+        \\   exstyle:
+        \\    literal 2
+        \\  control_statement AUTO3STATE text: "text"
+        \\   id:
+        \\    literal 908
+        \\   x:
+        \\    literal 1
+        \\   y:
+        \\    literal 2
+        \\   width:
+        \\    literal 3
+        \\   height:
+        \\    literal 4
+        \\   style:
+        \\    literal 1
+        \\  control_statement AUTO3STATE text: "text"
+        \\   id:
+        \\    literal 909
+        \\   x:
+        \\    literal 1
+        \\   y:
+        \\    literal 2
+        \\   width:
+        \\    literal 3
+        \\   height:
+        \\    literal 4
+        \\  control_statement AUTO3STATE text: "text"
+        \\   id:
+        \\    literal 910
+        \\   x:
+        \\    literal 1
+        \\   y:
+        \\    literal 2
+        \\   width:
+        \\    literal 3
+        \\   height:
+        \\    literal 4
+        \\   style:
+        \\    literal 1
+        \\   exstyle:
+        \\    literal 2
+        \\   help_id:
+        \\    literal 3
+        \\  control_statement AUTO3STATE text: "text"
+        \\   id:
+        \\    literal 911
+        \\   x:
+        \\    literal 1
+        \\   y:
+        \\    literal 2
+        \\   width:
+        \\    literal 3
+        \\   height:
+        \\    literal 4
+        \\   exstyle:
+        \\    literal 2
+        \\   help_id:
+        \\    literal 3
+        \\  control_statement AUTO3STATE text: "text"
+        \\   id:
+        \\    literal 912
+        \\   x:
+        \\    literal 1
+        \\   y:
+        \\    literal 2
+        \\   width:
+        \\    literal 3
+        \\   height:
+        \\    literal 4
+        \\   help_id:
+        \\    literal 3
+        \\  control_statement AUTO3STATE text: "text"
+        \\   id:
+        \\    literal 913
+        \\   x:
+        \\    literal 1
+        \\   y:
+        \\    literal 2
+        \\   width:
+        \\    literal 3
+        \\   height:
+        \\    literal 4
         \\ }
         \\
+    );
+
+    // Trailing comma after help_id is not allowed
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "expected '<'}' or END>', got ','" }},
+        \\1 DIALOGEX 1, 2, 3, 4
+        \\{
+        \\    AUTO3STATE,, "mytext",, 900,, 1 2 3 4, , , ,
+        \\}
+    ,
+        null,
     );
 }
 
@@ -2888,6 +3087,9 @@ test "menus" {
         \\            POPUP "" { MENUITEM "" }
         \\        END
         \\    }
+        \\    POPUP "blah", , , {
+        \\        MENUITEM "blah", , ,
+        \\    }
         \\}
     ,
         \\root
@@ -2925,6 +3127,10 @@ test "menus" {
         \\     menu_item_ex MENUITEM ""
         \\    }
         \\   END
+        \\  }
+        \\  popup_ex POPUP "blah"
+        \\  {
+        \\   menu_item_ex MENUITEM "blah"
         \\  }
         \\ }
         \\
