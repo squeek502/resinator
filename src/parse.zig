@@ -597,8 +597,7 @@ pub const Parser = struct {
             .menu, .menuex => {
                 // common resource attributes must all be contiguous and come before optional-statements
                 const common_resource_attributes = try self.parseCommonResourceAttributes();
-                const optional_statements = try self.parseOptionalStatements(.stringtable);
-
+                // help id is optional but must come between common resource attributes and optional-statements
                 var help_id: ?*Node = null;
                 // Note: No comma is allowed before or after help_id of MENUEX and help_id is not
                 //       a possible field of MENU.
@@ -607,6 +606,7 @@ pub const Parser = struct {
                         .is_known_to_be_number_expression = true,
                     });
                 }
+                const optional_statements = try self.parseOptionalStatements(.stringtable);
 
                 try self.nextToken(.normal);
                 const begin_token = self.state.token;
@@ -3166,7 +3166,7 @@ test "menus" {
     );
 
     try testParse(
-        \\1 MENUEX FIXED VERSION 1 CHARACTERISTICS (1+2) 1000 {
+        \\1 MENUEX FIXED 1000 VERSION 1 CHARACTERISTICS (1+2) {
         \\    MENUITEM "", -1, 0x00000800L
         \\    MENUITEM ""
         \\    MENUITEM "hello",,,,

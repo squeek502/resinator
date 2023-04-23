@@ -54,7 +54,10 @@ pub const StringType = enum { ascii, wide };
 pub const IterativeStringParser = struct {
     source: []const u8,
     code_page: CodePage,
-    string_type: StringType,
+    /// The type of the string inferred by the prefix (L"" or "")
+    /// This is what matters for things like the maximum digits in an
+    /// escape sequence, whether or not invalid escape sequences are skipped, etc.
+    declared_string_type: StringType,
     pending_codepoint: ?u21 = null,
     num_pending_spaces: u8 = 0,
     index: usize = 0,
@@ -73,24 +76,20 @@ pub const IterativeStringParser = struct {
     };
 
     pub fn init(bytes: SourceBytes, options: StringParseOptions) IterativeStringParser {
-        const string_type: StringType = switch (bytes.slice[0]) {
+        const declared_string_type: StringType = switch (bytes.slice[0]) {
             'L', 'l' => .wide,
             else => .ascii,
         };
-        return initType(string_type, bytes, options);
-    }
-
-    pub fn initType(string_type: StringType, bytes: SourceBytes, options: StringParseOptions) IterativeStringParser {
         var source = bytes.slice[1 .. bytes.slice.len - 1]; // remove ""
         var column = options.start_column + 1; // for the removed "
-        if (bytes.slice[0] == 'L' or bytes.slice[0] == 'l') {
+        if (declared_string_type == .wide) {
             source = source[1..]; // remove L
             column += 1; // for the removed L
         }
         return .{
             .source = source,
             .code_page = bytes.code_page,
-            .string_type = string_type,
+            .declared_string_type = declared_string_type,
             .column = column,
             .diagnostics = options.diagnostics,
         };
@@ -147,11 +146,11 @@ pub const IterativeStringParser = struct {
         var state: State = .normal;
         var string_escape_n: u16 = 0;
         var string_escape_i: u8 = 0;
-        const max_octal_escape_digits: u8 = switch (self.string_type) {
+        const max_octal_escape_digits: u8 = switch (self.declared_string_type) {
             .ascii => 3,
             .wide => 7,
         };
-        const max_hex_escape_digits: u8 = switch (self.string_type) {
+        const max_hex_escape_digits: u8 = switch (self.declared_string_type) {
             .ascii => 2,
             .wide => 4,
         };
@@ -245,7 +244,7 @@ pub const IterativeStringParser = struct {
                                 // \" is a special case that doesn't get the \ included,
                                 backtrack = true;
                             },
-                            else => switch (self.string_type) {
+                            else => switch (self.declared_string_type) {
                                 .wide => {}, // invalid escape sequences are skipped in wide strings
                                 .ascii => {
                                     // backtrack so that we handle the current char properly
@@ -282,7 +281,7 @@ pub const IterativeStringParser = struct {
                         string_escape_n +%= std.fmt.charToDigit(@intCast(u8, c), 8) catch unreachable;
                         string_escape_i += 1;
                         if (string_escape_i == max_octal_escape_digits) {
-                            const escaped_value = switch (self.string_type) {
+                            const escaped_value = switch (self.declared_string_type) {
                                 .ascii => @truncate(u8, string_escape_n),
                                 .wide => string_escape_n,
                             };
@@ -294,7 +293,7 @@ pub const IterativeStringParser = struct {
                         // backtrack so that we handle the current char properly
                         backtrack = true;
                         // write out whatever byte we have parsed so far
-                        const escaped_value = switch (self.string_type) {
+                        const escaped_value = switch (self.declared_string_type) {
                             .ascii => @truncate(u8, string_escape_n),
                             .wide => string_escape_n,
                         };
@@ -308,7 +307,7 @@ pub const IterativeStringParser = struct {
                         string_escape_n += std.fmt.charToDigit(@intCast(u8, c), 16) catch unreachable;
                         string_escape_i += 1;
                         if (string_escape_i == max_hex_escape_digits) {
-                            const escaped_value = switch (self.string_type) {
+                            const escaped_value = switch (self.declared_string_type) {
                                 .ascii => @truncate(u8, string_escape_n),
                                 .wide => string_escape_n,
                             };
@@ -321,7 +320,7 @@ pub const IterativeStringParser = struct {
                         backtrack = true;
                         // write out whatever byte we have parsed so far
                         // (even with 0 actual digits, \x alone parses to 0)
-                        const escaped_value = switch (self.string_type) {
+                        const escaped_value = switch (self.declared_string_type) {
                             .ascii => @truncate(u8, string_escape_n),
                             .wide => string_escape_n,
                         };
@@ -341,7 +340,7 @@ pub const IterativeStringParser = struct {
             },
             .escaped, .escaped_cr => return .{ .codepoint = '\\' },
             .escaped_octal, .escaped_hex => {
-                const escaped_value = switch (self.string_type) {
+                const escaped_value = switch (self.declared_string_type) {
                     .ascii => @truncate(u8, string_escape_n),
                     .wide => string_escape_n,
                 };
@@ -374,7 +373,7 @@ pub fn parseQuotedString(
     var buf = try std.ArrayList(T).initCapacity(allocator, bytes.slice.len);
     errdefer buf.deinit();
 
-    var iterative_parser = IterativeStringParser.initType(literal_type, bytes, options);
+    var iterative_parser = IterativeStringParser.init(bytes, options);
 
     while (try iterative_parser.next()) |parsed| {
         const c = parsed.codepoint;
@@ -702,6 +701,28 @@ test "parse quoted ascii string as wide string" {
     try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16LeStringLiteral("кириллица"), try parseQuotedStringAsWideString(
         arena,
         .{ .slice = "\"кириллица\"", .code_page = .utf8 },
+        .{},
+    ));
+    // Whether or not invalid escapes are skipped is still determined by the L prefix
+    try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16LeStringLiteral("\\H"), try parseQuotedStringAsWideString(
+        arena,
+        .{ .slice = "\"\\H\"", .code_page = .windows1252 },
+        .{},
+    ));
+    try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16LeStringLiteral(""), try parseQuotedStringAsWideString(
+        arena,
+        .{ .slice = "L\"\\H\"", .code_page = .windows1252 },
+        .{},
+    ));
+    // Maximum escape sequence value is also determined by the L prefix
+    try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16LeStringLiteral("\x1234"), try parseQuotedStringAsWideString(
+        arena,
+        .{ .slice = "\"\\x1234\"", .code_page = .windows1252 },
+        .{},
+    ));
+    try std.testing.expectEqualSentinel(u16, 0, &[_:0]u16{0x1234}, try parseQuotedStringAsWideString(
+        arena,
+        .{ .slice = "L\"\\x1234\"", .code_page = .windows1252 },
         .{},
     ));
 }

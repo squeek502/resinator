@@ -577,7 +577,7 @@ pub fn parseAcceleratorKeyString(bytes: SourceBytes, is_virt: bool, options: lit
     }
 
     var parser = literals.IterativeStringParser.init(bytes, options);
-    var translator = AcceleratorKeyCodepointTranslator{ .string_type = parser.string_type };
+    var translator = AcceleratorKeyCodepointTranslator{ .string_type = parser.declared_string_type };
 
     const first_codepoint = translator.translate(try parser.next()) orelse return error.InvalidAccelerator;
     // 0 is treated as a terminator, so this is equivalent to an empty string
