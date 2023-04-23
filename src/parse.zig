@@ -305,6 +305,16 @@ pub const Parser = struct {
                 const language_statement = try self.parseLanguageStatement();
                 return language_statement;
             },
+            .version, .characteristics => {
+                const identifier = self.state.token;
+                const value = try self.parseExpression(.{ .allowed_types = .{ .number = true } });
+                const node = try self.state.arena.create(Node.SimpleStatement);
+                node.* = .{
+                    .identifier = identifier,
+                    .value = value,
+                };
+                return &node.base;
+            },
             .stringtable => {
                 // common resource attributes must all be contiguous and come before optional-statements
                 const common_resource_attributes = try self.parseCommonResourceAttributes();
@@ -1984,11 +1994,23 @@ test "control characters as whitespace" {
     ++ "  literal \"\x01\"\n"); // needed to get the actual byte \x01 in the expected output
 }
 
-test "top-level language statement" {
+test "top-level statements" {
     try testParse("LANGUAGE 0, 0",
         \\root
         \\ language_statement LANGUAGE
         \\  literal 0
+        \\  literal 0
+        \\
+    );
+    try testParse("VERSION 0",
+        \\root
+        \\ simple_statement VERSION
+        \\  literal 0
+        \\
+    );
+    try testParse("CHARACTERISTICS 0",
+        \\root
+        \\ simple_statement CHARACTERISTICS
         \\  literal 0
         \\
     );

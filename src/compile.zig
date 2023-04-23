@@ -99,6 +99,8 @@ pub const Compiler = struct {
         string_tables: StringTablesByLanguage = .{},
         language: res.Language = .{},
         font_dir: FontDir = .{},
+        version: u32 = 0,
+        characteristics: u32 = 0,
     };
 
     pub fn writeRoot(self: *Compiler, root: *Node.Root, writer: anytype) !void {
@@ -149,7 +151,7 @@ pub const Compiler = struct {
             .string_table_string => unreachable, // handled by writeStringTable
             .language_statement => self.writeLanguageStatement(@fieldParentPtr(Node.LanguageStatement, "base", node)),
             .font_statement => unreachable,
-            .simple_statement => unreachable,
+            .simple_statement => self.writeTopLevelSimpleStatement(@fieldParentPtr(Node.SimpleStatement, "base", node)),
         }
     }
 
@@ -321,7 +323,15 @@ pub const Compiler = struct {
             .code_page = self.code_pages.getForToken(node.type),
         };
         // Init header with data size zero for now, will need to fill it in later
-        var header = try ResourceHeader.init(self.allocator, id_bytes, type_bytes, 0, self.state.language);
+        var header = try ResourceHeader.init(
+            self.allocator,
+            id_bytes,
+            type_bytes,
+            0,
+            self.state.language,
+            self.state.version,
+            self.state.characteristics,
+        );
         defer header.deinit(self.allocator);
 
         const maybe_predefined_type = header.predefinedResourceType();
@@ -475,6 +485,8 @@ pub const Compiler = struct {
                             .data_size = full_data_size,
                             .memory_flags = icon_memory_flags,
                             .language = self.state.language,
+                            .version = self.state.version,
+                            .characteristics = self.state.characteristics,
                         };
                         try image_header.write(writer);
 
@@ -1044,7 +1056,15 @@ pub const Compiler = struct {
             .slice = type_token.slice(self.source),
             .code_page = self.code_pages.getForToken(type_token),
         };
-        var header = try ResourceHeader.init(self.allocator, id_bytes, type_bytes, data_size, language);
+        var header = try ResourceHeader.init(
+            self.allocator,
+            id_bytes,
+            type_bytes,
+            data_size,
+            language,
+            self.state.version,
+            self.state.characteristics,
+        );
         defer header.deinit(self.allocator);
 
         header.applyMemoryFlags(common_resource_attributes, self.source);
@@ -1142,7 +1162,15 @@ pub const Compiler = struct {
             .slice = node.type.slice(self.source),
             .code_page = self.code_pages.getForToken(node.type),
         };
-        var header = try ResourceHeader.init(self.allocator, id_bytes, type_bytes, data_size, self.state.language);
+        var header = try ResourceHeader.init(
+            self.allocator,
+            id_bytes,
+            type_bytes,
+            data_size,
+            self.state.language,
+            self.state.version,
+            self.state.characteristics,
+        );
         defer header.deinit(self.allocator);
 
         header.applyMemoryFlags(node.common_resource_attributes, self.source);
@@ -1345,7 +1373,15 @@ pub const Compiler = struct {
             .slice = node.type.slice(self.source),
             .code_page = self.code_pages.getForToken(node.type),
         };
-        var header = try ResourceHeader.init(self.allocator, id_bytes, type_bytes, data_size, self.state.language);
+        var header = try ResourceHeader.init(
+            self.allocator,
+            id_bytes,
+            type_bytes,
+            data_size,
+            self.state.language,
+            self.state.version,
+            self.state.characteristics,
+        );
         defer header.deinit(self.allocator);
 
         header.applyMemoryFlags(node.common_resource_attributes, self.source);
@@ -1656,7 +1692,15 @@ pub const Compiler = struct {
             .slice = node.type.slice(self.source),
             .code_page = self.code_pages.getForToken(node.type),
         };
-        var header = try ResourceHeader.init(self.allocator, id_bytes, type_bytes, data_size, self.state.language);
+        var header = try ResourceHeader.init(
+            self.allocator,
+            id_bytes,
+            type_bytes,
+            data_size,
+            self.state.language,
+            self.state.version,
+            self.state.characteristics,
+        );
         defer header.deinit(self.allocator);
 
         header.applyMemoryFlags(node.common_resource_attributes, self.source);
@@ -1732,7 +1776,15 @@ pub const Compiler = struct {
             .slice = node.id.slice(self.source),
             .code_page = self.code_pages.getForToken(node.id),
         };
-        var header = try ResourceHeader.init(self.allocator, id_bytes, type_bytes, data_size, self.state.language);
+        var header = try ResourceHeader.init(
+            self.allocator,
+            id_bytes,
+            type_bytes,
+            data_size,
+            self.state.language,
+            self.state.version,
+            self.state.characteristics,
+        );
         defer header.deinit(self.allocator);
 
         header.applyMemoryFlags(node.common_resource_attributes, self.source);
@@ -1963,7 +2015,15 @@ pub const Compiler = struct {
 
         const type_bytes = self.sourceBytesForToken(node.versioninfo);
         const id_bytes = self.sourceBytesForToken(node.id);
-        var header = try ResourceHeader.init(self.allocator, id_bytes, type_bytes, data_size, self.state.language);
+        var header = try ResourceHeader.init(
+            self.allocator,
+            id_bytes,
+            type_bytes,
+            data_size,
+            self.state.language,
+            self.state.version,
+            self.state.characteristics,
+        );
         defer header.deinit(self.allocator);
 
         header.applyMemoryFlags(node.common_resource_attributes, self.source);
@@ -2079,7 +2139,17 @@ pub const Compiler = struct {
             const string_id_data = try self.evaluateDataExpression(string.id);
             const string_id = string_id_data.number.asWord();
 
-            self.state.string_tables.set(self.arena, language, string_id, string.string, &node.base, self.source, self.code_pages) catch |err| switch (err) {
+            self.state.string_tables.set(
+                self.arena,
+                language,
+                string_id,
+                string.string,
+                &node.base,
+                self.source,
+                self.code_pages,
+                self.state.version,
+                self.state.characteristics,
+            ) catch |err| switch (err) {
                 error.StringAlreadyDefined => {
                     try self.addErrorDetails(ErrorDetails{
                         .err = .string_already_defined,
@@ -2108,16 +2178,27 @@ pub const Compiler = struct {
         self.state.language.sublanguage_id = @truncate(u6, sublanguage.value);
     }
 
+    /// Expects this to be a top-level VERSION or CHARACTERISTICS statement
+    pub fn writeTopLevelSimpleStatement(self: *Compiler, node: *Node.SimpleStatement) void {
+        const value = Compiler.evaluateNumberExpression(node.value, self.source, self.code_pages);
+        const statement_type = rc.TopLevelKeywords.map.get(node.identifier.slice(self.source)).?;
+        switch (statement_type) {
+            .characteristics => self.state.characteristics = value.value,
+            .version => self.state.version = value.value,
+            else => unreachable,
+        }
+    }
+
     pub const ResourceHeader = struct {
         name_value: NameOrOrdinal,
         type_value: NameOrOrdinal,
         language: res.Language,
         memory_flags: MemoryFlags,
         data_size: DWORD,
-        version: DWORD = 0,
-        characteristics: DWORD = 0,
+        version: DWORD,
+        characteristics: DWORD,
 
-        pub fn init(allocator: Allocator, id_bytes: SourceBytes, type_bytes: SourceBytes, data_size: DWORD, language: res.Language) !ResourceHeader {
+        pub fn init(allocator: Allocator, id_bytes: SourceBytes, type_bytes: SourceBytes, data_size: DWORD, language: res.Language, version: DWORD, characteristics: DWORD) !ResourceHeader {
             const type_value = type: {
                 const resource_type = Resource.fromString(type_bytes);
                 if (resource_type != .user_defined) {
@@ -2144,6 +2225,8 @@ pub const Compiler = struct {
                 .data_size = data_size,
                 .memory_flags = MemoryFlags.defaults(predefined_resource_type),
                 .language = language,
+                .version = version,
+                .characteristics = characteristics,
             };
         }
 
@@ -2292,6 +2375,8 @@ pub const Compiler = struct {
             },
             .memory_flags = .{ .value = 0 },
             .data_size = 0,
+            .version = 0,
+            .characteristics = 0,
         };
         try header.write(writer);
     }
@@ -2374,6 +2459,8 @@ pub const FontDir = struct {
             .type_value = NameOrOrdinal{ .ordinal = @enumToInt(res.RT.FONTDIR) },
             .memory_flags = res.MemoryFlags.defaults(res.RT.FONTDIR),
             .language = compiler.state.language,
+            .version = compiler.state.version,
+            .characteristics = compiler.state.characteristics,
             .data_size = data_size,
         };
         defer header.deinit(compiler.allocator);
@@ -2399,12 +2486,23 @@ pub const StringTablesByLanguage = struct {
         self.tables.deinit(allocator);
     }
 
-    pub fn set(self: *StringTablesByLanguage, allocator: Allocator, language: res.Language, id: u16, string_token: Token, node: *Node, source: []const u8, code_page_lookup: *const CodePageLookup) StringTable.SetError!void {
+    pub fn set(
+        self: *StringTablesByLanguage,
+        allocator: Allocator,
+        language: res.Language,
+        id: u16,
+        string_token: Token,
+        node: *Node,
+        source: []const u8,
+        code_page_lookup: *const CodePageLookup,
+        version: u32,
+        characteristics: u32,
+    ) StringTable.SetError!void {
         var get_or_put_result = try self.tables.getOrPut(allocator, language);
         if (!get_or_put_result.found_existing) {
             get_or_put_result.value_ptr.* = StringTable{};
         }
-        return get_or_put_result.value_ptr.set(allocator, id, string_token, node, source, code_page_lookup);
+        return get_or_put_result.value_ptr.set(allocator, id, string_token, node, source, code_page_lookup, version, characteristics);
     }
 };
 
@@ -2419,8 +2517,8 @@ pub const StringTable = struct {
         strings: std.ArrayListUnmanaged(Token) = .{},
         set_indexes: std.bit_set.IntegerBitSet(16) = .{ .mask = 0 },
         memory_flags: MemoryFlags = MemoryFlags.defaults(res.RT.STRING),
-        characteristics: u32 = 0,
-        version: u32 = 0,
+        characteristics: u32,
+        version: u32,
 
         /// Returns the index to insert the string into the `strings` list.
         /// Returns null if the string should be appended.
@@ -2608,13 +2706,23 @@ pub const StringTable = struct {
 
     const SetError = error{StringAlreadyDefined} || Allocator.Error;
 
-    pub fn set(self: *StringTable, allocator: Allocator, id: u16, string_token: Token, node: *Node, source: []const u8, code_page_lookup: *const CodePageLookup) SetError!void {
+    pub fn set(
+        self: *StringTable,
+        allocator: Allocator,
+        id: u16,
+        string_token: Token,
+        node: *Node,
+        source: []const u8,
+        code_page_lookup: *const CodePageLookup,
+        version: u32,
+        characteristics: u32,
+    ) SetError!void {
         const block_id = (id / 16) + 1;
         const string_index: u8 = @intCast(u8, id & 0xF);
 
         var get_or_put_result = try self.blocks.getOrPut(allocator, block_id);
         if (!get_or_put_result.found_existing) {
-            get_or_put_result.value_ptr.* = Block{};
+            get_or_put_result.value_ptr.* = Block{ .version = version, .characteristics = characteristics };
             get_or_put_result.value_ptr.applyNodeAttributes(node, source, code_page_lookup);
         } else {
             if (get_or_put_result.value_ptr.set_indexes.isSet(string_index)) {
@@ -2691,14 +2799,14 @@ test "StringTable" {
 
     // set each one in the randomized order
     for (ids) |id| {
-        try string_table.set(allocator, id, S.makeDummyToken(id), &dummy_node.base, "", &code_page_lookup);
+        try string_table.set(allocator, id, S.makeDummyToken(id), &dummy_node.base, "", &code_page_lookup, 0, 0);
     }
 
     // make sure each one exists and is the right value when gotten
     var id: u16 = 0;
     while (id < 100) : (id += 1) {
         const dummy = S.makeDummyToken(id);
-        try std.testing.expectError(error.StringAlreadyDefined, string_table.set(allocator, id, dummy, &dummy_node.base, "", &code_page_lookup));
+        try std.testing.expectError(error.StringAlreadyDefined, string_table.set(allocator, id, dummy, &dummy_node.base, "", &code_page_lookup, 0, 0));
         try std.testing.expectEqual(dummy, string_table.get(id).?);
     }
 
@@ -3374,6 +3482,19 @@ test "stringtable optional-statements" {
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00*\x00\x00\x00 \x00\x00\x00\xff\xff\x06\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\x01\x04\x00\x00\x00\x00\x00\x00\x00\x00\x05\x00h\x00e\x00l\x00l\x00o\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
         std.fs.cwd(),
     );
+
+    // interaction with top-level version/characteristics
+    try testCompileWithOutput(
+        \\CHARACTERISTICS 1
+        \\STRINGTABLE VERSION 3 { 0 "hello" }
+        \\VERSION 2
+        \\CHARACTERISTICS 2
+        \\STRINGTABLE { 1 "hello" }
+        \\STRINGTABLE { 16 "hello" }
+    ,
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x004\x00\x00\x00 \x00\x00\x00\xff\xff\x06\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x03\x00\x00\x00\x01\x00\x00\x00\x05\x00h\x00e\x00l\x00l\x00o\x00\x05\x00h\x00e\x00l\x00l\x00o\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00*\x00\x00\x00 \x00\x00\x00\xff\xff\x06\x00\xff\xff\x02\x00\x00\x00\x00\x000\x10\t\x04\x02\x00\x00\x00\x02\x00\x00\x00\x05\x00h\x00e\x00l\x00l\x00o\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+        std.fs.cwd(),
+    );
 }
 
 test "separate stringtable per language" {
@@ -3394,15 +3515,19 @@ test "case insensitivity" {
     );
 }
 
-test "top-level language statements" {
+test "top-level statements" {
     try testCompileWithOutput(
         \\1 RCDATA {}
         \\LANGUAGE 1,1
+        \\VERSION 1
+        \\CHARACTERISTICS 1
         \\2 RCDATA {}
         \\LANGUAGE 0,0
+        \\VERSION 2
+        \\CHARACTERISTICS 2
         \\3 RCDATA {}
     ,
-        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x02\x00\x00\x00\x00\x000\x00\x01\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x03\x00\x00\x00\x00\x000\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x02\x00\x00\x00\x00\x000\x00\x01\x04\x01\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x03\x00\x00\x00\x00\x000\x00\x00\x00\x02\x00\x00\x00\x02\x00\x00\x00",
         std.fs.cwd(),
     );
     try testCompileWithOutput(

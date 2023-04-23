@@ -320,10 +320,14 @@ pub const VersionBlock = enum {
 /// of the statement is parsed.
 pub const TopLevelKeywords = enum {
     language,
+    version,
+    characteristics,
     stringtable,
 
     pub const map = utils.ComptimeCaseInsensitiveStringMap(TopLevelKeywords, .{
         .{ "LANGUAGE", .language },
+        .{ "VERSION", .version },
+        .{ "CHARACTERISTICS", .characteristics },
         .{ "STRINGTABLE", .stringtable },
     });
 };
