@@ -69,6 +69,11 @@ pub fn fuzz(input_filepath: []const u8) !void {
     var resinator_result = try getResinatorResult(input_filepath);
     defer resinator_result.deinit();
 
+    if (resinator_result.known_preprocessor_difference) {
+        std.debug.print("known preprocessor difference, skipping\n", .{});
+        return;
+    }
+
     var win32_result = try getWin32Result(input_filepath);
     defer win32_result.deinit();
 
@@ -96,6 +101,7 @@ pub fn compare(win32_result: *Win32Result, resinator_result: *ResinatorResult) !
         })) {
             return;
         }
+        std.debug.print("stdout:\n{s}\nstderr:\n{s}\n", .{ win32_result.exec.stdout, win32_result.exec.stderr });
         return error.ExpectedErrorButDidntGetOne;
     }
     if (win32_result.res != null and resinator_result.res == null) {
@@ -105,6 +111,7 @@ pub fn compare(win32_result: *Win32Result, resinator_result: *ResinatorResult) !
             .illegal_byte_outside_string_literals,
             .illegal_byte,
             .close_paren_expression,
+            .found_c_style_escaped_quote,
         })) {
             return;
         }
@@ -121,6 +128,7 @@ pub fn compare(win32_result: *Win32Result, resinator_result: *ResinatorResult) !
             .rc_would_miscompile_codepoint_byte_swap,
             .rc_would_miscompile_codepoint_skip,
         })) {
+            std.debug.print("intentional difference, ignoring\n", .{});
             return;
         }
         resinator_result.diagnostics.renderToStdErr(std.fs.cwd(), source, null);
@@ -134,20 +142,35 @@ const ResinatorResult = struct {
     preprocessor: std.ChildProcess.ExecResult = undefined,
     /// This is a slice of preprocessor.stdout so it doesn't need to be freed separately
     preprocessed: ?[]const u8 = null,
+    known_preprocessor_difference: bool = false,
 
     pub fn deinit(self: *ResinatorResult) void {
         self.diagnostics.deinit();
         if (self.res) |res| {
             allocator.free(res);
         }
-        allocator.free(self.preprocessor.stdout);
-        allocator.free(self.preprocessor.stderr);
+        if (!self.known_preprocessor_difference) {
+            allocator.free(self.preprocessor.stdout);
+            allocator.free(self.preprocessor.stderr);
+        }
     }
 
     pub fn didPreproccessorError(self: *const ResinatorResult) bool {
         return self.preprocessor.term != .Exited or self.preprocessor.term.Exited != 0;
     }
 };
+
+fn inputContainsKnownPreprocessorDifference(data: []const u8) bool {
+    // Look for \r without any newlines before/after
+    for (data, 0..) |c, i| {
+        if (c == '\r') {
+            const newline_before = i > 0 and data[i - 1] == '\n';
+            const newline_after = i < data.len - 1 and data[i + 1] == '\n';
+            if (!newline_before and !newline_after) return true;
+        }
+    }
+    return false;
+}
 
 pub fn getResinatorResult(input_filepath: []const u8) !ResinatorResult {
     var result = ResinatorResult{
@@ -157,6 +180,11 @@ pub fn getResinatorResult(input_filepath: []const u8) !ResinatorResult {
 
     var data = try std.fs.cwd().readFileAlloc(allocator, input_filepath, std.math.maxInt(usize));
     defer allocator.free(data);
+
+    if (inputContainsKnownPreprocessorDifference(data)) {
+        result.known_preprocessor_difference = true;
+        return result;
+    }
 
     var argv = std.ArrayList([]const u8).init(allocator);
     defer argv.deinit();
