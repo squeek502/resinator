@@ -131,16 +131,25 @@ The plan is to use fuzz testing with the `rc` tool as an oracle to ensure that `
 
 ### Found divergences that haven't been decided on yet
 
-- The Win32 RC compiler allows unclosed parentheses in certain locations. Examples: `1 DIALOGEX 1( 2, 3, 4 {}`, `1 DIALOGEX 1,(2, 3, 4`, and many more.
+- The Win32 RC compiler allows unclosed parentheses in certain locations. Examples: `1 DIALOGEX 1( 2, 3, 4 {}`, `1 DIALOGEX 1,(2, 3, 4 {}`, and many more.
   + This only happens with some things, e.g. `1 RCDATA { 1,(2, 3, 4 }` will error with `mismatched parentheses`.
   + **Current thoughts:** Seems like a bug in the Win32 implementation to not error with `mismatched parentheses`. Don't really see a reason to be bug-for-bug compatible with this one.
   + **Current `resinator` behavior:** `error: expected ')', got ','`
-- The Win32 RC compiler allows the `style` parameter of `CONTROL`s within `DIALOG`/`DIALOGEX` resources to be specified as a quoted string, which is then always evaluated as `0`. Example: `CONTROL "text", 1, BUTTON, "50", 1, 2, 3, 4`; the `"50"` is the style parameter and gets written to the `.res` as `0x00000000`.
+- The Win32 RC compiler allows the `style` parameter of `CONTROL`s within `DIALOG`/`DIALOGEX` resources to be specified as a quoted string or the character `=`, which is then always evaluated as `0`. Example: `CONTROL "text", 1, BUTTON, "50", 1, 2, 3, 4`; the `"50"` is the style parameter and gets written to the `.res` as `0x00000000`.
   + This does not apply to `x`, `y`, `w`, or `h`: Win32 compiler errors with `expected numerical dialog constant` if they are specified as a quoted string
   + This does not apply to `exstyle` or `helpid`, which seems to make it parse differently and gives errors like `invalid control type`, `END expected in dialog`.
   + This does not apply to non-`CONTROL` dialog statements, if e.g. `"50"` is specified as the `style` parameter of a `CHECKBOX` then it behaves like `exstyle` or `helpid` in the previous bullet point.
   + **Current thoughts:** Seems like a bug in the Win32 implementation to accept quoted strings here. Don't really see a reason to be bug-for-bug compatible with this one.
   + **Current `resinator` behavior:** `error: expected number or number expression; got '"50"'`
+- The Win32 RC compiler allows an extra expression after the `style` parameter of `CONTROL`s within `DIALOG`/`DIALOGEX` resources, but only if there is no comma separating them. Example: `CONTROL "text", 1, BUTTON, 15 30, 1, 2, 3, 4`; the `15` is the style parameter and the `30` is completely ignored (i.e. the `1, 2, 3, 4` are `x`, `y`, `w`, `h`).
+  + The extra expression can be various things (quoted string, `=`, etc) but not *anything*, e.g. if it's `;` then it will error with `expected numerical dialog constant`
+  + If the extra expression is a number expression it will no longer ignore it but will behave strangely, e.g. if it is `(30+5)` then `5` will be used as the `x` parameter
+  + **Current thoughts:** Definitely a bug in the Win32 implementation. Don't really see a reason to be bug-for-bug compatible with this one, but will need to warn/error when it would affect the output. Most foolproof thing might be to warn whenever the comma is omitted after the style parameter of a `CONTROL` statement, since accounting for all the various miscompilations possible here is not worth the effort.
+  + **Current `resinator` behavior:** `error: expected number or number expression; got '"30"'` if the extra expression is not a number expression, or it will treat the extra expression as the `x` parameter (this can lead to different `.res` outputs)
+- The Win32 RC compiler allows `+` as part of a number literal in some places but not others. In things like raw data blocks, it gives an error like `unexpected value in RCDATA`. In `DIALOG` parameters, it does not give an error.
+  + When it is allowed, `-+5` evaluates to `5`, while `+-5` evalutes to `-5`
+  + **Current thoughts:** Very bizarre, but will likely need to add compatibility
+  + **Current `resinator` behavior:** `expected number or number expression; got '+'`
 
 ## Status
 
