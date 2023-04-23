@@ -137,7 +137,7 @@ The plan is to use fuzz testing with the `rc` tool as an oracle to ensure that `
   + This only happens with some things, e.g. `1 RCDATA { 1,(2, 3, 4 }` will error with `mismatched parentheses`.
   + **Current thoughts:** Seems like a bug in the Win32 implementation to not error with `mismatched parentheses`. Don't really see a reason to be bug-for-bug compatible with this one.
   + **Current `resinator` behavior:** `error: expected ')', got ','`
-- The Win32 RC compiler allows the `style` parameter of `CONTROL`s within `DIALOG`/`DIALOGEX` resources to be specified as a quoted string or the character `=`, which is then always evaluated as `0`. Example: `CONTROL "text", 1, BUTTON, "50", 1, 2, 3, 4`; the `"50"` is the style parameter and gets written to the `.res` as `0x00000000`.
+- The Win32 RC compiler allows the `style` parameter of `CONTROL`s within `DIALOG`/`DIALOGEX` resources to be specified as things like a quoted string, the character `=`, or even control class keywords (`EDIT`, `BUTTON`, etc) which are then always evaluated as `0`. Example: `CONTROL "text", 1, BUTTON, "50", 1, 2, 3, 4`; the `"50"` is the style parameter and gets written to the `.res` as `0x00000000`.
   + This does not apply to `x`, `y`, `w`, or `h`: Win32 compiler errors with `expected numerical dialog constant` if they are specified as a quoted string
   + This does not apply to `exstyle` or `helpid`, which seems to make it parse differently and gives errors like `invalid control type`, `END expected in dialog`.
   + This does not apply to non-`CONTROL` dialog statements, if e.g. `"50"` is specified as the `style` parameter of a `CHECKBOX` then it behaves like `exstyle` or `helpid` in the previous bullet point.
