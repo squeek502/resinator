@@ -242,6 +242,7 @@ pub const ErrorDetails = struct {
         // Lexer
         unfinished_string_literal,
         string_literal_too_long,
+        invalid_number_with_exponent,
         illegal_byte,
         illegal_byte_outside_string_literals,
         illegal_byte_order_mark,
@@ -337,6 +338,9 @@ pub const ErrorDetails = struct {
             },
             .string_literal_too_long => {
                 return writer.print("string literal too long (max is currently {} characters)", .{self.extra.number});
+            },
+            .invalid_number_with_exponent => {
+                return writer.print("base 10 number literal with exponent is not allowed: {s}", .{self.token.slice(source)});
             },
             .illegal_byte => {
                 const byte = self.token.slice(source)[0];

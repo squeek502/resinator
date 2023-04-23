@@ -3641,6 +3641,40 @@ test "code page pragma" {
     );
 }
 
+test "numbers with exponents" {
+    // Compatibility with error RC2021: expected exponent value, not '1'
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "base 10 number literal with exponent is not allowed: -002e6" }},
+        "1 RCDATA { -002e645 }",
+        null,
+    );
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "base 10 number literal with exponent is not allowed: ~2E1" }},
+        "1 RCDATA { ~2E1 }",
+        null,
+    );
+    try testParseErrorDetails(
+        &.{},
+        "1 RCDATA { 0x2e1 }",
+        null,
+    );
+    try testParseErrorDetails(
+        &.{},
+        "1 RCDATA { 2eA }",
+        null,
+    );
+    try testParseErrorDetails(
+        &.{},
+        "1 RCDATA { -002ea }",
+        null,
+    );
+    try testParseErrorDetails(
+        &.{},
+        "1 RCDATA { -002e }",
+        null,
+    );
+}
+
 const ExpectedErrorDetails = struct {
     str: []const u8,
     type: ErrorDetails.Type,

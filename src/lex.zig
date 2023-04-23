@@ -180,6 +180,7 @@ pub const LineHandler = struct {
 pub const LexError = error{
     UnfinishedStringLiteral,
     StringLiteralTooLong,
+    InvalidNumberWithExponent,
     IllegalByte,
     IllegalByteOutsideStringLiterals,
     IllegalByteOrderMark,
@@ -396,6 +397,8 @@ pub const Lexer = struct {
         //       Alternatively, do something that makes more sense but may be more permissive.
         var string_literal_length: usize = 0;
         var string_literal_collapsing_whitespace: bool = false;
+        var still_could_have_exponent: bool = true;
+        var exponent_index: ?usize = null;
         while (self.current_code_page.codepointAt(self.index, self.buffer)) |codepoint| : (self.index += codepoint.byte_len) {
             const c = codepoint.value;
             const in_string_literal = switch (state) {
@@ -458,11 +461,15 @@ pub const Lexer = struct {
                             break;
                         } else {
                             state = .number_literal;
+                            still_could_have_exponent = true;
+                            exponent_index = null;
                             self.at_start_of_line = false;
                         }
                     },
                     '0'...'9', '~', '²', '³', '¹' => {
                         state = .number_literal;
+                        still_could_have_exponent = true;
+                        exponent_index = null;
                         self.at_start_of_line = false;
                     },
                     '#' => {
@@ -529,7 +536,30 @@ pub const Lexer = struct {
                         result.id = .number;
                         break;
                     },
-                    else => {},
+                    '0'...'9' => {
+                        if (exponent_index) |exp_i| {
+                            if (self.index - 1 == exp_i) {
+                                // Note: This being an error is a quirk of the preprocessor used by
+                                //       the Win32 RC compiler.
+                                self.error_context_token = .{
+                                    .id = .number,
+                                    .start = result.start,
+                                    .end = self.index + 1,
+                                    .line_number = self.line_handler.line_number,
+                                };
+                                return error.InvalidNumberWithExponent;
+                            }
+                        }
+                    },
+                    'e', 'E' => {
+                        if (still_could_have_exponent) {
+                            exponent_index = self.index;
+                            still_could_have_exponent = false;
+                        }
+                    },
+                    else => {
+                        still_could_have_exponent = false;
+                    },
                 },
                 .literal_or_quoted_wide_string => switch (c) {
                     // zig fmt: off
@@ -934,6 +964,7 @@ pub const Lexer = struct {
                 .token = self.error_context_token.?,
                 .extra = .{ .number = self.max_string_literal_codepoints },
             },
+            error.InvalidNumberWithExponent => ErrorDetails.Error.invalid_number_with_exponent,
             error.IllegalByte => ErrorDetails.Error.illegal_byte,
             error.IllegalByteOutsideStringLiterals => ErrorDetails.Error.illegal_byte_outside_string_literals,
             error.IllegalByteOrderMark => ErrorDetails.Error.illegal_byte_order_mark,
