@@ -283,23 +283,6 @@ pub const Parser = struct {
         const first_token = self.state.token;
         std.debug.assert(first_token.id == .literal);
 
-        // The Win32 RC compiler allows for a 'dangling' literal at the end of a file,
-        // and there is actually a .rc file with a such a dangling literal in the
-        // Windows-classic-samples set of projects. So, we have special compatibility
-        // for this particular case.
-        const maybe_eof = try self.lookaheadToken(.whitespace_delimiter_only);
-        if (maybe_eof.id == .eof) {
-            // TODO: emit warning
-            var context = try self.state.arena.alloc(Token, 2);
-            context[0] = first_token;
-            context[1] = maybe_eof;
-            const invalid_node = try self.state.arena.create(Node.Invalid);
-            invalid_node.* = .{
-                .context = context,
-            };
-            return &invalid_node.base;
-        }
-
         if (rc.TopLevelKeywords.map.get(first_token.slice(self.lexer.buffer))) |keyword| switch (keyword) {
             .language => {
                 const language_statement = try self.parseLanguageStatement();
@@ -386,6 +369,23 @@ pub const Parser = struct {
                 return &node.base;
             },
         };
+
+        // The Win32 RC compiler allows for a 'dangling' literal at the end of a file
+        // (as long as it's not a valid top-level keyword), and there is actually an
+        // .rc file with a such a dangling literal in the Windows-classic-samples set
+        // of projects. So, we have special compatibility for this particular case.
+        const maybe_eof = try self.lookaheadToken(.whitespace_delimiter_only);
+        if (maybe_eof.id == .eof) {
+            // TODO: emit warning
+            var context = try self.state.arena.alloc(Token, 2);
+            context[0] = first_token;
+            context[1] = maybe_eof;
+            const invalid_node = try self.state.arena.create(Node.Invalid);
+            invalid_node.* = .{
+                .context = context,
+            };
+            return &invalid_node.base;
+        }
 
         const id_token = first_token;
         const id_code_page = self.lexer.current_code_page;
@@ -2013,6 +2013,27 @@ test "top-level statements" {
         \\ simple_statement CHARACTERISTICS
         \\  literal 0
         \\
+    );
+    // dangling tokens should be an error if they are a the start of a valid top-level statement
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "expected number or number expression; got '<eof>'" }},
+        "LANGUAGE",
+        null,
+    );
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "expected number or number expression; got '<eof>'" }},
+        "VERSION",
+        null,
+    );
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "expected number or number expression; got '<eof>'" }},
+        "LANGUAGE",
+        null,
+    );
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "expected '<'{' or BEGIN>', got '<eof>'" }},
+        "STRINGTABLE",
+        null,
     );
 }
 
