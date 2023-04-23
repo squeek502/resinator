@@ -1431,6 +1431,138 @@ pub const Parser = struct {
         }
     }
 
+    fn parsePrimary(self: *Self, options: ParseExpressionOptions) Error!*Node {
+        try self.nextToken(.normal);
+        const first_token = self.state.token;
+        var is_close_paren_expression = false;
+        var is_unary_plus_expression = false;
+        switch (self.state.token.id) {
+            .quoted_ascii_string, .quoted_wide_string => {
+                if (!options.allowed_types.string) return self.addErrorDetailsAndFail(options.toErrorDetails(self.state.token));
+                const node = try self.state.arena.create(Node.Literal);
+                node.* = .{ .token = self.state.token };
+                return &node.base;
+            },
+            .literal => {
+                if (options.can_contain_not_expressions and std.ascii.eqlIgnoreCase("NOT", self.state.token.slice(self.lexer.buffer))) {
+                    const not_token = self.state.token;
+                    try self.nextToken(.normal);
+                    try self.check(.number);
+                    if (!options.allowed_types.number) return self.addErrorDetailsAndFail(options.toErrorDetails(self.state.token));
+                    const node = try self.state.arena.create(Node.NotExpression);
+                    node.* = .{
+                        .not_token = not_token,
+                        .number_token = self.state.token,
+                    };
+                    return &node.base;
+                }
+                if (!options.allowed_types.literal) return self.addErrorDetailsAndFail(options.toErrorDetails(self.state.token));
+                const node = try self.state.arena.create(Node.Literal);
+                node.* = .{ .token = self.state.token };
+                return &node.base;
+            },
+            .number => {
+                if (!options.allowed_types.number) return self.addErrorDetailsAndFail(options.toErrorDetails(self.state.token));
+                const node = try self.state.arena.create(Node.Literal);
+                node.* = .{ .token = self.state.token };
+                return &node.base;
+            },
+            .open_paren => {
+                const open_paren_token = self.state.token;
+
+                const expression = try self.parseExpression(.{
+                    .is_known_to_be_number_expression = true,
+                    .can_contain_not_expressions = options.can_contain_not_expressions,
+                    .nesting_context = options.nesting_context.incremented(first_token, open_paren_token),
+                    .allowed_types = options.allowed_types,
+                });
+
+                try self.nextToken(.normal);
+                // TODO: Add context to error about where the open paren is
+                try self.check(.close_paren);
+
+                if (!options.allowed_types.number) return self.addErrorDetailsAndFail(options.toErrorDetails(open_paren_token));
+                const node = try self.state.arena.create(Node.GroupedExpression);
+                node.* = .{
+                    .open_token = open_paren_token,
+                    .expression = expression,
+                    .close_token = self.state.token,
+                };
+                return &node.base;
+            },
+            .close_paren => {
+                // Note: In the Win32 implementation, a single close paren
+                // counts as a valid "expression", but only when its the first and
+                // only token in the expression. Such an expression is then treated
+                // as a 'skip this expression' instruction. For example:
+                //   1 RCDATA { 1, ), ), ), 2 }
+                // will be evaluated as if it were `1 RCDATA { 1, 2 }` and only
+                // 0x0001 and 0x0002 will be written to the .res data.
+                //
+                // This behavior is not emulated because it almost certainly has
+                // no valid use cases and only introduces edge cases that are
+                // not worth the effort to track down and deal with. Instead,
+                // we error but also add a note about the Win32 RC behavior if
+                // this edge case is detected.
+                if (!options.is_known_to_be_number_expression) {
+                    is_close_paren_expression = true;
+                }
+            },
+            .operator => {
+                // In the Win32 implementation, something akin to a unary +
+                // is allowed but it doesn't behave exactly like a unary +.
+                // Instead of emulating the Win32 behavior, we instead error
+                // and add a note about unary plus not being allowed.
+                //
+                // This is done because unary + only works in some places,
+                // and there's no real use-case for it since it's so limited
+                // in how it can be used (e.g. +1 is accepted but (+1) will error)
+                //
+                // Even understanding when unary plus is allowed is difficult, so
+                // we don't do any fancy detection of when the Win32 RC compiler would
+                // allow a unary + and instead just output the note in all cases.
+                //
+                // Some examples of allowed expressions by the Win32 compiler:
+                //  +1
+                //  0|+5
+                //  +1+2
+                //  +~-5
+                //  +(1)
+                //
+                // Some examples of disallowed expressions by the Win32 compiler:
+                //  (+1)
+                //  ++5
+                //
+                // TODO: Potentially re-evaluate and support the unary plus in a bug-for-bug
+                //       compatible way.
+                const operator_char = self.state.token.slice(self.lexer.buffer)[0];
+                if (operator_char == '+') {
+                    is_unary_plus_expression = true;
+                }
+            },
+            else => {},
+        }
+
+        try self.addErrorDetails(options.toErrorDetails(self.state.token));
+        if (is_close_paren_expression) {
+            try self.addErrorDetails(ErrorDetails{
+                .err = .close_paren_expression,
+                .type = .note,
+                .token = self.state.token,
+                .print_source_line = false,
+            });
+        }
+        if (is_unary_plus_expression) {
+            try self.addErrorDetails(ErrorDetails{
+                .err = .unary_plus_expression,
+                .type = .note,
+                .token = self.state.token,
+                .print_source_line = false,
+            });
+        }
+        return error.ParseError;
+    }
+
     /// Expects the current token to have already been dealt with, and that the
     /// expression will start on the next token.
     /// After return, the current token will have been dealt with.
@@ -1446,170 +1578,39 @@ pub const Parser = struct {
                 .token = options.nesting_context.last_token.?,
             });
         }
-        try self.nextToken(.normal);
-        const first_token = self.state.token;
-        var is_close_paren_expression = false;
-        var is_unary_plus_expression = false;
-        const possible_lhs: *Node = lhs: {
-            switch (self.state.token.id) {
-                .quoted_ascii_string, .quoted_wide_string => {
-                    if (!options.allowed_types.string) return self.addErrorDetailsAndFail(options.toErrorDetails(self.state.token));
-                    const node = try self.state.arena.create(Node.Literal);
-                    node.* = .{ .token = self.state.token };
-                    return &node.base;
-                },
-                .literal => {
-                    if (options.can_contain_not_expressions and std.ascii.eqlIgnoreCase("NOT", self.state.token.slice(self.lexer.buffer))) {
-                        const not_token = self.state.token;
-                        try self.nextToken(.normal);
-                        try self.check(.number);
-                        if (!options.allowed_types.number) return self.addErrorDetailsAndFail(options.toErrorDetails(self.state.token));
-                        const node = try self.state.arena.create(Node.NotExpression);
-                        node.* = .{
-                            .not_token = not_token,
-                            .number_token = self.state.token,
-                        };
-                        break :lhs &node.base;
-                    }
-                    if (!options.allowed_types.literal) return self.addErrorDetailsAndFail(options.toErrorDetails(self.state.token));
-                    const node = try self.state.arena.create(Node.Literal);
-                    node.* = .{ .token = self.state.token };
-                    return &node.base;
-                },
-                .number => {
-                    if (!options.allowed_types.number) return self.addErrorDetailsAndFail(options.toErrorDetails(self.state.token));
-                    const node = try self.state.arena.create(Node.Literal);
-                    node.* = .{ .token = self.state.token };
-                    break :lhs &node.base;
-                },
-                .open_paren => {
-                    const open_paren_token = self.state.token;
+        var expr: *Node = try self.parsePrimary(options);
+        const first_token = expr.getFirstToken();
 
-                    const expression = try self.parseExpression(.{
-                        .is_known_to_be_number_expression = true,
-                        .can_contain_not_expressions = options.can_contain_not_expressions,
-                        .nesting_context = options.nesting_context.incremented(first_token, open_paren_token),
-                        .allowed_types = options.allowed_types,
-                    });
-
-                    try self.nextToken(.normal);
-                    // TODO: Add context to error about where the open paren is
-                    try self.check(.close_paren);
-
-                    if (!options.allowed_types.number) return self.addErrorDetailsAndFail(options.toErrorDetails(open_paren_token));
-                    const node = try self.state.arena.create(Node.GroupedExpression);
-                    node.* = .{
-                        .open_token = open_paren_token,
-                        .expression = expression,
-                        .close_token = self.state.token,
-                    };
-                    break :lhs &node.base;
-                },
-                .close_paren => {
-                    // Note: In the Win32 implementation, a single close paren
-                    // counts as a valid "expression", but only when its the first and
-                    // only token in the expression. Such an expression is then treated
-                    // as a 'skip this expression' instruction. For example:
-                    //   1 RCDATA { 1, ), ), ), 2 }
-                    // will be evaluated as if it were `1 RCDATA { 1, 2 }` and only
-                    // 0x0001 and 0x0002 will be written to the .res data.
-                    //
-                    // This behavior is not emulated because it almost certainly has
-                    // no valid use cases and only introduces edge cases that are
-                    // not worth the effort to track down and deal with. Instead,
-                    // we error but also add a note about the Win32 RC behavior if
-                    // this edge case is detected.
-                    if (!options.is_known_to_be_number_expression) {
-                        is_close_paren_expression = true;
-                    }
-                },
-                .operator => {
-                    // In the Win32 implementation, something akin to a unary +
-                    // is allowed but it doesn't behave exactly like a unary +.
-                    // Instead of emulating the Win32 behavior, we instead error
-                    // and add a note about unary plus not being allowed.
-                    //
-                    // This is done because unary + only works in some places,
-                    // and there's no real use-case for it since it's so limited
-                    // in how it can be used (e.g. +1 is accepted but (+1) will error)
-                    //
-                    // Even understanding when unary plus is allowed is difficult, so
-                    // we don't do any fancy detection of when the Win32 RC compiler would
-                    // allow a unary + and instead just output the note in all cases.
-                    //
-                    // Some examples of allowed expressions by the Win32 compiler:
-                    //  +1
-                    //  0|+5
-                    //  +1+2
-                    //  +~-5
-                    //  +(1)
-                    //
-                    // Some examples of disallowed expressions by the Win32 compiler:
-                    //  (+1)
-                    //  ++5
-                    //
-                    // TODO: Potentially re-evaluate and support the unary plus in a bug-for-bug
-                    //       compatible way.
-                    const operator_char = self.state.token.slice(self.lexer.buffer)[0];
-                    if (operator_char == '+') {
-                        is_unary_plus_expression = true;
-                    }
-                },
-                else => {},
-            }
-
-            try self.addErrorDetails(options.toErrorDetails(self.state.token));
-            if (is_close_paren_expression) {
-                try self.addErrorDetails(ErrorDetails{
-                    .err = .close_paren_expression,
-                    .type = .note,
-                    .token = self.state.token,
-                    .print_source_line = false,
-                });
-            }
-            if (is_unary_plus_expression) {
-                try self.addErrorDetails(ErrorDetails{
-                    .err = .unary_plus_expression,
-                    .type = .note,
-                    .token = self.state.token,
-                    .print_source_line = false,
-                });
-            }
-            return error.ParseError;
-        };
-
-        const possible_operator = try self.lookaheadToken(.normal_expect_operator);
-        switch (possible_operator.id) {
-            .operator => self.nextToken(.normal_expect_operator) catch unreachable,
-            else => return possible_lhs,
-        }
-
-        const rhs_node = try self.parseExpression(.{
-            .is_known_to_be_number_expression = true,
-            .can_contain_not_expressions = options.can_contain_not_expressions,
-            .nesting_context = options.nesting_context.incremented(first_token, possible_operator),
-            .allowed_types = options.allowed_types,
-        });
-
-        if (!rhs_node.isNumberExpression()) {
-            return self.addErrorDetailsAndFail(ErrorDetails{
-                .err = .expected_something_else,
-                .token = rhs_node.getFirstToken(),
-                .extra = .{ .expected_types = .{
-                    .number = true,
-                    .number_expression = true,
-                } },
+        while (try self.parseOptionalTokenAdvanced(.operator, .normal_expect_operator)) {
+            const operator = self.state.token;
+            const rhs_node = try self.parsePrimary(.{
+                .is_known_to_be_number_expression = true,
+                .can_contain_not_expressions = options.can_contain_not_expressions,
+                .nesting_context = options.nesting_context.incremented(first_token, operator),
+                .allowed_types = options.allowed_types,
             });
+
+            if (!rhs_node.isNumberExpression()) {
+                return self.addErrorDetailsAndFail(ErrorDetails{
+                    .err = .expected_something_else,
+                    .token = rhs_node.getFirstToken(),
+                    .extra = .{ .expected_types = .{
+                        .number = true,
+                        .number_expression = true,
+                    } },
+                });
+            }
+
+            const node = try self.state.arena.create(Node.BinaryExpression);
+            node.* = .{
+                .left = expr,
+                .operator = operator,
+                .right = rhs_node,
+            };
+            expr = &node.base;
         }
 
-        const node = try self.state.arena.create(Node.BinaryExpression);
-        node.* = .{
-            .left = possible_lhs,
-            .operator = possible_operator,
-            .right = rhs_node,
-        };
-
-        return &node.base;
+        return expr;
     }
 
     /// Skips any amount of commas (including zero)
@@ -1623,9 +1624,15 @@ pub const Parser = struct {
     /// Assumes the token should be parsed with `.normal` as the method.
     /// Returns true if the token matched, false otherwise.
     fn parseOptionalToken(self: *Self, id: Token.Id) Error!bool {
-        const maybe_token = try self.lookaheadToken(.normal);
+        return self.parseOptionalTokenAdvanced(id, .normal);
+    }
+
+    /// Advances the current token only if the token's id matches the specified `id`.
+    /// Returns true if the token matched, false otherwise.
+    fn parseOptionalTokenAdvanced(self: *Self, id: Token.Id, comptime method: Lexer.LexMethod) Error!bool {
+        const maybe_token = try self.lookaheadToken(method);
         if (maybe_token.id != id) return false;
-        self.nextToken(.normal) catch unreachable;
+        self.nextToken(method) catch unreachable;
         return true;
     }
 
@@ -1865,6 +1872,18 @@ test "number expressions" {
         \\    literal 1
         \\    literal -1
         \\  )
+        \\
+    );
+    // All operators have the same precedence, the result should be from left-to-right.
+    // In C, this would evaluate as `7 | (7 + 1)`, but here it evaluates as `(7 | 7) + 1`.
+    try testParse("id RCDATA { 7 | 7 + 1 }",
+        \\root
+        \\ resource_raw_data id RCDATA [0 common_resource_attributes] raw data: 1
+        \\  binary_expression +
+        \\   binary_expression |
+        \\    literal 7
+        \\    literal 7
+        \\   literal 1
         \\
     );
 }
@@ -3080,10 +3099,10 @@ test "not expressions" {
         \\    literal 1
         \\   style:
         \\    binary_expression |
-        \\     literal 1
         \\     binary_expression |
-        \\      not_expression NOT ~0
         \\      literal 1
+        \\      not_expression NOT ~0
+        \\     literal 1
         \\ }
         \\
     );

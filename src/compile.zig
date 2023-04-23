@@ -904,14 +904,9 @@ pub const Compiler = struct {
                 '&' => lhs.value & rhs.value,
                 else => unreachable, // invalid operator, this would be a lexer/parser bug
             };
-            const not_mask_result = switch (operator_char) {
-                '|', '+' => lhs.not_mask & rhs.not_mask | rhs.value,
-                '&', '-' => lhs.not_mask & rhs.not_mask & ~rhs.value,
-                else => unreachable, // invalid operator, this would be a lexer/parser bug
-            };
             return .{
                 .value = result,
-                .not_mask = not_mask_result,
+                .not_mask = lhs.not_mask & rhs.not_mask,
             };
         }
 
@@ -921,13 +916,18 @@ pub const Compiler = struct {
     };
 
     pub fn evaluateFlagsExpressionWithDefault(default: u32, expression_node: *Node, source: []const u8, code_page_lookup: *const CodePageLookup) u32 {
-        var result = evaluateFlagsExpression(expression_node, source, code_page_lookup);
-        result.value |= default;
-        return result.applyNotMask();
+        var context = FlagsExpressionContext{.initial_value = default};
+        const number = evaluateFlagsExpression(expression_node, source, code_page_lookup, &context);
+        return number.value;
     }
 
+    pub const FlagsExpressionContext = struct {
+        initial_value: u32 = 0,
+        initial_value_used: bool = false,
+    };
+
     /// Assumes that the node is a number expression (which can contain not_expressions)
-    pub fn evaluateFlagsExpression(expression_node: *Node, source: []const u8, code_page_lookup: *const CodePageLookup) FlagsNumber {
+    pub fn evaluateFlagsExpression(expression_node: *Node, source: []const u8, code_page_lookup: *const CodePageLookup, context: *FlagsExpressionContext) FlagsNumber {
         switch (expression_node.id) {
             .literal => {
                 const literal_node = expression_node.cast(.literal).?;
@@ -936,19 +936,24 @@ pub const Compiler = struct {
                     .slice = literal_node.token.slice(source),
                     .code_page = code_page_lookup.getForToken(literal_node.token),
                 };
-                return FlagsNumber{ .value = literals.parseNumberLiteral(bytes).value };
+                var value = literals.parseNumberLiteral(bytes).value;
+                if (!context.initial_value_used) {
+                    context.initial_value_used = true;
+                    value |= context.initial_value;
+                }
+                return .{ .value = value };
             },
             .binary_expression => {
                 const binary_expression_node = expression_node.cast(.binary_expression).?;
-                const lhs = evaluateFlagsExpression(binary_expression_node.left, source, code_page_lookup);
-                const rhs = evaluateFlagsExpression(binary_expression_node.right, source, code_page_lookup);
+                const lhs = evaluateFlagsExpression(binary_expression_node.left, source, code_page_lookup, context);
+                const rhs = evaluateFlagsExpression(binary_expression_node.right, source, code_page_lookup, context);
                 const operator_char = binary_expression_node.operator.slice(source)[0];
                 const result = lhs.evaluateOperator(operator_char, rhs);
-                return result;
+                return .{ .value = result.applyNotMask() };
             },
             .grouped_expression => {
                 const grouped_expression_node = expression_node.cast(.grouped_expression).?;
-                return evaluateFlagsExpression(grouped_expression_node.expression, source, code_page_lookup);
+                return evaluateFlagsExpression(grouped_expression_node.expression, source, code_page_lookup, context);
             },
             .not_expression => {
                 const not_expression = expression_node.cast(.not_expression).?;
@@ -957,6 +962,10 @@ pub const Compiler = struct {
                     .code_page = code_page_lookup.getForToken(not_expression.number_token),
                 };
                 const not_number = literals.parseNumberLiteral(bytes);
+                if (!context.initial_value_used) {
+                    context.initial_value_used = true;
+                    return .{ .value = context.initial_value & ~not_number.value };
+                }
                 return .{ .value = 0, .not_mask = ~not_number.value };
             },
             else => unreachable,
