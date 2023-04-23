@@ -156,6 +156,11 @@ The plan is to use fuzz testing with the `rc` tool as an oracle to ensure that `
   + Some insight into the ramifications: `1 DIALOGEX 1, 2, 3, 10-0x0+5 {} hello` will error with `file not found: hello` and the verbose output will show `Writing {}:+5`, meaning it is interpreting the `+5 {} hello` after the `10-0x0` as a new resource with a name of `+5` and a resource type of `{}`.
   + **Current thoughts:** Ideally, `resinator` should successfully parse/compile such expressions, but emit a warning that the Win32 RC compiler would fail to compile them. This is easier said than done, though, since the conditions for when the error would occur are tough to pin down or understand.
   + **Current `resinator` behavior:** Successful compilation, e.g. `1 DIALOGEX 1, 2, 3, 4-0 {}` compiles as if it were `1 DIALOGEX 1, 2, 3, 4 {}`
+- The Win32 RC compiler will error with `version WORDs separated by commas expected` if the character `l`/`L` is anywhere in a number literal within a parameter of a `PRODUCTVERSION` or `FILEVERSION` statement of a `VERSIONINFO` resource.
+  + This is due to PRODUCTVERSION and FILEVERSION being a `u16` and the `l`/`L` suffix of a number indicating that it should be a `u32`.
+  + It doesn't complain about numbers that overflow a `u16` and uses wrapping overflow as is common everywhere else.
+  + **Current thoughts:** `resinator` should allow the `l`/`L` suffix but warn about it. Will also need to double check that this is the only place where the Win32 RC compiler errors upon seeing the `L` suffix.
+  + **Current `resinator` behavior:** Successful compilation, but no warning about the Win32 behavior
 
 ## Status
 
