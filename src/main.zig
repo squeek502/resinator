@@ -143,6 +143,7 @@ pub fn main() !void {
         // Separately parse and dump the AST
         ast: {
             var parse_diagnostics = Diagnostics.init(allocator);
+            defer parse_diagnostics.deinit();
             var lexer = lex.Lexer.init(final_input, .{});
             var parser = parse.Parser.init(&lexer, .{});
             var tree = parser.parse(allocator, &parse_diagnostics) catch {
