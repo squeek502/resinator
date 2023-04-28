@@ -123,6 +123,7 @@ pub fn compare(win32_result: *Win32Result, resinator_result: *ResinatorResult) !
     std.testing.expectEqualSlices(u8, win32_result.res.?, resinator_result.res.?) catch |err| {
         if (resinator_result.diagnostics.containsAny(&.{
             .rc_would_miscompile_version_value_padding,
+            .rc_would_miscompile_version_value_byte_count,
             .rc_would_miscompile_control_padding,
             .rc_would_miscompile_control_class_ordinal,
             .rc_would_miscompile_bmp_palette_padding,

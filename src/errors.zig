@@ -272,6 +272,7 @@ pub const ErrorDetails = struct {
         ascii_character_not_equivalent_to_virtual_key_code,
         empty_menu_not_allowed,
         rc_would_miscompile_version_value_padding,
+        rc_would_miscompile_version_value_byte_count,
         code_page_pragma_in_included_file,
         nested_resource_level_exceeds_max,
         too_many_dialog_controls,
@@ -432,7 +433,11 @@ pub const ErrorDetails = struct {
             },
             .rc_would_miscompile_version_value_padding => switch (self.type) {
                 .err, .warning => return writer.print("the padding before this quoted string value would be miscompiled by the Win32 RC compiler", .{}),
-                .note => return writer.print("to avoid the potential miscompilation, consider adding a comma between the VALUE's key and the quoted string", .{}),
+                .note => return writer.print("to avoid the potential miscompilation, consider adding a comma between the key and the quoted string", .{}),
+            },
+            .rc_would_miscompile_version_value_byte_count => switch (self.type) {
+                .err, .warning => return writer.print("the byte count of this value would be miscompiled by the Win32 RC compiler", .{}),
+                .note => return writer.print("to avoid the potential miscompilation, do not mix numbers and strings within a value", .{}),
             },
             .code_page_pragma_in_included_file => {
                 try writer.print("#pragma code_page is not supported in an included resource file", .{});

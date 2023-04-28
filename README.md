@@ -67,6 +67,8 @@ The plan is to use fuzz testing with the `rc` tool as an oracle to ensure that `
   + The Windows RC compiler will incorrectly encode control classes specified as numbers, seemingly using some behavior that might be left over from the 16-bit RC compiler. As far as I can tell, it will always output an unusable dialog template if a CONTROL's class is specified as a number.
 - `resinator` will avoid a miscompilation when a `VALUE` within a `VERSIONINFO` has the comma between its key and its first value omitted (but only if the value is a quoted string), and will emit a warning
   + The Windows RC compiler will fail to add padding to get to `DWORD`-alignment before the value and sometimes step on the null-terminator of the `VALUE`'s key string.
+- `resinator` will avoid a miscompilation when a `VALUE` within a `VERSIONINFO` mixes numbers and strings, and will emit a warning
+  + The Windows RC compiler will miscompile the byte count of values that have a mix of numbers and strings, as it will use UTF-16 code units as the 'byte count' for all of the string values, leading to an incorrect size value being written to the .res.
 - *[Still being figured out]* `resinator` supports `NOT` expressions only in `STYLE` statements, `EXSTYLE` statements, and `style`/`exstyle` parameters, and the `NOT` must immediately precede a number literal (as opposed to a number expression--e.g. `NOT 1` works but `NOT (1)` does not)
   + There's a lot of things about the Windows RC compiler's implementation of the `NOT` expression that I either don't understand or don't think is worth emulating:
     - The Windows RC compiler allows the use of `NOT` expressions in places where it doesn't make sense (the `x`, `y`, etc parameters of `DIALOGEX` for example)

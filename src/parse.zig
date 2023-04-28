@@ -1309,9 +1309,12 @@ pub const Parser = struct {
 
     fn parseBlockValuesList(self: *Self, had_comma_before_first_value: bool) Error![]*Node {
         var values = std.ArrayListUnmanaged(*Node){};
+        var seen_number: bool = false;
+        var first_string_value: ?*Node = null;
         while (true) {
             const lookahead_token = try self.lookaheadToken(.normal);
             switch (lookahead_token.id) {
+                .operator,
                 .number,
                 .open_paren,
                 .quoted_ascii_string,
@@ -1320,6 +1323,13 @@ pub const Parser = struct {
                 else => break,
             }
             const value = try self.parseExpression(.{});
+
+            if (value.isNumberExpression()) {
+                seen_number = true;
+            } else if (first_string_value == null) {
+                std.debug.assert(value.isStringLiteral());
+                first_string_value = value;
+            }
 
             const has_trailing_comma = try self.parseOptionalToken(.comma);
             try self.skipAnyCommas();
@@ -1330,6 +1340,28 @@ pub const Parser = struct {
                 .trailing_comma = has_trailing_comma,
             };
             try values.append(self.state.arena, &value_value.base);
+        }
+        if (seen_number and first_string_value != null) {
+            // The Win32 RC compiler does some strange stuff with the data size:
+            // Strings are counted as UTF-16 code units including the null-terminator
+            // Numbers are counted as their byte lengths
+            // So, when both strings and numbers are within a single value,
+            // it incorrectly sets the value's type as binary, but then gives the
+            // data length as a mixture of bytes and UTF-16 code units. This means that
+            // when the length is read, it will be treated as byte length and will
+            // not read the full value. We don't reproduce this behavior, so we warn
+            // of the miscompilation here.
+            try self.addErrorDetails(.{
+                .err = .rc_would_miscompile_version_value_byte_count,
+                .type = .warning,
+                .token = first_string_value.?.getFirstToken(),
+            });
+            try self.addErrorDetails(.{
+                .err = .rc_would_miscompile_version_value_byte_count,
+                .type = .note,
+                .token = first_string_value.?.getFirstToken(),
+                .print_source_line = false,
+            });
         }
         if (!had_comma_before_first_value and values.items.len > 0 and values.items[0].cast(.block_value_value).?.expression.isStringLiteral()) {
             const token = values.items[0].cast(.block_value_value).?.expression.cast(.literal).?.token;
@@ -3256,9 +3288,18 @@ test "versioninfo" {
     try testParseErrorDetails(
         &.{
             .{ .type = .warning, .str = "the padding before this quoted string value would be miscompiled by the Win32 RC compiler" },
-            .{ .type = .note, .str = "to avoid the potential miscompilation, consider adding a comma between the VALUE's key and the quoted string" },
+            .{ .type = .note, .str = "to avoid the potential miscompilation, consider adding a comma between the key and the quoted string" },
         },
         \\1 VERSIONINFO { VALUE "key" "value" }
+    ,
+        null,
+    );
+    try testParseErrorDetails(
+        &.{
+            .{ .type = .warning, .str = "the byte count of this value would be miscompiled by the Win32 RC compiler" },
+            .{ .type = .note, .str = "to avoid the potential miscompilation, do not mix numbers and strings within a value" },
+        },
+        \\1 VERSIONINFO { VALUE "key", "value" 1 }
     ,
         null,
     );

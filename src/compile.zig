@@ -916,7 +916,7 @@ pub const Compiler = struct {
     };
 
     pub fn evaluateFlagsExpressionWithDefault(default: u32, expression_node: *Node, source: []const u8, code_page_lookup: *const CodePageLookup) u32 {
-        var context = FlagsExpressionContext{.initial_value = default};
+        var context = FlagsExpressionContext{ .initial_value = default };
         const number = evaluateFlagsExpression(expression_node, source, code_page_lookup, &context);
         return number.value;
     }
@@ -2075,13 +2075,14 @@ pub const Compiler = struct {
                         break;
                     }
                 }
-                // The Win32 RC compiler does some strange stuff with the data size:
-                // Strings are counted as UTF-16 code units including the null-terminator
-                // Numbers are counted as their byte lengths
-                // TODO: Make using the real byte size a configurable option (as long as
-                //       the real byte size is still parsable by consumers of the
-                //       version info data).
-                var values_size_win32_rc: usize = 0;
+                // The units used here are dependent on the type. If there are any numbers, then
+                // this is a byte count. If there are only strings, then this is a count of
+                // UTF-16 code units.
+                //
+                // The Win32 RC compiler miscompiles this count in the case of values that
+                // have a mix of numbers and strings. This is detected and a warning is emitted
+                // during parsing, so we can just do the correct thing here.
+                var values_size: usize = 0;
 
                 try writeDataPadding(writer, @intCast(u32, buf.items.len));
 
@@ -2094,7 +2095,7 @@ pub const Compiler = struct {
                         const data_wrapper = Data{ .number = number };
                         try data_wrapper.write(writer);
                         // Numbers use byte count
-                        values_size_win32_rc += if (number.is_long) 4 else 2;
+                        values_size += if (number.is_long) 4 else 2;
                     } else {
                         std.debug.assert(value_node.isStringLiteral());
                         const literal_node = value_node.cast(.literal).?;
@@ -2103,22 +2104,27 @@ pub const Compiler = struct {
 
                         const parsed_to_first_null = std.mem.sliceTo(parsed_value, 0);
                         try writer.writeAll(std.mem.sliceAsBytes(parsed_to_first_null));
-                        // Strings use UTF-16 code-unit count including the null-terminator
-                        values_size_win32_rc += parsed_to_first_null.len;
-                        // but the null-terminator is only included if there's a trailing comma
-                        // or this is the last value, and if there's an explicit null-terminator
-                        // then we don't need to add it
+                        // Strings use UTF-16 code-unit count including the null-terminator, but
+                        // only if there are no number values in the list.
+                        var value_size = parsed_to_first_null.len;
+                        if (has_number_value) value_size *= 2; // 2 bytes per UTF-16 code unit
+                        values_size += value_size;
+                        // The null-terminator is only included if there's a trailing comma
+                        // or this is the last value. If the value evaluates to empty, then
+                        // it never gets a null terminator. If there was an explicit null-terminator
+                        // in the string, we still need to potentially add one since we already
+                        // sliced to the terminator.
                         const is_last = i == block_or_value.values.len - 1;
                         const is_empty = parsed_to_first_null.len == 0;
                         const is_only = block_or_value.values.len == 1;
                         if ((!is_empty or !is_only) and (is_last or value_value_node.trailing_comma)) {
                             try writer.writeIntLittle(u16, 0);
-                            values_size_win32_rc += 1;
+                            values_size += if (has_number_value) 2 else 1;
                         }
                     }
                 }
                 var data_size_slice = buf.items[data_size_offset..];
-                std.mem.writeIntLittle(u16, data_size_slice[0..@sizeOf(u16)], @intCast(u16, values_size_win32_rc));
+                std.mem.writeIntLittle(u16, data_size_slice[0..@sizeOf(u16)], @intCast(u16, values_size));
 
                 if (has_number_value) {
                     const data_type_slice = buf.items[data_type_offset..];
