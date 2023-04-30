@@ -306,6 +306,12 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
     var output_filename_context: Arg.Context = undefined;
 
     // TODO: /p (pre-preprocess only, output to .rcpp file)
+    // TODO: prefix all custom options with something, e.g. a `.`, `!` or something like that,
+    //       since the Win32 RC compiler allows combining any available commands into one
+    //       parameter (e.g. `/no` could be the option 'n' and the option 'o' if they were
+    //       both valid options), so adding arbitrary new options could result in effectively
+    //       shadowing other combinations of different options.
+    //       Currently only the `/no-preprocess` option is custom, and that comes from LLVM-RC.
 
     var arg_i: usize = 1; // start at 1 to skip past the exe name
     next_arg: while (arg_i < args.len) {
