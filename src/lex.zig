@@ -175,6 +175,20 @@ pub const LineHandler = struct {
 
         return true;
     }
+
+    pub fn formsLineEndingPair(self: *const LineHandler, index1: usize, index2: usize) bool {
+        if (index1 >= self.buffer.len or index2 >= self.buffer.len) return false;
+
+        const c1 = self.buffer[index1];
+        if (c1 != '\r' and c1 != '\n') return false;
+        const c2 = self.buffer[index2];
+        if (c2 != '\r' and c2 != '\n') return false;
+
+        // can't be \n\n or \r\r
+        if (c1 == c2) return false;
+
+        return true;
+    }
 };
 
 pub const LexError = error{

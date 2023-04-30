@@ -65,6 +65,11 @@ pub fn parseAndRemoveLineCommands(allocator: Allocator, source: []const u8, buf:
     var index: usize = 0;
     var pending_start: ?usize = null;
     var preprocessor_start: usize = 0;
+    // TODO: This doesn't really do anything anymore, since we always handle line ending pairs
+    //       together instead of in separate iterations of the loop. The intention was to
+    //       ensure that the logic for counting lines is the same between the lexer and the
+    //       source mapping, but that isn't really ensured anymore since we don't rely on
+    //       the line handler for line ending pairing.
     var line_handler = lex.LineHandler{ .buffer = source };
     while (index < source.len) : (index += 1) {
         const c = source[index];
@@ -78,11 +83,14 @@ pub fn parseAndRemoveLineCommands(allocator: Allocator, source: []const u8, buf:
                     }
                 },
                 '\r', '\n' => {
+                    const is_crlf = line_handler.formsLineEndingPair(index, index + 1);
                     try handleLineEnd(allocator, line_handler.line_number, &parse_result.mappings, &current_mapping);
                     if (!current_mapping.ignore_contents) {
                         result.write(c);
+                        if (is_crlf) result.write(source[index + 1]);
                         _ = line_handler.incrementLineNumber(index);
                     }
+                    if (is_crlf) index += 1;
                     pending_start = null;
                 },
                 ' ', '\t', '\x0b', '\x0c' => {
@@ -108,15 +116,18 @@ pub fn parseAndRemoveLineCommands(allocator: Allocator, source: []const u8, buf:
                 '\r', '\n' => {
                     // Now that we have the full line we can decide what to do with it
                     const preprocessor_str = source[preprocessor_start..index];
+                    const is_crlf = line_handler.formsLineEndingPair(index, index + 1);
                     if (std.mem.startsWith(u8, preprocessor_str, "#line")) {
                         try handleLineCommand(allocator, preprocessor_str, &current_mapping);
                     } else {
                         try handleLineEnd(allocator, line_handler.line_number, &parse_result.mappings, &current_mapping);
                         if (!current_mapping.ignore_contents) {
-                            result.writeSlice(source[pending_start.? .. index + 1]);
+                            const line_ending_len: usize = if (is_crlf) 2 else 1;
+                            result.writeSlice(source[pending_start.? .. index + line_ending_len]);
                             _ = line_handler.incrementLineNumber(index);
                         }
                     }
+                    if (is_crlf) index += 1;
                     state = .line_start;
                     pending_start = null;
                 },
@@ -124,11 +135,14 @@ pub fn parseAndRemoveLineCommands(allocator: Allocator, source: []const u8, buf:
             },
             .non_preprocessor => switch (c) {
                 '\r', '\n' => {
+                    const is_crlf = line_handler.formsLineEndingPair(index, index + 1);
                     try handleLineEnd(allocator, line_handler.line_number, &parse_result.mappings, &current_mapping);
                     if (!current_mapping.ignore_contents) {
                         result.write(c);
+                        if (is_crlf) result.write(source[index + 1]);
                         _ = line_handler.incrementLineNumber(index);
                     }
+                    if (is_crlf) index += 1;
                     state = .line_start;
                     pending_start = null;
                 },
@@ -626,6 +640,19 @@ test "example" {
         \\#line 7 "./header.h"
         \\#line 1 "rcdata.rc"
     , .{});
+}
+
+test "CRLF and other line endings" {
+    try testParseAndRemoveLineCommands(
+        "hello\r\n#pragma code_page(65001)\r\nworld",
+        &[_]ExpectedSourceSpan{
+            .{ .start_line = 1, .end_line = 1, .filename = "crlf.rc" },
+            .{ .start_line = 2, .end_line = 2, .filename = "crlf.rc" },
+            .{ .start_line = 3, .end_line = 3, .filename = "crlf.rc" },
+        },
+        "#line 1 \"crlf.rc\"\r\n#line 1 \"<built-in>\"\r#line 1 \"crlf.rc\"\n\rhello\r\n#pragma code_page(65001)\r\nworld\r\n",
+        .{},
+    );
 }
 
 test "no line commands" {
