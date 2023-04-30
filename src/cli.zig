@@ -305,6 +305,8 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
     var output_filename: ?[]const u8 = null;
     var output_filename_context: Arg.Context = undefined;
 
+    // TODO: /p (pre-preprocess only, output to .rcpp file)
+
     var arg_i: usize = 1; // start at 1 to skip past the exe name
     next_arg: while (arg_i < args.len) {
         var arg = Arg.fromString(args[arg_i]) orelse break;
