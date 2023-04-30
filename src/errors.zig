@@ -768,7 +768,7 @@ const CorrespondingLines = struct {
             writeLinesFromStream(writer, buffered_reader.reader(), corresponding_span.start_line, corresponding_span.end_line) catch |err| switch (err) {
                 error.LinesNotFound => {
                     corresponding_lines.lines.clearRetainingCapacity();
-                    try writer.print("unable to print line(s) from file: {s}\n", .{@errorName(err)});
+                    try writer.print("unable to print line(s) from file: {s}", .{@errorName(err)});
                     corresponding_lines.lines_is_error_message = true;
                     return corresponding_lines;
                 },
@@ -776,7 +776,7 @@ const CorrespondingLines = struct {
             };
         } else |err| {
             corresponding_lines.lines.clearRetainingCapacity();
-            try writer.print("unable to print line(s) from file: {s}\n", .{@errorName(err)});
+            try writer.print("unable to print line(s) from file: {s}", .{@errorName(err)});
             corresponding_lines.lines_is_error_message = true;
             return corresponding_lines;
         }
