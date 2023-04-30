@@ -65,12 +65,7 @@ pub fn parseAndRemoveLineCommands(allocator: Allocator, source: []const u8, buf:
     var index: usize = 0;
     var pending_start: ?usize = null;
     var preprocessor_start: usize = 0;
-    // TODO: This doesn't really do anything anymore, since we always handle line ending pairs
-    //       together instead of in separate iterations of the loop. The intention was to
-    //       ensure that the logic for counting lines is the same between the lexer and the
-    //       source mapping, but that isn't really ensured anymore since we don't rely on
-    //       the line handler for line ending pairing.
-    var line_handler = lex.LineHandler{ .buffer = source };
+    var line_number: usize = 1;
     while (index < source.len) : (index += 1) {
         const c = source[index];
         switch (state) {
@@ -83,12 +78,12 @@ pub fn parseAndRemoveLineCommands(allocator: Allocator, source: []const u8, buf:
                     }
                 },
                 '\r', '\n' => {
-                    const is_crlf = line_handler.formsLineEndingPair(index, index + 1);
-                    try handleLineEnd(allocator, line_handler.line_number, &parse_result.mappings, &current_mapping);
+                    const is_crlf = formsLineEndingPair(source, c, index + 1);
+                    try handleLineEnd(allocator, line_number, &parse_result.mappings, &current_mapping);
                     if (!current_mapping.ignore_contents) {
                         result.write(c);
                         if (is_crlf) result.write(source[index + 1]);
-                        _ = line_handler.incrementLineNumber(index);
+                        line_number += 1;
                     }
                     if (is_crlf) index += 1;
                     pending_start = null;
@@ -116,15 +111,15 @@ pub fn parseAndRemoveLineCommands(allocator: Allocator, source: []const u8, buf:
                 '\r', '\n' => {
                     // Now that we have the full line we can decide what to do with it
                     const preprocessor_str = source[preprocessor_start..index];
-                    const is_crlf = line_handler.formsLineEndingPair(index, index + 1);
+                    const is_crlf = formsLineEndingPair(source, c, index + 1);
                     if (std.mem.startsWith(u8, preprocessor_str, "#line")) {
                         try handleLineCommand(allocator, preprocessor_str, &current_mapping);
                     } else {
-                        try handleLineEnd(allocator, line_handler.line_number, &parse_result.mappings, &current_mapping);
+                        try handleLineEnd(allocator, line_number, &parse_result.mappings, &current_mapping);
                         if (!current_mapping.ignore_contents) {
                             const line_ending_len: usize = if (is_crlf) 2 else 1;
                             result.writeSlice(source[pending_start.? .. index + line_ending_len]);
-                            _ = line_handler.incrementLineNumber(index);
+                            line_number += 1;
                         }
                     }
                     if (is_crlf) index += 1;
@@ -135,12 +130,12 @@ pub fn parseAndRemoveLineCommands(allocator: Allocator, source: []const u8, buf:
             },
             .non_preprocessor => switch (c) {
                 '\r', '\n' => {
-                    const is_crlf = line_handler.formsLineEndingPair(index, index + 1);
-                    try handleLineEnd(allocator, line_handler.line_number, &parse_result.mappings, &current_mapping);
+                    const is_crlf = formsLineEndingPair(source, c, index + 1);
+                    try handleLineEnd(allocator, line_number, &parse_result.mappings, &current_mapping);
                     if (!current_mapping.ignore_contents) {
                         result.write(c);
                         if (is_crlf) result.write(source[index + 1]);
-                        _ = line_handler.incrementLineNumber(index);
+                        line_number += 1;
                     }
                     if (is_crlf) index += 1;
                     state = .line_start;
@@ -157,7 +152,7 @@ pub fn parseAndRemoveLineCommands(allocator: Allocator, source: []const u8, buf:
         switch (state) {
             .line_start => {},
             .non_preprocessor => {
-                try handleLineEnd(allocator, line_handler.line_number, &parse_result.mappings, &current_mapping);
+                try handleLineEnd(allocator, line_number, &parse_result.mappings, &current_mapping);
             },
             .preprocessor => {
                 // Now that we have the full line we can decide what to do with it
@@ -165,7 +160,7 @@ pub fn parseAndRemoveLineCommands(allocator: Allocator, source: []const u8, buf:
                 if (std.mem.startsWith(u8, preprocessor_str, "#line")) {
                     try handleLineCommand(allocator, preprocessor_str, &current_mapping);
                 } else {
-                    try handleLineEnd(allocator, line_handler.line_number, &parse_result.mappings, &current_mapping);
+                    try handleLineEnd(allocator, line_number, &parse_result.mappings, &current_mapping);
                     if (!current_mapping.ignore_contents) {
                         result.writeSlice(source[pending_start.?..index]);
                     }
@@ -191,10 +186,23 @@ pub fn parseAndRemoveLineCommands(allocator: Allocator, source: []const u8, buf:
     // In this case, we want to fake a line mapping just so that we return something
     // that is useable in the same way that a non-empty mapping would be.
     if (parse_result.mappings.mapping.items.len == 0) {
-        try handleLineEnd(allocator, line_handler.line_number, &parse_result.mappings, &current_mapping);
+        try handleLineEnd(allocator, line_number, &parse_result.mappings, &current_mapping);
     }
 
     return parse_result;
+}
+
+/// Note: This should function the same as lex.LineHandler.currentIndexFormsLineEndingPair
+fn formsLineEndingPair(source: []const u8, line_ending: u8, next_index: usize) bool {
+    if (next_index >= source.len) return false;
+
+    const next_ending = source[next_index];
+    if (next_ending != '\r' and next_ending != '\n') return false;
+
+    // can't be \n\n or \r\r
+    if (line_ending == next_ending) return false;
+
+    return true;
 }
 
 pub fn handleLineEnd(allocator: Allocator, post_processed_line_number: usize, mapping: *SourceMappings, current_mapping: *CurrentMapping) !void {
