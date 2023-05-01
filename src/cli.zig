@@ -82,7 +82,7 @@ pub const Options = struct {
     output_filename: []const u8 = &[_]u8{},
     extra_include_paths: std.ArrayListUnmanaged([]const u8) = .{},
     ignore_include_env_var: bool = false,
-    preprocess: bool = true,
+    preprocess: Preprocess = .yes,
     default_language_id: ?u16 = null,
     default_code_page: ?CodePage = null,
     verbose: bool = false,
@@ -93,6 +93,7 @@ pub const Options = struct {
     warn_instead_of_error_on_invalid_code_page: bool = false,
     debug: bool = false,
 
+    pub const Preprocess = enum { no, yes, only };
     pub const SymbolAction = enum { define, undefine };
 
     /// Does not check that identifier contains only valid characters
@@ -173,8 +174,10 @@ pub const Options = struct {
         if (self.ignore_include_env_var) {
             try writer.writeAll(" The INCLUDE environment variable will be ignored\n");
         }
-        if (!self.preprocess) {
+        if (self.preprocess == .no) {
             try writer.writeAll(" The preprocessor will not be invoked\n");
+        } else if (self.preprocess == .only) {
+            try writer.writeAll(" Only the preprocessor will be invoked\n");
         }
         if (self.symbols.count() > 0) {
             try writer.writeAll(" Symbols:\n");
@@ -305,7 +308,6 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
     var output_filename: ?[]const u8 = null;
     var output_filename_context: Arg.Context = undefined;
 
-    // TODO: /p (pre-preprocess only, output to .rcpp file)
     // TODO: prefix all custom options with something, e.g. a `.`, `!` or something like that,
     //       since the Win32 RC compiler allows combining any available commands into one
     //       parameter (e.g. `/no` could be the option 'n' and the option 'o' if they were
@@ -341,7 +343,7 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
             //       shorter options that are a substring of a longer one could make
             //       the longer option's branch unreachable.
             if (std.ascii.startsWithIgnoreCase(arg_name, "no-preprocess")) {
-                options.preprocess = false;
+                options.preprocess = .no;
                 arg.name_offset += "no-preprocess".len;
             } else if (std.ascii.startsWithIgnoreCase(arg_name, "nologo")) {
                 // No-op, we don't display any 'logo' to suppress
@@ -624,6 +626,9 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
             } else if (std.ascii.startsWithIgnoreCase(arg_name, "x")) {
                 options.ignore_include_env_var = true;
                 arg.name_offset += 1;
+            } else if (std.ascii.startsWithIgnoreCase(arg_name, "p")) {
+                options.preprocess = .only;
+                arg.name_offset += 1;
             } else if (std.ascii.startsWithIgnoreCase(arg_name, "i")) {
                 const value = arg.value(1, arg_i, args) catch {
                     var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = arg.missingSpan() };
@@ -760,7 +765,11 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
             try buf.appendSlice(options.input_filename[0..end_pos]);
         }
         try buf.appendSlice(std.fs.path.stem(options.input_filename));
-        try buf.appendSlice(".res");
+        if (options.preprocess == .only) {
+            try buf.appendSlice(".rcpp");
+        } else {
+            try buf.appendSlice(".res");
+        }
 
         options.output_filename = try buf.toOwnedSlice();
     } else {

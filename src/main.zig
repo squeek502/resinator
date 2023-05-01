@@ -46,7 +46,7 @@ pub fn main() !void {
     }
 
     var full_input = full_input: {
-        if (options.preprocess) {
+        if (options.preprocess != .no) {
             var argv = std.ArrayList([]const u8).init(allocator);
             defer argv.deinit();
 
@@ -107,6 +107,11 @@ pub fn main() !void {
         }
     };
     defer allocator.free(full_input);
+
+    if (options.preprocess == .only) {
+        try std.fs.cwd().writeFile(options.output_filename, full_input);
+        return;
+    }
 
     // Note: We still want to run this when no-preprocess is set because:
     //   1. We want to print accurate line numbers after removing multiline comments
