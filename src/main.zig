@@ -54,6 +54,13 @@ pub fn main() !void {
         if (options.preprocess != .no) {
             var argv = std.ArrayList([]const u8).init(allocator);
             defer argv.deinit();
+            var temp_strings = std.ArrayList([]const u8).init(allocator);
+            defer {
+                for (temp_strings.items) |temp_string| {
+                    allocator.free(temp_string);
+                }
+                temp_strings.deinit();
+            }
 
             try argv.appendSlice(&[_][]const u8{
                 "clang",
@@ -78,10 +85,21 @@ pub fn main() !void {
             var symbol_it = options.symbols.iterator();
             while (symbol_it.next()) |entry| {
                 switch (entry.value_ptr.*) {
-                    .define => try argv.append("-D"),
-                    .undefine => try argv.append("-U"),
+                    .define => |value| {
+                        try argv.append("-D");
+                        const define_arg = arg: {
+                            const arg = try std.fmt.allocPrint(allocator, "{s}={s}", .{ entry.key_ptr.*, value });
+                            errdefer allocator.free(arg);
+                            try temp_strings.append(arg);
+                            break :arg arg;
+                        };
+                        try argv.append(define_arg);
+                    },
+                    .undefine => {
+                        try argv.append("-U");
+                        try argv.append(entry.key_ptr.*);
+                    },
                 }
-                try argv.append(entry.key_ptr.*);
             }
             try argv.append(options.input_filename);
 

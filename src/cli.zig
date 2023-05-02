@@ -125,7 +125,7 @@ pub const Options = struct {
     default_language_id: ?u16 = null,
     default_code_page: ?CodePage = null,
     verbose: bool = false,
-    symbols: std.StringArrayHashMapUnmanaged(SymbolAction) = .{},
+    symbols: std.StringArrayHashMapUnmanaged(SymbolValue) = .{},
     null_terminate_string_table_strings: bool = false,
     max_string_literal_codepoints: u15 = lex.default_max_string_literal_codepoints,
     silent_duplicate_control_ids: bool = false,
@@ -135,29 +135,48 @@ pub const Options = struct {
 
     pub const Preprocess = enum { no, yes, only };
     pub const SymbolAction = enum { define, undefine };
+    pub const SymbolValue = union(SymbolAction) {
+        define: []const u8,
+        undefine: void,
+
+        pub fn deinit(self: SymbolValue, allocator: Allocator) void {
+            switch (self) {
+                .define => |value| allocator.free(value),
+                .undefine => {},
+            }
+        }
+    };
 
     /// Does not check that identifier contains only valid characters
-    pub fn define(self: *Options, identifier: []const u8) !void {
-        // If the identifier is already in the symbols, then there's nothing
-        // we need to do:
-        // - If the symbol is already defined, then we don't need to do anything.
-        // - If the symbol is undefined, then that always takes precedence so
-        //   we shouldn't change anything.
-        if (self.symbols.contains(identifier)) return;
+    pub fn define(self: *Options, identifier: []const u8, value: []const u8) !void {
+        if (self.symbols.getPtr(identifier)) |val_ptr| {
+            // If the symbol is undefined, then that always takes precedence so
+            // we shouldn't change anything.
+            if (val_ptr.* == .undefine) return;
+            // Otherwise, the new value takes precedence.
+            var duped_value = try self.allocator.dupe(u8, value);
+            errdefer self.allocator.free(duped_value);
+            val_ptr.deinit(self.allocator);
+            val_ptr.* = .{ .define = duped_value };
+            return;
+        }
         var duped_key = try self.allocator.dupe(u8, identifier);
         errdefer self.allocator.free(duped_key);
-        try self.symbols.put(self.allocator, duped_key, .define);
+        var duped_value = try self.allocator.dupe(u8, value);
+        errdefer self.allocator.free(duped_value);
+        try self.symbols.put(self.allocator, duped_key, .{ .define = duped_value });
     }
 
     /// Does not check that identifier contains only valid characters
     pub fn undefine(self: *Options, identifier: []const u8) !void {
         if (self.symbols.getPtr(identifier)) |action| {
-            action.* = .undefine;
+            action.deinit(self.allocator);
+            action.* = .{ .undefine = {} };
             return;
         }
         var duped_key = try self.allocator.dupe(u8, identifier);
         errdefer self.allocator.free(duped_key);
-        try self.symbols.put(self.allocator, duped_key, .undefine);
+        try self.symbols.put(self.allocator, duped_key, .{ .undefine = {} });
     }
 
     /// If the current input filename both:
@@ -196,8 +215,10 @@ pub const Options = struct {
         self.extra_include_paths.deinit(self.allocator);
         self.allocator.free(self.input_filename);
         self.allocator.free(self.output_filename);
-        for (self.symbols.keys()) |name| {
-            self.allocator.free(name);
+        var symbol_it = self.symbols.iterator();
+        while (symbol_it.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
+            entry.value_ptr.deinit(self.allocator);
         }
         self.symbols.deinit(self.allocator);
     }
@@ -223,10 +244,14 @@ pub const Options = struct {
             try writer.writeAll(" Symbols:\n");
             var it = self.symbols.iterator();
             while (it.next()) |symbol| {
-                try writer.print("  {s} {s}\n", .{ switch (symbol.value_ptr.*) {
+                try writer.print("  {s} {s}", .{ switch (symbol.value_ptr.*) {
                     .define => "#define",
                     .undefine => "#undef",
                 }, symbol.key_ptr.* });
+                if (symbol.value_ptr.* == .define) {
+                    try writer.print(" {s}", .{symbol.value_ptr.define});
+                }
+                try writer.writeAll("\n");
             }
         }
         if (self.max_string_literal_codepoints != lex.default_max_string_literal_codepoints) {
@@ -722,10 +747,14 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                     arg_i += 1;
                     break :next_arg;
                 };
-                // TODO: Allow <name>=<val> definitions
-                const symbol = value.slice;
+                var tokenizer = std.mem.tokenize(u8, value.slice, "=");
+                // guaranteed to exist since an empty value.slice would invoke
+                // the 'missing symbol to define' branch above
+                const symbol = tokenizer.next().?;
+                const symbol_value = tokenizer.next() orelse "1";
+
                 if (isValidIdentifier(symbol)) {
-                    try options.define(symbol);
+                    try options.define(symbol, symbol_value);
                 } else {
                     var err_details = Diagnostics.ErrorDetails{ .type = .warning, .arg_index = arg_i, .arg_span = value.argSpan(arg) };
                     var msg_writer = err_details.msg.writer(allocator);
@@ -1183,6 +1212,15 @@ test "parse: define and undefine" {
 
         const action = options.symbols.get("foo").?;
         try std.testing.expectEqual(Options.SymbolAction.define, action);
+        try std.testing.expectEqualStrings("1", action.define);
+    }
+    {
+        var options = try testParse(&.{ "foo.exe", "/dfoo=bar", "/dfoo=baz", "foo.rc" });
+        defer options.deinit();
+
+        const action = options.symbols.get("foo").?;
+        try std.testing.expectEqual(Options.SymbolAction.define, action);
+        try std.testing.expectEqualStrings("baz", action.define);
     }
     {
         var options = try testParse(&.{ "foo.exe", "/ufoo", "foo.rc" });
