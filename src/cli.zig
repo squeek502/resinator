@@ -254,8 +254,17 @@ pub const Options = struct {
                 try writer.writeAll("\n");
             }
         }
+        if (self.null_terminate_string_table_strings) {
+            try writer.writeAll(" Strings in string tables will be null-terminated\n");
+        }
         if (self.max_string_literal_codepoints != lex.default_max_string_literal_codepoints) {
             try writer.print(" Max string literal length: {}\n", .{self.max_string_literal_codepoints});
+        }
+        if (self.silent_duplicate_control_ids) {
+            try writer.writeAll(" Duplicate control IDs will not emit warnings\n");
+        }
+        if (self.silent_duplicate_control_ids) {
+            try writer.writeAll(" Invalid code page in .rc will produce a warning (instead of an error)\n");
         }
 
         const language_id = self.default_language_id orelse res.Language.default;
