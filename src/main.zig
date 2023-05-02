@@ -39,6 +39,11 @@ pub fn main() !void {
     };
     defer options.deinit();
 
+    if (options.print_help_and_exit) {
+        std.debug.print("{s}", .{cli.usage_string});
+        return;
+    }
+
     const stdout_writer = std.io.getStdOut().writer();
     if (options.verbose) {
         try options.dumpVerbose(stdout_writer);

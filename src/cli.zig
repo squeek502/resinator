@@ -9,6 +9,45 @@ const lex = @import("lex.zig");
 /// This is what /SL 100 will set the maximum string literal length to
 pub const max_string_literal_length_100_percent = 8192;
 
+pub const usage_string =
+    \\Usage: resinator [options] <INPUT> [<OUTPUT>]
+    \\
+    \\Supported Win32 RC Options:
+    \\  /?, /h                  Print this help and exit.
+    \\  /v                      Verbose (print progress messages).
+    \\  /d <name>[=<value>]     Define a symbol (during preprocessing).
+    \\  /u <name>               Undefine a symbol (during preprocessing).
+    \\  /fo <value>             Specify output file path.
+    \\  /l <value>              Set default language using hexadecimal id (ex: 409).
+    \\  /ln <value>             Set default language using language name (ex: en-us).
+    \\  /i <value>              Add an include path.
+    \\  /x                      Ignore INCLUDE environment variable.
+    \\  /c <value>              Set default code page (ex: 65001).
+    \\  /w                      Warn on invalid code page in .rc (instead of error).
+    \\  /y                      Suppress warnings for duplicate control IDs.
+    \\  /n                      Null-terminate all strings in string tables.
+    \\  /sl <value>             Specify string literal length limit in percentage (1-100)
+    \\                          where 100 corresponds to a limit of 8192. If the /sl
+    \\                          option is not specified, the default limit is 4097.
+    \\  /p                      Only run the preprocessor and output a .rcpp file.
+    \\
+    \\No-op Win32 RC Options:
+    \\  /nologo, /a, /r         Options that are recognized but do nothing.
+    \\
+    \\Unsupported Win32 RC Options:
+    \\  /fm, /q, /g, /gn, /g1, /g2     Unsupported MUI-related options.
+    \\  /?c, /hc, /t, /tp:<prefix>,    Unsupported LCX/LCE-related options.
+    \\     /tn, /tm, /tc, /tw, /te,
+    \\                    /ti, /ta
+    \\  /z                             Unsupported font-substitution-related option.
+    \\  /s                             Unsupported HWB-related option.
+    \\
+    \\Custom Options (resinator-specific):
+    \\  /no-preprocess         Do not run the preprocessor.
+    \\  /debug                 Output the preprocessed .rc file and the parsed AST.
+    \\
+;
+
 pub const Diagnostics = struct {
     errors: std.ArrayListUnmanaged(ErrorDetails) = .{},
     allocator: Allocator,
@@ -92,6 +131,7 @@ pub const Options = struct {
     silent_duplicate_control_ids: bool = false,
     warn_instead_of_error_on_invalid_code_page: bool = false,
     debug: bool = false,
+    print_help_and_exit: bool = false,
 
     pub const Preprocess = enum { no, yes, only };
     pub const SymbolAction = enum { define, undefine };
@@ -188,6 +228,9 @@ pub const Options = struct {
                     .undefine => "#undef",
                 }, symbol.key_ptr.* });
             }
+        }
+        if (self.max_string_literal_codepoints != lex.default_max_string_literal_codepoints) {
+            try writer.print(" Max string literal length: {}\n", .{self.max_string_literal_codepoints});
         }
 
         const language_id = self.default_language_id orelse res.Language.default;
@@ -529,6 +572,11 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                 };
                 arg_i += value.index_increment;
                 continue :next_arg;
+            } else if (std.ascii.startsWithIgnoreCase(arg_name, "h") or std.mem.startsWith(u8, arg_name, "?")) {
+                options.print_help_and_exit = true;
+                // If there's been an error to this point, then we still want to fail
+                if (diagnostics.hasError()) return error.ParseError;
+                return options;
             }
             // 1 char unsupported MUI options that need a value
             else if (std.ascii.startsWithIgnoreCase(arg_name, "q") or
@@ -674,6 +722,7 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                     arg_i += 1;
                     break :next_arg;
                 };
+                // TODO: Allow <name>=<val> definitions
                 const symbol = value.slice;
                 if (isValidIdentifier(symbol)) {
                     try options.define(symbol);
