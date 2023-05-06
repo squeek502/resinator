@@ -149,6 +149,7 @@ fn addFuzzer(
 
     // Install the cached output to the install 'bin' path
     const fuzz_install = b.addInstallBinFile(.{ .path = fuzz_exe_path }, fuzz_executable_name);
+    fuzz_install.step.dependOn(&fuzz_compile.step);
 
     // Add a top-level step that compiles and installs the fuzz executable
     const fuzz_compile_run = b.step(name, "Build executable for fuzz testing '" ++ name ++ "' using afl-clang-lto");
