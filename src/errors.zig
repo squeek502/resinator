@@ -727,6 +727,7 @@ pub fn renderErrorMessage(allocator: std.mem.Allocator, writer: anytype, colors:
         if (corresponding_lines.lines_is_error_message) {
             colors.set(writer, .red);
             try writer.writeAll(" | ");
+            colors.set(writer, .reset);
             colors.set(writer, .dim);
             try writer.writeAll(corresponding_lines.lines.items);
             colors.set(writer, .reset);
