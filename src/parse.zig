@@ -1506,7 +1506,7 @@ pub const Parser = struct {
                     .is_known_to_be_number_expression = true,
                     .can_contain_not_expressions = options.can_contain_not_expressions,
                     .nesting_context = options.nesting_context.incremented(first_token, open_paren_token),
-                    .allowed_types = options.allowed_types,
+                    .allowed_types = .{ .number = true },
                 });
 
                 try self.nextToken(.normal);
@@ -1935,6 +1935,11 @@ test "number expressions" {
     try testParseErrorDetails(
         &.{.{ .type = .err, .str = "expected number, number expression, or quoted string literal; got '&'" }},
         "1 RCDATA { \"str\" & 1 }",
+        null,
+    );
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "expected number or number expression; got '\"str\"'" }},
+        "1 RCDATA { (\"str\") }",
         null,
     );
 }
