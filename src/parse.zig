@@ -1613,6 +1613,9 @@ pub const Parser = struct {
         var expr: *Node = try self.parsePrimary(options);
         const first_token = expr.getFirstToken();
 
+        // Non-number expressions can't have operators, so we can just return
+        if (!expr.isNumberExpression()) return expr;
+
         while (try self.parseOptionalTokenAdvanced(.operator, .normal_expect_operator)) {
             const operator = self.state.token;
             const rhs_node = try self.parsePrimary(.{
@@ -1917,6 +1920,22 @@ test "number expressions" {
         \\    literal 7
         \\   literal 1
         \\
+    );
+    // This looks like an invalid number expression, but it's interpreted as three separate data elements:
+    // "str", - (evaluates to 0), and 1
+    try testParse("id RCDATA { \"str\" - 1 }",
+        \\root
+        \\ resource_raw_data id RCDATA [0 common_resource_attributes] raw data: 3
+        \\  literal "str"
+        \\  literal -
+        \\  literal 1
+        \\
+    );
+    // But this is an actual error since it tries to use a string as part of a number expression
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "expected number, number expression, or quoted string literal; got '&'" }},
+        "1 RCDATA { \"str\" & 1 }",
+        null,
     );
 }
 
