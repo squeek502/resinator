@@ -9,7 +9,7 @@ const lex = @import("lex.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{ .stack_trace_frames = 8 }){};
-    defer std.debug.assert(gpa.deinit() == false);
+    defer std.debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
 
     var options = options: {

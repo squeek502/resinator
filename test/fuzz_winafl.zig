@@ -33,7 +33,7 @@ pub fn main() !void {
     // This is commented out since doing so seemed to make the fuzzer
     // run a bit faster and checking for leaks can be handled by the
     // AFL++ fuzzer instead of the winafl fuzzer.
-    // defer std.debug.assert(gpa.deinit() == false);
+    // defer std.debug.assert(gpa.deinit() == .ok);
 
     // The memory here is intentionally leaked.
     // It seems like if there is a `defer std.process.argsFree` within this
