@@ -98,6 +98,7 @@ pub fn compare(win32_result: *Win32Result, resinator_result: *ResinatorResult) !
         if (resinator_result.diagnostics.containsAny(&.{
             .rc_would_error_on_bitmap_version,
             .rc_would_error_on_icon_dir,
+            .rc_could_miscompile_control_params,
         })) {
             return;
         }
