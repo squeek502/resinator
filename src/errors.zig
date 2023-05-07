@@ -279,6 +279,7 @@ pub const ErrorDetails = struct {
         nested_expression_level_exceeds_max,
         close_paren_expression,
         unary_plus_expression,
+        rc_could_miscompile_control_params,
 
         // Compiler
         /// `string_and_language` is populated
@@ -466,6 +467,10 @@ pub const ErrorDetails = struct {
             },
             .unary_plus_expression => {
                 try writer.writeAll("the Win32 RC compiler may accept '+' as a unary operator here, but it is not supported in this implementation; consider omitting the unary +");
+            },
+            .rc_could_miscompile_control_params => switch (self.type) {
+                .err, .warning => return writer.print("this token could be erroneously skipped over by the Win32 RC compiler", .{}),
+                .note => return writer.print("to avoid the potential miscompilation, consider adding a comma after the style parameter", .{}),
             },
             .string_already_defined => switch (self.type) {
                 // TODO: better printing of language, using constant names from WinNT.h

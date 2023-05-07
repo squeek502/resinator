@@ -870,6 +870,32 @@ pub const Parser = struct {
                 .can_contain_not_expressions = true,
                 .allowed_types = .{ .number = true },
             });
+            // If there is no comma after the style paramter, the Win32 RC compiler
+            // could misinterpret the statement and end up skipping over at least one token
+            // that should have been interepeted as the next parameter (x). For example:
+            //   CONTROL "text", 1, BUTTON, 15 30, 1, 2, 3, 4
+            // the `15` is the style parameter, but in the Win32 implementation the `30`
+            // is completely ignored (i.e. the `1, 2, 3, 4` are `x`, `y`, `w`, `h`).
+            // If a comma is added after the `15`, then `30` gets interpreted (correctly)
+            // as the `x` value.
+            //
+            // Instead of emulating this behavior, we just warn about the potential for
+            // weird behavior in the Win32 implementation whenever there isn't a comma after
+            // the style parameter.
+            const lookahead_token = try self.lookaheadToken(.normal);
+            if (lookahead_token.id != .comma and lookahead_token.id != .eof) {
+                try self.addErrorDetails(.{
+                    .err = .rc_could_miscompile_control_params,
+                    .type = .warning,
+                    .token = lookahead_token,
+                });
+                try self.addErrorDetails(.{
+                    .err = .rc_could_miscompile_control_params,
+                    .type = .note,
+                    // TODO: Point to the whole expression
+                    .token = style.?.getFirstToken(),
+                });
+            }
             try self.skipAnyCommas();
         }
 
@@ -3856,6 +3882,17 @@ test "unary plus" {
             .{ .type = .note, .str = "the Win32 RC compiler may accept '+' as a unary operator here, but it is not supported in this implementation; consider omitting the unary +" },
         },
         "1 RCDATA { +2 }",
+        null,
+    );
+}
+
+test "control style potential miscompilation" {
+    try testParseErrorDetails(
+        &.{
+            .{ .type = .warning, .str = "this token could be erroneously skipped over by the Win32 RC compiler" },
+            .{ .type = .note, .str = "to avoid the potential miscompilation, consider adding a comma after the style parameter" },
+        },
+        "1 DIALOGEX 1, 2, 3, 4 { CONTROL \"text\", 100, BUTTON, 3 1, 2, 3, 4, 100 }",
         null,
     );
 }

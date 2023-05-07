@@ -114,6 +114,10 @@ The plan is to use fuzz testing with the `rc` tool as an oracle to ensure that `
   + The Win32 RC compiler will treat the `NUL` character as a terminator (e.g. `1 RCDATA "hello\x00world"` will look for a file named `hello`), but that behavior seems unlikely to be useful and worth disallowing.
 - `resinator` will error whenever a unary + operator is used, and emit a note about unary + not being supported in `resinator`'s implementation.
   + The Win32 RC compiler allows `+` as a unary operator in some places but not others. In things like raw data blocks, it gives an error like `unexpected value in RCDATA`. In `DIALOG` parameters, it does not always give an error (e.g. `+1` is allowed but `(+1)` gives an error).
+- `resinator` will avoid erroneously skipping over tokens after the `style` parameter of a `CONTROL` within `DIALOG`/`DIALOGEX` resources if the `style` parameter does not have a comma after it, and will emit a warning.
+  + The Win32 RC compiler allows an extra expression after the `style` parameter of `CONTROL`s within `DIALOG`/`DIALOGEX` resources, but only if there is no comma separating them. Example: `CONTROL "text", 1, BUTTON, 15 30, 1, 2, 3, 4`; the `15` is the style parameter and the `30` is completely ignored (i.e. the `1, 2, 3, 4` are `x`, `y`, `w`, `h`).
+    - The extra expression can be various things (quoted string, `=`, etc) but not *anything*, e.g. if it's `;` then it will error with `expected numerical dialog constant`
+    - If the extra expression is a number expression it will no longer ignore it but will behave strangely, e.g. if it is `(30+5)` then `5` will be used as the `x` parameter
 
 #### Resource data and `.res` filesize limits
 
@@ -152,11 +156,6 @@ The plan is to use fuzz testing with the `rc` tool as an oracle to ensure that `
   + This does not apply to non-`CONTROL` dialog statements, if e.g. `"50"` is specified as the `style` parameter of a `CHECKBOX` then it behaves like `exstyle` or `helpid` in the previous bullet point.
   + **Current thoughts:** Seems like a bug in the Win32 implementation to accept quoted strings here. Don't really see a reason to be bug-for-bug compatible with this one.
   + **Current `resinator` behavior:** `error: expected number or number expression; got '"50"'`
-- The Win32 RC compiler allows an extra expression after the `style` parameter of `CONTROL`s within `DIALOG`/`DIALOGEX` resources, but only if there is no comma separating them. Example: `CONTROL "text", 1, BUTTON, 15 30, 1, 2, 3, 4`; the `15` is the style parameter and the `30` is completely ignored (i.e. the `1, 2, 3, 4` are `x`, `y`, `w`, `h`).
-  + The extra expression can be various things (quoted string, `=`, etc) but not *anything*, e.g. if it's `;` then it will error with `expected numerical dialog constant`
-  + If the extra expression is a number expression it will no longer ignore it but will behave strangely, e.g. if it is `(30+5)` then `5` will be used as the `x` parameter
-  + **Current thoughts:** Definitely a bug in the Win32 implementation. Don't really see a reason to be bug-for-bug compatible with this one, but will need to warn/error when it would affect the output. Most foolproof thing might be to warn whenever the comma is omitted after the style parameter of a `CONTROL` statement, since accounting for all the various miscompilations possible here is not worth the effort.
-  + **Current `resinator` behavior:** `error: expected number or number expression; got '"30"'` if the extra expression is not a number expression, or it will treat the extra expression as the `x` parameter (this can lead to different `.res` outputs)
 - The Win32 RC compiler will sometimes error if subtraction is performed with the right-hand-side evaluating to 0. Example: `1 DIALOGEX 1, 2, 3, 4-0 {}` will error with `BEGIN expected in dialog` (note: the lack of whitespace between the two operands seems to matter). Such expressions never seem to be errors within raw data blocks (e.g. `1 RCDATA { 4-0 }` works fine).
   + Some more expressions that error: `4-0x0`, `(4-0)`
   + Some allowed expressions: `4 - 0`, `100--0`, `4-(0)`

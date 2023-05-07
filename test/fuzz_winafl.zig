@@ -129,6 +129,7 @@ pub fn compare(win32_result: *Win32Result, resinator_result: *ResinatorResult) !
             .rc_would_miscompile_bmp_palette_padding,
             .rc_would_miscompile_codepoint_byte_swap,
             .rc_would_miscompile_codepoint_skip,
+            .rc_could_miscompile_control_params,
         })) {
             std.debug.print("intentional difference, ignoring\n", .{});
             return;
