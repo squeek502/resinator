@@ -1601,6 +1601,8 @@ pub const Compiler = struct {
                     try ordinal.write(data_writer);
                 } else {
                     // NUL acts as a terminator
+                    // TODO: Maybe warn when parsed_terminated.len != parsed.len, since
+                    //       it seems unlikely that NUL-termination is something intentional
                     const parsed_terminated = std.mem.sliceTo(parsed, 0);
                     const name = NameOrOrdinal{ .name = parsed_terminated };
                     try name.write(data_writer);
