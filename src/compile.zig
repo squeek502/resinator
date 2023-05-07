@@ -1600,7 +1600,9 @@ pub const Compiler = struct {
                     const ordinal = NameOrOrdinal{ .ordinal = @enumToInt(control_class) };
                     try ordinal.write(data_writer);
                 } else {
-                    const name = NameOrOrdinal{ .name = parsed };
+                    // NUL acts as a terminator
+                    const parsed_terminated = std.mem.sliceTo(parsed, 0);
+                    const name = NameOrOrdinal{ .name = parsed_terminated };
                     try name.write(data_writer);
                 }
             } else {
