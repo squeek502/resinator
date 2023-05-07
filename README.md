@@ -167,6 +167,10 @@ The plan is to use fuzz testing with the `rc` tool as an oracle to ensure that `
   + It doesn't complain about numbers that overflow a `u16` and uses wrapping overflow as is common everywhere else.
   + **Current thoughts:** `resinator` should allow the `l`/`L` suffix but warn about it. Will also need to double check that this is the only place where the Win32 RC compiler errors upon seeing the `L` suffix.
   + **Current `resinator` behavior:** Successful compilation, but no warning about the Win32 behavior
+- The Win32 RC compiler will error when preprocessor errors occur within areas that the preprocessor thinks is outside of a string literal but the RC parser would think is inside of a string literal
+  + For example, the character `@` used outside of a string literal will cause a Win32 RC preprocessor error. If a string literal spans multiple lines without the use of splices (something that the docs say is disallowed but is allowed empirically) and a `@` (or another character that causes a preprocessor error) appears on a subsequent line, then the Win32 preprocessor will still error even though it would be interpreted as inside a string literal by the Win32 RC parser.
+  + **Current thoughts:** `resinator` does try to detect such characters outside of string literals and error on them, but it only does so during lexing which means that it sees the illegal-outside-of-string-literals character as within a string literal (and is therefore not considered an error). It doesn't really seem worth it to include a 'parse as if you were the RC preprocessor to look for illegal characters' step between preprocessing and lexing just to detect this edge case.
+  + **Current `resinator` behavior:** Successful compilation
 
 ## Status
 
