@@ -193,7 +193,7 @@ pub fn parseAndRemoveLineCommands(allocator: Allocator, source: []const u8, buf:
 }
 
 /// Note: This should function the same as lex.LineHandler.currentIndexFormsLineEndingPair
-fn formsLineEndingPair(source: []const u8, line_ending: u8, next_index: usize) bool {
+pub fn formsLineEndingPair(source: []const u8, line_ending: u8, next_index: usize) bool {
     if (next_index >= source.len) return false;
 
     const next_ending = source[next_index];

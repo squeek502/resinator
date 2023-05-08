@@ -18,6 +18,7 @@ const Allocator = std.mem.Allocator;
 const UncheckedSliceWriter = @import("utils.zig").UncheckedSliceWriter;
 const SourceMappings = @import("source_mapping.zig").SourceMappings;
 const LineHandler = @import("lex.zig").LineHandler;
+const formsLineEndingPair = @import("source_mapping.zig").formsLineEndingPair;
 
 /// `buf` must be at least as long as `source`
 /// In-place transformation is supported (i.e. `source` and `buf` can be the same slice)
@@ -38,7 +39,6 @@ pub fn removeComments(source: []const u8, buf: []u8, source_mappings: ?*SourceMa
     var state: State = .start;
     var index: usize = 0;
     var pending_start: ?usize = null;
-    var multiline_newline_count: usize = 0;
     var line_handler = LineHandler{ .buffer = source };
     while (index < source.len) : (index += 1) {
         const c = source[index];
@@ -67,7 +67,6 @@ pub fn removeComments(source: []const u8, buf: []u8, source_mappings: ?*SourceMa
             .forward_slash => switch (c) {
                 '/' => state = .line_comment,
                 '*' => {
-                    multiline_newline_count = 0;
                     state = .multiline_comment;
                 },
                 else => {
@@ -86,23 +85,30 @@ pub fn removeComments(source: []const u8, buf: []u8, source_mappings: ?*SourceMa
                 else => {},
             },
             .multiline_comment => switch (c) {
-                '\n' => multiline_newline_count += 1,
+                '\r' => handleMultilineCarriageReturn(source, &line_handler, index, &result, source_mappings),
+                '\n' => {
+                    _ = line_handler.incrementLineNumber(index);
+                    result.write(c);
+                },
                 '*' => state = .multiline_comment_end,
                 else => {},
             },
             .multiline_comment_end => switch (c) {
+                '\r' => {
+                    handleMultilineCarriageReturn(source, &line_handler, index, &result, source_mappings);
+                    // We only want to treat this as a newline if it's part of a CRLF pair. If it's
+                    // not, then we still want to stay in .multiline_comment_end, so that e.g. `*<\r>/` still
+                    // functions as a `*/` comment ending. Kinda crazy, but that's how the Win32 implementation works.
+                    if (formsLineEndingPair(source, '\r', index + 1)) {
+                        state = .multiline_comment;
+                    }
+                },
                 '\n' => {
-                    multiline_newline_count += 1;
+                    _ = line_handler.incrementLineNumber(index);
+                    result.write(c);
                     state = .multiline_comment;
                 },
                 '/' => {
-                    if (multiline_newline_count > 0) {
-                        result.write(' ');
-                        if (source_mappings) |mappings| {
-                            mappings.collapse(line_handler.line_number, multiline_newline_count);
-                        }
-                    }
-                    multiline_newline_count = 0;
                     state = .start;
                 },
                 else => {
@@ -170,6 +176,33 @@ pub fn removeComments(source: []const u8, buf: []u8, source_mappings: ?*SourceMa
         }
     }
     return result.getWritten();
+}
+
+inline fn handleMultilineCarriageReturn(
+    source: []const u8,
+    line_handler: *LineHandler,
+    index: usize,
+    result: *UncheckedSliceWriter,
+    source_mappings: ?*SourceMappings,
+) void {
+    // Note: Bare \r within a multiline comment should *not* be treated as a line ending for the
+    // purposes of removing comments, but *should* be treated as a line ending for the
+    // purposes of line counting/source mapping
+    _ = line_handler.incrementLineNumber(index);
+    // So only write the \r if it's part of a CRLF pair
+    if (formsLineEndingPair(source, '\r', index + 1)) {
+        result.write('\r');
+    }
+    // And otherwise, we want to collapse the source mapping so that we can still know which
+    // line came from where.
+    else {
+        // Because the line gets collapsed, we need to decrement line number so that
+        // the next collapse acts on the first of the collapsed line numbers
+        line_handler.line_number -= 1;
+        if (source_mappings) |mappings| {
+            mappings.collapse(line_handler.line_number, 1);
+        }
+    }
 }
 
 pub fn removeCommentsAlloc(allocator: Allocator, source: []const u8, source_mappings: ?*SourceMappings) ![]u8 {
@@ -246,15 +279,22 @@ test "multiline comment with newlines" {
     try testRemoveComments("blahblah", "blah/*some\rthing*/blah");
 
     try testRemoveComments(
-        \\blah blah
+        \\blah
+        \\blah
     ,
         \\blah/*some
         \\thing*/blah
     );
+    try testRemoveComments(
+        "blah\r\nblah",
+        "blah/*some\r\nthing*/blah",
+    );
 
     // handle *<not /> correctly
     try testRemoveComments(
-        \\blah 
+        \\blah
+        \\
+        \\
     ,
         \\blah/*some
         \\thing*
@@ -270,11 +310,15 @@ test "comments appended to a line" {
         \\blah // line comment
         \\blah
     );
+    try testRemoveComments(
+        "blah \r\nblah",
+        "blah // line comment\r\nblah",
+    );
 }
 
 test "remove comments with mappings" {
     const allocator = std.testing.allocator;
-    var mut_source = "blah/*\ncommented line\n*/blah".*;
+    var mut_source = "blah/*\rcommented line*\r/blah".*;
     var mappings = SourceMappings{};
     _ = try mappings.files.put(allocator, "test.rc");
     try mappings.set(allocator, 1, .{ .start_line = 1, .end_line = 1, .filename_offset = 0 });
@@ -284,7 +328,7 @@ test "remove comments with mappings" {
 
     var result = removeComments(&mut_source, &mut_source, &mappings);
 
-    try std.testing.expectEqualStrings("blah blah", result);
+    try std.testing.expectEqualStrings("blahblah", result);
     try std.testing.expectEqual(@as(usize, 1), mappings.mapping.items.len);
     try std.testing.expectEqual(@as(usize, 3), mappings.mapping.items[0].end_line);
 }
