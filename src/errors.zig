@@ -303,6 +303,8 @@ pub const ErrorDetails = struct {
         icon_read_error,
         /// `icon_dir` is populated
         rc_would_error_on_bitmap_version,
+        /// `icon_dir` is populated
+        max_icon_ids_exhausted,
         /// `bmp_read_error` is populated
         bmp_read_error,
         /// `number` is populated and contains a string index for which the string contains
@@ -536,6 +538,10 @@ pub const ErrorDetails = struct {
                     self.extra.icon_dir.bitmap_version.nameForErrorDisplay(),
                 }),
                 .note => unreachable,
+            },
+            .max_icon_ids_exhausted => switch (self.type) {
+                .err, .warning => try writer.print("maximum global icon/cursor ids exhausted (max is {})", .{std.math.maxInt(u16) - 1}),
+                .note => try writer.print("maximum icon/cursor id exceeded at index {} of this {s}", .{ self.extra.icon_dir.index, @tagName(self.extra.icon_dir.icon_type) }),
             },
             .bmp_read_error => {
                 try writer.print("invalid bitmap file '{s}': {s}", .{ strings[self.extra.bmp_read_error.filename_string_index], @tagName(self.extra.bmp_read_error.err) });

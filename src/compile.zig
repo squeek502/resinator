@@ -650,7 +650,29 @@ pub const Compiler = struct {
                         try file.seekTo(entry.data_offset_from_start_of_file);
                         try writeResourceDataNoPadding(writer, file.reader(), entry.data_size_in_bytes);
                         try writeDataPadding(writer, full_data_size);
-                        // TODO: Error if this would overflow
+
+                        if (self.state.icon_id == std.math.maxInt(u16)) {
+                            try self.addErrorDetails(.{
+                                .err = .max_icon_ids_exhausted,
+                                .print_source_line = false,
+                                .token = node.filename.getFirstToken(),
+                                .extra = .{ .icon_dir = .{
+                                    .icon_type = if (icon_dir.image_type == .icon) .icon else .cursor,
+                                    .icon_format = image_format,
+                                    .index = entry_i,
+                                } },
+                            });
+                            return self.addErrorDetailsAndFail(.{
+                                .err = .max_icon_ids_exhausted,
+                                .type = .note,
+                                .token = node.filename.getFirstToken(),
+                                .extra = .{ .icon_dir = .{
+                                    .icon_type = if (icon_dir.image_type == .icon) .icon else .cursor,
+                                    .icon_format = image_format,
+                                    .index = entry_i,
+                                } },
+                            });
+                        }
                         self.state.icon_id += 1;
                     }
 
