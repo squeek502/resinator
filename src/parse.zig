@@ -3805,6 +3805,11 @@ test "code page pragma" {
         null,
     );
     try testParseErrorDetails(
+        &.{},
+        "#pragma code_page(DEFAULT)",
+        null,
+    );
+    try testParseErrorDetails(
         &.{.{ .type = .err, .str = "invalid or unknown code page in #pragma code_page" }},
         "#pragma code_page(12)",
         null,

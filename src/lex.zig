@@ -206,6 +206,7 @@ pub const Lexer = struct {
     at_start_of_line: bool = true,
     error_context_token: ?Token = null,
     current_code_page: CodePage,
+    default_code_page: CodePage,
     source_mappings: ?*SourceMappings,
     max_string_literal_codepoints: u15,
 
@@ -222,6 +223,7 @@ pub const Lexer = struct {
             .buffer = buffer,
             .index = 0,
             .current_code_page = options.default_code_page,
+            .default_code_page = options.default_code_page,
             .source_mappings = options.source_mappings,
             .max_string_literal_codepoints = options.max_string_literal_codepoints,
             .line_handler = .{ .buffer = buffer },
@@ -884,49 +886,55 @@ pub const Lexer = struct {
             return error.CodePagePragmaMissingRightParen;
         }
 
-        // The Win32 compiler behaves fairly strangely around maxInt(u32):
-        // - If the overflowed u32 wraps and becomes a known code page ID, then
-        //   it will error/warn with "Codepage not valid:  ignored" (depending on /w)
-        // - If the overflowed u32 wraps and does not become a known code page ID,
-        //   then it will error with 'constant too big' and 'Codepage not integer'
-        //
-        // Instead of that, we just have a separate error specifically for overflow.
-        const num = parseCodePageNum(num_str) catch |err| switch (err) {
-            error.InvalidCharacter => {
-                self.error_context_token = token;
-                return error.CodePagePragmaNotInteger;
-            },
-            error.Overflow => {
-                self.error_context_token = token;
-                return error.CodePagePragmaOverflow;
-            },
-        };
+        const code_page = code_page: {
+            if (std.ascii.eqlIgnoreCase("DEFAULT", num_str)) {
+                break :code_page self.default_code_page;
+            }
 
-        // Anything that starts with 0 but does not resolve to 0 is treated as invalid, e.g. 01252
-        if (num_str[0] == '0' and num != 0) {
-            self.error_context_token = token;
-            return error.CodePagePragmaInvalidCodePage;
-        }
-        // Anything that resolves to 0 is treated as 'not an integer' by the Win32 implementation.
-        else if (num == 0) {
-            self.error_context_token = token;
-            return error.CodePagePragmaNotInteger;
-        }
-        // Anything above u16 max is not going to be found since our CodePage enum is backed by a u16.
-        if (num > std.math.maxInt(u16)) {
-            self.error_context_token = token;
-            return error.CodePagePragmaInvalidCodePage;
-        }
+            // The Win32 compiler behaves fairly strangely around maxInt(u32):
+            // - If the overflowed u32 wraps and becomes a known code page ID, then
+            //   it will error/warn with "Codepage not valid:  ignored" (depending on /w)
+            // - If the overflowed u32 wraps and does not become a known code page ID,
+            //   then it will error with 'constant too big' and 'Codepage not integer'
+            //
+            // Instead of that, we just have a separate error specifically for overflow.
+            const num = parseCodePageNum(num_str) catch |err| switch (err) {
+                error.InvalidCharacter => {
+                    self.error_context_token = token;
+                    return error.CodePagePragmaNotInteger;
+                },
+                error.Overflow => {
+                    self.error_context_token = token;
+                    return error.CodePagePragmaOverflow;
+                },
+            };
 
-        const code_page = code_pages.CodePage.getByIdentifierEnsureSupported(@intCast(u16, num)) catch |err| switch (err) {
-            error.InvalidCodePage => {
+            // Anything that starts with 0 but does not resolve to 0 is treated as invalid, e.g. 01252
+            if (num_str[0] == '0' and num != 0) {
                 self.error_context_token = token;
                 return error.CodePagePragmaInvalidCodePage;
-            },
-            error.UnsupportedCodePage => {
+            }
+            // Anything that resolves to 0 is treated as 'not an integer' by the Win32 implementation.
+            else if (num == 0) {
                 self.error_context_token = token;
-                return error.CodePagePragmaUnsupportedCodePage;
-            },
+                return error.CodePagePragmaNotInteger;
+            }
+            // Anything above u16 max is not going to be found since our CodePage enum is backed by a u16.
+            if (num > std.math.maxInt(u16)) {
+                self.error_context_token = token;
+                return error.CodePagePragmaInvalidCodePage;
+            }
+
+            break :code_page code_pages.CodePage.getByIdentifierEnsureSupported(@intCast(u16, num)) catch |err| switch (err) {
+                error.InvalidCodePage => {
+                    self.error_context_token = token;
+                    return error.CodePagePragmaInvalidCodePage;
+                },
+                error.UnsupportedCodePage => {
+                    self.error_context_token = token;
+                    return error.CodePagePragmaUnsupportedCodePage;
+                },
+            };
         };
 
         // https://learn.microsoft.com/en-us/windows/win32/menurc/pragma-directives
