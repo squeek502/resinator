@@ -447,6 +447,21 @@ pub const Compiler = struct {
                     };
                     defer icon_dir.deinit();
 
+                    // This uses >= because the relevant limit is the icon id, which starts at 1
+                    // and counts up, so the effective max that can actually be written to a .res
+                    // is `maxInt(u16) - 1`.
+                    if (icon_dir.entries.len >= std.math.maxInt(u16)) {
+                        return self.addErrorDetailsAndFail(.{
+                            .err = .icon_dir_too_many_entries,
+                            .token = node.filename.getFirstToken(),
+                            .extra = .{ .resource = switch (predefined_type) {
+                                .GROUP_ICON => .icon,
+                                .GROUP_CURSOR => .cursor,
+                                else => unreachable,
+                            } },
+                        });
+                    }
+
                     // Note: The Win32 RC compiler will compile the resource as whatever type is
                     //       in the icon_dir regardless of the type of resource specified in the .rc.
                     //       This leads to unusable .res files when the types mismatch, so
@@ -475,7 +490,10 @@ pub const Compiler = struct {
 
                     const first_icon_id = self.state.icon_id;
                     const entry_type = if (predefined_type == .GROUP_ICON) @enumToInt(res.RT.ICON) else @enumToInt(res.RT.CURSOR);
-                    for (icon_dir.entries, 0..) |*entry, entry_i| {
+                    for (icon_dir.entries, 0..) |*entry, entry_i_usize| {
+                        // By this point we know that the entry index must fit within a u16, so
+                        // cast it here to simplify usage sites.
+                        const entry_i = @intCast(u16, entry_i_usize);
                         var full_data_size = entry.data_size_in_bytes;
                         if (icon_dir.image_type == .cursor) full_data_size += 4;
 
@@ -531,14 +549,14 @@ pub const Compiler = struct {
                                         .err = .rc_would_error_on_icon_dir,
                                         .type = .warning,
                                         .token = node.filename.getFirstToken(),
-                                        .extra = .{ .icon_dir = .{ .icon_type = .icon, .icon_format = .riff, .index = @intCast(u16, entry_i) } },
+                                        .extra = .{ .icon_dir = .{ .icon_type = .icon, .icon_format = .riff, .index = entry_i } },
                                     });
                                     try self.addErrorDetails(.{
                                         .err = .rc_would_error_on_icon_dir,
                                         .type = .note,
                                         .print_source_line = false,
                                         .token = node.filename.getFirstToken(),
-                                        .extra = .{ .icon_dir = .{ .icon_type = .icon, .icon_format = .riff, .index = @intCast(u16, entry_i) } },
+                                        .extra = .{ .icon_dir = .{ .icon_type = .icon, .icon_format = .riff, .index = entry_i } },
                                     });
                                 },
                                 .cursor => {
@@ -548,7 +566,7 @@ pub const Compiler = struct {
                                     return self.addErrorDetailsAndFail(.{
                                         .err = .format_not_supported_in_icon_dir,
                                         .token = node.filename.getFirstToken(),
-                                        .extra = .{ .icon_dir = .{ .icon_type = .cursor, .icon_format = .riff, .index = @intCast(u16, entry_i) } },
+                                        .extra = .{ .icon_dir = .{ .icon_type = .cursor, .icon_format = .riff, .index = entry_i } },
                                     });
                                 },
                             },
@@ -573,7 +591,7 @@ pub const Compiler = struct {
                                         .err = .rc_would_error_on_icon_dir,
                                         .type = .warning,
                                         .token = node.filename.getFirstToken(),
-                                        .extra = .{ .icon_dir = .{ .icon_type = .cursor, .icon_format = .png, .index = @intCast(u16, entry_i) } },
+                                        .extra = .{ .icon_dir = .{ .icon_type = .cursor, .icon_format = .png, .index = entry_i } },
                                     });
                                 },
                             },
@@ -593,7 +611,7 @@ pub const Compiler = struct {
                                         .extra = .{ .icon_dir = .{
                                             .icon_type = if (icon_dir.image_type == .icon) .icon else .cursor,
                                             .icon_format = image_format,
-                                            .index = @intCast(u16, entry_i),
+                                            .index = entry_i,
                                             .bitmap_version = bitmap_version,
                                         } },
                                     });
@@ -605,7 +623,7 @@ pub const Compiler = struct {
                                         .extra = .{ .icon_dir = .{
                                             .icon_type = if (icon_dir.image_type == .icon) .icon else .cursor,
                                             .icon_format = image_format,
-                                            .index = @intCast(u16, entry_i),
+                                            .index = entry_i,
                                             .bitmap_version = bitmap_version,
                                         } },
                                     });
@@ -632,6 +650,7 @@ pub const Compiler = struct {
                         try file.seekTo(entry.data_offset_from_start_of_file);
                         try writeResourceDataNoPadding(writer, file.reader(), entry.data_size_in_bytes);
                         try writeDataPadding(writer, full_data_size);
+                        // TODO: Error if this would overflow
                         self.state.icon_id += 1;
                     }
 

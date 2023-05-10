@@ -297,6 +297,8 @@ pub const ErrorDetails = struct {
         format_not_supported_in_icon_dir,
         /// `resource` is populated and contains the expected type
         icon_dir_and_resource_type_mismatch,
+        /// `resource` is populated and contains the resource type
+        icon_dir_too_many_entries,
         /// `icon_read_error` is populated
         icon_read_error,
         /// `icon_dir` is populated
@@ -514,6 +516,9 @@ pub const ErrorDetails = struct {
                 const unexpected_type: rc.Resource = if (self.extra.resource == .icon) .cursor else .icon;
                 // TODO: Better wording
                 try writer.print("resource type '{s}' does not match type '{s}' specified in the file", .{ @tagName(self.extra.resource), @tagName(unexpected_type) });
+            },
+            .icon_dir_too_many_entries => {
+                try writer.print("this {s} contains too many entries (max is {})", .{ @tagName(self.extra.resource), std.math.maxInt(u16) - 1 });
             },
             .icon_read_error => {
                 try writer.print("unable to read {s} file '{s}': {s}", .{ @tagName(self.extra.icon_read_error.icon_type), strings[self.extra.icon_read_error.filename_string_index], @tagName(self.extra.icon_read_error.err) });
