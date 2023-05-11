@@ -810,10 +810,22 @@ pub const Compiler = struct {
                     }, node.id);
                     return;
                 },
-                else => {
-                    std.debug.print("Type: {}\n", .{predefined_type});
-                    @panic("TODO writeResourceExternal");
-                },
+                .ACCELERATOR,
+                .ANICURSOR,
+                .ANIICON,
+                .CURSOR,
+                .DIALOG,
+                .DLGINCLUDE,
+                .FONTDIR,
+                .ICON,
+                .MENU,
+                .PLUGPLAY,
+                .STRING,
+                .TOOLBAR,
+                .VERSION,
+                .VXD,
+                => unreachable,
+                _ => unreachable,
             }
         } else {
             header.applyMemoryFlags(node.common_resource_attributes, self.source);
@@ -2250,13 +2262,8 @@ pub const Compiler = struct {
         pub fn init(allocator: Allocator, id_bytes: SourceBytes, type_bytes: SourceBytes, data_size: DWORD, language: res.Language, version: DWORD, characteristics: DWORD) !ResourceHeader {
             const type_value = type: {
                 const resource_type = Resource.fromString(type_bytes);
-                if (resource_type != .user_defined) {
-                    if (res.RT.fromResource(resource_type)) |rt_constant| {
-                        break :type NameOrOrdinal{ .ordinal = @enumToInt(rt_constant) };
-                    } else {
-                        std.debug.print("{}\n", .{resource_type});
-                        @panic("TODO: unhandled resource -> RT constant conversion");
-                    }
+                if (res.RT.fromResource(resource_type)) |rt_constant| {
+                    break :type NameOrOrdinal{ .ordinal = @enumToInt(rt_constant) };
                 } else {
                     break :type try NameOrOrdinal.fromString(allocator, type_bytes);
                 }

@@ -37,7 +37,8 @@ pub const RT = enum(u8) {
     VXD = 20,
     _,
 
-    /// Returns null if the resource type doesn't have a 1:1 mapping with an RT constant
+    /// Returns null if the resource type is user-defined
+    /// Asserts that the resource is not `stringtable`
     pub fn fromResource(resource: Resource) ?RT {
         return switch (resource) {
             .accelerators => .ACCELERATOR,
@@ -55,7 +56,7 @@ pub const RT = enum(u8) {
             .messagetable => .MESSAGETABLE,
             .plugplay => .PLUGPLAY,
             .rcdata => .RCDATA,
-            .stringtable => null, // TODO: Maybe unreachable?
+            .stringtable => unreachable,
             .toolbar => .TOOLBAR,
             .user_defined => null,
             .versioninfo => .VERSION,
