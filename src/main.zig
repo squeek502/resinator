@@ -153,7 +153,8 @@ pub fn main() !void {
     var final_input = removeComments(mapping_results.result, mapping_results.result, &mapping_results.mappings);
 
     var output_file = try std.fs.cwd().createFile(options.output_filename, .{});
-    defer output_file.close();
+    var output_file_closed = false;
+    defer if (!output_file_closed) output_file.close();
 
     var diagnostics = Diagnostics.init(allocator);
     defer diagnostics.deinit();
@@ -185,7 +186,9 @@ pub fn main() !void {
         }
     }
 
-    compile(allocator, final_input, output_file.writer(), .{
+    var output_buffered_stream = std.io.bufferedWriter(output_file.writer());
+
+    compile(allocator, final_input, output_buffered_stream.writer(), .{
         .cwd = std.fs.cwd(),
         .diagnostics = &diagnostics,
         .source_mappings = &mapping_results.mappings,
@@ -201,6 +204,11 @@ pub fn main() !void {
     }) catch |err| switch (err) {
         error.ParseError, error.CompileError => {
             diagnostics.renderToStdErr(std.fs.cwd(), final_input, mapping_results.mappings);
+            // Delete the output file on error
+            output_file.close();
+            output_file_closed = true;
+            // Failing to delete is not really a big deal, so swallow any errors
+            std.fs.cwd().deleteFile(options.output_filename) catch {};
             std.os.exit(1);
         },
         else => |e| return e,
