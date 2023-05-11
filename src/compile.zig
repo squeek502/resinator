@@ -448,20 +448,8 @@ pub const Compiler = struct {
                     };
                     defer icon_dir.deinit();
 
-                    // This uses >= because the relevant limit is the icon id, which starts at 1
-                    // and counts up, so the effective max that can actually be written to a .res
-                    // is `maxInt(u16) - 1`.
-                    if (icon_dir.entries.len >= std.math.maxInt(u16)) {
-                        return self.addErrorDetailsAndFail(.{
-                            .err = .icon_dir_too_many_entries,
-                            .token = node.filename.getFirstToken(),
-                            .extra = .{ .resource = switch (predefined_type) {
-                                .GROUP_ICON => .icon,
-                                .GROUP_CURSOR => .cursor,
-                                else => unreachable,
-                            } },
-                        });
-                    }
+                    // This limit is inherent to the ico format since number of entries is a u16 field.
+                    std.debug.assert(icon_dir.entries.len <= std.math.maxInt(u16));
 
                     // Note: The Win32 RC compiler will compile the resource as whatever type is
                     //       in the icon_dir regardless of the type of resource specified in the .rc.
@@ -492,7 +480,7 @@ pub const Compiler = struct {
                     const first_icon_id = self.state.icon_id;
                     const entry_type = if (predefined_type == .GROUP_ICON) @enumToInt(res.RT.ICON) else @enumToInt(res.RT.CURSOR);
                     for (icon_dir.entries, 0..) |*entry, entry_i_usize| {
-                        // By this point we know that the entry index must fit within a u16, so
+                        // We know that the entry index must fit within a u16, so
                         // cast it here to simplify usage sites.
                         const entry_i = @intCast(u16, entry_i_usize);
                         var full_data_size = entry.data_size_in_bytes;

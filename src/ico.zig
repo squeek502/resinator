@@ -115,6 +115,8 @@ pub const ImageType = enum(u16) {
 
 pub const IconDir = struct {
     image_type: ImageType,
+    /// Note: entries.len will always fit into a u16, since the field containing the
+    /// number of images in an ico file is a u16.
     entries: []Entry,
     allocator: std.mem.Allocator,
 
@@ -125,12 +127,14 @@ pub const IconDir = struct {
     pub const res_header_byte_len = 6;
 
     pub fn getResDataSize(self: IconDir) u32 {
-        return IconDir.res_header_byte_len + @intCast(u32, self.entries.len) * Entry.res_byte_len;
+        // maxInt(u16) * Entry.res_byte_len = 917,490 which is well within the u32 range.
+        return IconDir.res_header_byte_len + @intCast(u16, self.entries.len) * Entry.res_byte_len;
     }
 
     pub fn writeResData(self: IconDir, writer: anytype, first_image_id: u16) !void {
         try writer.writeIntLittle(u16, 0);
         try writer.writeIntLittle(u16, @enumToInt(self.image_type));
+        // We know that entries.len must fit into a u16
         try writer.writeIntLittle(u16, @intCast(u16, self.entries.len));
 
         var image_id = first_image_id;
