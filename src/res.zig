@@ -230,11 +230,11 @@ pub const NameOrOrdinal = union(enum) {
 
     /// Returns the full length of the amount of bytes that would be written by `write`
     /// (e.g. for an ordinal it will return the length including the 0xFFFF indicator)
-    pub fn byteLen(self: NameOrOrdinal) u32 {
+    pub fn byteLen(self: NameOrOrdinal) usize {
         switch (self) {
             .name => |name| {
-                // + 1 for 0-terminated, * 2 for bytes per u16
-                return @intCast(u32, (name.len + 1) * 2);
+                // + 1 for 0-terminated
+                return (name.len + 1) * @sizeOf(u16);
             },
             .ordinal => return 4,
         }
@@ -243,7 +243,9 @@ pub const NameOrOrdinal = union(enum) {
     pub fn write(self: NameOrOrdinal, writer: anytype) !void {
         switch (self) {
             .name => |name| {
-                try writer.writeAll(std.mem.sliceAsBytes(name[0 .. name.len + 1]));
+                for (name[0 .. name.len + 1]) |code_unit| {
+                    try writer.writeIntLittle(u16, code_unit);
+                }
             },
             .ordinal => |ordinal| {
                 try writer.writeIntLittle(u16, 0xffff);

@@ -321,6 +321,7 @@ pub const ErrorDetails = struct {
         /// palette bytes and the second contains the max number of missing palette bytes.
         /// If type is `.note`, then `extra` is `none`.
         bmp_too_many_missing_palette_bytes,
+        resource_header_size_exceeds_max,
         resource_data_size_exceeds_max,
         control_extra_data_size_exceeds_max,
         version_node_size_exceeds_max,
@@ -570,6 +571,9 @@ pub const ErrorDetails = struct {
                 },
                 // TODO: command line option
                 .note => try writer.writeAll("the maximum number of missing color palette bytes is configurable via <<TODO command line option>>"),
+            },
+            .resource_header_size_exceeds_max => {
+                try writer.print("resource's header length exceeds maximum of {} bytes", .{std.math.maxInt(u32)});
             },
             .resource_data_size_exceeds_max => switch (self.type) {
                 .err, .warning => return writer.print("resource's data length exceeds maximum of {} bytes", .{std.math.maxInt(u32)}),

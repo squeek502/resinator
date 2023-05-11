@@ -27,6 +27,7 @@ const SourceMappings = @import("source_mapping.zig").SourceMappings;
 const windows1252 = @import("windows1252.zig");
 const lang = @import("lang.zig");
 const code_pages = @import("code_pages.zig");
+const errors = @import("errors.zig");
 
 pub const CompileOptions = struct {
     cwd: std.fs.Dir,
@@ -344,7 +345,7 @@ pub const Compiler = struct {
 
             header.applyMemoryFlags(node.common_resource_attributes, self.source);
             header.data_size = @intCast(u32, parsed_filename.len + 1);
-            try header.write(writer);
+            try header.write(writer, .{ .diagnostics = self.diagnostics, .token = node.id });
             try writer.writeAll(parsed_filename);
             try writer.writeByte(0);
             try writeDataPadding(writer, header.data_size);
@@ -424,7 +425,7 @@ pub const Compiler = struct {
                         header.applyMemoryFlags(node.common_resource_attributes, self.source);
                         header.data_size = @intCast(u32, try file.getEndPos());
 
-                        try header.write(writer);
+                        try header.write(writer, .{ .diagnostics = self.diagnostics, .token = node.id });
                         try file.seekTo(0);
                         try writeResourceData(writer, file.reader(), header.data_size);
                         return;
@@ -506,7 +507,7 @@ pub const Compiler = struct {
                             .version = self.state.version,
                             .characteristics = self.state.characteristics,
                         };
-                        try image_header.write(writer);
+                        try image_header.write(writer, .{ .diagnostics = self.diagnostics, .token = node.id });
 
                         // From https://learn.microsoft.com/en-us/windows/win32/menurc/localheader:
                         // > The LOCALHEADER structure is the first data written to the RT_CURSOR
@@ -678,7 +679,7 @@ pub const Compiler = struct {
 
                     header.data_size = icon_dir.getResDataSize();
 
-                    try header.write(writer);
+                    try header.write(writer, .{ .diagnostics = self.diagnostics, .token = node.id });
                     try icon_dir.writeResData(writer, first_icon_id);
                     try writeDataPadding(writer, header.data_size);
                     return;
@@ -766,7 +767,7 @@ pub const Compiler = struct {
                     const bmp_bytes_to_write = @intCast(u32, bitmap_info.getExpectedByteLen(file_size));
 
                     header.data_size = bmp_bytes_to_write;
-                    try header.write(writer);
+                    try header.write(writer, .{ .diagnostics = self.diagnostics, .token = node.id });
                     try file.seekTo(bmp.file_header_len);
                     const file_reader = file.reader();
                     try writeResourceDataNoPadding(writer, file_reader, bitmap_info.dib_header_size);
@@ -807,7 +808,7 @@ pub const Compiler = struct {
                     const file_size = try file.getEndPos();
                     // TODO: Error on too large files?
                     header.data_size = @intCast(u32, file_size);
-                    try header.write(writer);
+                    try header.write(writer, .{ .diagnostics = self.diagnostics, .token = node.id });
 
                     // TODO: This is much weirder than just the first 150 bytes for certain
                     //       file contents, need to investigate more to understand what should
@@ -840,7 +841,7 @@ pub const Compiler = struct {
         }
         // We now know that the data size will fit in a u32
         header.data_size = @intCast(u32, data_size);
-        try header.write(writer);
+        try header.write(writer, .{ .diagnostics = self.diagnostics, .token = node.id });
         try writeResourceData(writer, file.reader(), header.data_size);
     }
 
@@ -1119,7 +1120,7 @@ pub const Compiler = struct {
 
         header.applyMemoryFlags(common_resource_attributes, self.source);
 
-        try header.write(writer);
+        try header.write(writer, .{ .diagnostics = self.diagnostics, .token = id_token });
     }
 
     pub fn writeResourceDataNoPadding(writer: anytype, data_reader: anytype, data_size: u32) !void {
@@ -1226,7 +1227,7 @@ pub const Compiler = struct {
         header.applyMemoryFlags(node.common_resource_attributes, self.source);
         header.applyOptionalStatements(node.optional_statements, self.source, self.code_pages);
 
-        try header.write(writer);
+        try header.write(writer, .{ .diagnostics = self.diagnostics, .token = node.id });
 
         var data_fbs = std.io.fixedBufferStream(data_buffer.items);
         try writeResourceData(writer, data_fbs.reader(), data_size);
@@ -1437,7 +1438,7 @@ pub const Compiler = struct {
         header.applyMemoryFlags(node.common_resource_attributes, self.source);
         header.applyOptionalStatements(node.optional_statements, self.source, self.code_pages);
 
-        try header.write(writer);
+        try header.write(writer, .{ .diagnostics = self.diagnostics, .token = node.id });
 
         var data_fbs = std.io.fixedBufferStream(data_buffer.items);
         try writeResourceData(writer, data_fbs.reader(), data_size);
@@ -1759,7 +1760,7 @@ pub const Compiler = struct {
 
         header.applyMemoryFlags(node.common_resource_attributes, self.source);
 
-        try header.write(writer);
+        try header.write(writer, .{ .diagnostics = self.diagnostics, .token = node.id });
 
         var data_fbs = std.io.fixedBufferStream(data_buffer.items);
         try writeResourceData(writer, data_fbs.reader(), data_size);
@@ -1844,7 +1845,7 @@ pub const Compiler = struct {
         header.applyMemoryFlags(node.common_resource_attributes, self.source);
         header.applyOptionalStatements(node.optional_statements, self.source, self.code_pages);
 
-        try header.write(writer);
+        try header.write(writer, .{ .diagnostics = self.diagnostics, .token = node.id });
 
         var data_fbs = std.io.fixedBufferStream(data_buffer.items);
         try writeResourceData(writer, data_fbs.reader(), data_size);
@@ -2082,7 +2083,7 @@ pub const Compiler = struct {
 
         header.applyMemoryFlags(node.common_resource_attributes, self.source);
 
-        try header.write(writer);
+        try header.write(writer, .{ .diagnostics = self.diagnostics, .token = node.id });
 
         var data_fbs = std.io.fixedBufferStream(data_buffer.items);
         try writeResourceData(writer, data_fbs.reader(), data_size);
@@ -2295,16 +2296,50 @@ pub const Compiler = struct {
             self.type_value.deinit(allocator);
         }
 
-        pub fn write(self: ResourceHeader, writer: anytype) !void {
-            const byte_length_up_to_name: u32 = 8 + self.name_value.byteLen() + self.type_value.byteLen();
-            const padding_after_name = std.mem.alignForward(byte_length_up_to_name, 4) - byte_length_up_to_name;
-            const header_size: u32 = byte_length_up_to_name + @intCast(u32, padding_after_name) + 16;
+        pub const SizeInfo = struct {
+            bytes: u32,
+            padding_after_name: u2,
+        };
 
+        fn calcSize(self: ResourceHeader) error{Overflow}!SizeInfo {
+            var header_size: u32 = 8;
+            header_size = try std.math.add(
+                u32,
+                header_size,
+                std.math.cast(u32, self.name_value.byteLen()) orelse return error.Overflow,
+            );
+            header_size = try std.math.add(
+                u32,
+                header_size,
+                std.math.cast(u32, self.type_value.byteLen()) orelse return error.Overflow,
+            );
+            const padding_after_name = numPaddingBytesNeeded(header_size);
+            header_size = try std.math.add(u32, header_size, padding_after_name);
+            header_size = try std.math.add(u32, header_size, 16);
+            return .{ .bytes = header_size, .padding_after_name = padding_after_name };
+        }
+
+        pub fn writeAssertNoOverflow(self: ResourceHeader, writer: anytype) !void {
+            return self.writeSizeInfo(writer, self.calcSize() catch unreachable);
+        }
+
+        pub fn write(self: ResourceHeader, writer: anytype, err_ctx: errors.DiagnosticsContext) !void {
+            const size_info = self.calcSize() catch {
+                try err_ctx.diagnostics.append(.{
+                    .err = .resource_data_size_exceeds_max,
+                    .token = err_ctx.token,
+                });
+                return error.CompileError;
+            };
+            return self.writeSizeInfo(writer, size_info);
+        }
+
+        fn writeSizeInfo(self: ResourceHeader, writer: anytype, size_info: SizeInfo) !void {
             try writer.writeIntLittle(DWORD, self.data_size); // DataSize
-            try writer.writeIntLittle(DWORD, header_size); // HeaderSize
+            try writer.writeIntLittle(DWORD, size_info.bytes); // HeaderSize
             try self.type_value.write(writer); // TYPE
             try self.name_value.write(writer); // NAME
-            try writer.writeByteNTimes(0, padding_after_name);
+            try writer.writeByteNTimes(0, size_info.padding_after_name);
 
             try writer.writeIntLittle(DWORD, 0); // DataVersion
             try writer.writeIntLittle(WORD, self.memory_flags.value); // MemoryFlags
@@ -2438,7 +2473,7 @@ pub const Compiler = struct {
             .version = 0,
             .characteristics = 0,
         };
-        try header.write(writer);
+        try header.writeAssertNoOverflow(writer);
     }
 
     pub fn sourceBytesForToken(self: *Compiler, token: Token) SourceBytes {
@@ -2525,7 +2560,7 @@ pub const FontDir = struct {
         };
         defer header.deinit(compiler.allocator);
 
-        try header.write(writer);
+        try header.writeAssertNoOverflow(writer);
         try writer.writeIntLittle(u16, num_fonts);
         for (self.fonts.items) |font| {
             try writer.writeIntLittle(u16, font.id);
@@ -2749,7 +2784,9 @@ pub const StringTable = struct {
                 .characteristics = self.characteristics,
                 .data_size = data_size,
             };
-            try header.write(writer);
+            // The only variable parts of the header are name and type, which in this case
+            // we fully control and know are numbers, so they have a fixed size.
+            try header.writeAssertNoOverflow(writer);
 
             var data_fbs = std.io.fixedBufferStream(data_buffer.items);
             try Compiler.writeResourceData(writer, data_fbs.reader(), data_size);
