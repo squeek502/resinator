@@ -214,6 +214,8 @@ pub fn main() !void {
         else => |e| return e,
     };
 
+    try output_buffered_stream.flush();
+
     // print any warnings/notes
     diagnostics.renderToStdErr(std.fs.cwd(), final_input, mapping_results.mappings);
 }
