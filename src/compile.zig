@@ -1166,8 +1166,56 @@ pub const Compiler = struct {
     pub fn writeAccelerators(self: *Compiler, node: *Node.Accelerators, writer: anytype) !void {
         var data_buffer = std.ArrayList(u8).init(self.allocator);
         defer data_buffer.deinit();
-        const data_writer = data_buffer.writer();
 
+        // The header's data length field is a u32 so limit the resource's data size so that
+        // we know we can always specify the real size.
+        var limited_writer = utils.limitedWriter(data_buffer.writer(), std.math.maxInt(u32));
+        const data_writer = limited_writer.writer();
+
+        self.writeAcceleratorsData(node, data_writer) catch |err| switch (err) {
+            error.NoSpaceLeft => {
+                return self.addErrorDetailsAndFail(.{
+                    .err = .resource_data_size_exceeds_max,
+                    .token = node.id,
+                });
+            },
+            else => |e| return e,
+        };
+
+        // This intCast can't fail because the limitedWriter above guarantees that
+        // we will never write more than maxInt(u32) bytes.
+        const data_size = @intCast(u32, data_buffer.items.len);
+        const id_bytes = SourceBytes{
+            .slice = node.id.slice(self.source),
+            .code_page = self.code_pages.getForToken(node.id),
+        };
+        const type_bytes = SourceBytes{
+            .slice = node.type.slice(self.source),
+            .code_page = self.code_pages.getForToken(node.type),
+        };
+        var header = try ResourceHeader.init(
+            self.allocator,
+            id_bytes,
+            type_bytes,
+            data_size,
+            self.state.language,
+            self.state.version,
+            self.state.characteristics,
+        );
+        defer header.deinit(self.allocator);
+
+        header.applyMemoryFlags(node.common_resource_attributes, self.source);
+        header.applyOptionalStatements(node.optional_statements, self.source, self.code_pages);
+
+        try header.write(writer, .{ .diagnostics = self.diagnostics, .token = node.id });
+
+        var data_fbs = std.io.fixedBufferStream(data_buffer.items);
+        try writeResourceData(writer, data_fbs.reader(), data_size);
+    }
+
+    /// Expects `data_writer` to be a LimitedWriter limited to u32, meaning all writes to
+    /// the writer within this function could return error.NoSpaceLeft
+    pub fn writeAcceleratorsData(self: *Compiler, node: *Node.Accelerators, data_writer: anytype) !void {
         for (node.accelerators, 0..) |accel_node, i| {
             const accelerator = @fieldParentPtr(Node.Accelerator, "base", accel_node);
             var modifiers = res.AcceleratorModifiers{};
@@ -1207,34 +1255,6 @@ pub const Compiler = struct {
             try data_writer.writeIntLittle(u16, cmd_id.asWord());
             try data_writer.writeIntLittle(u16, 0); // padding
         }
-
-        const data_size = @intCast(u32, data_buffer.items.len);
-        const id_bytes = SourceBytes{
-            .slice = node.id.slice(self.source),
-            .code_page = self.code_pages.getForToken(node.id),
-        };
-        const type_bytes = SourceBytes{
-            .slice = node.type.slice(self.source),
-            .code_page = self.code_pages.getForToken(node.type),
-        };
-        var header = try ResourceHeader.init(
-            self.allocator,
-            id_bytes,
-            type_bytes,
-            data_size,
-            self.state.language,
-            self.state.version,
-            self.state.characteristics,
-        );
-        defer header.deinit(self.allocator);
-
-        header.applyMemoryFlags(node.common_resource_attributes, self.source);
-        header.applyOptionalStatements(node.optional_statements, self.source, self.code_pages);
-
-        try header.write(writer, .{ .diagnostics = self.diagnostics, .token = node.id });
-
-        var data_fbs = std.io.fixedBufferStream(data_buffer.items);
-        try writeResourceData(writer, data_fbs.reader(), data_size);
     }
 
     const DialogOptionalStatementValues = struct {
