@@ -723,13 +723,16 @@ pub const Parser = struct {
                     }
 
                     const raw_data = try self.parseRawDataBlock();
+                    const end_token = self.state.token;
 
                     const node = try self.state.arena.create(Node.ResourceRawData);
                     node.* = .{
                         .id = id_token,
                         .type = type_token,
                         .common_resource_attributes = common_resource_attributes,
+                        .begin_token = maybe_begin,
                         .raw_data = raw_data,
+                        .end_token = end_token,
                     };
                     return &node.base;
                 }

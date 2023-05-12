@@ -196,7 +196,9 @@ pub const Node = struct {
         id: Token,
         type: Token,
         common_resource_attributes: []Token,
+        begin_token: Token,
         raw_data: []*Node,
+        end_token: Token,
     };
 
     pub const Literal = struct {
@@ -262,7 +264,7 @@ pub const Node = struct {
         base: Node = .{ .id = .control_statement },
         type: Token,
         text: ?Token,
-        /// Only relevant for the CONTROL control
+        /// Only relevant for the user-defined CONTROL control
         class: ?*Node,
         id: *Node,
         x: *Node,
@@ -275,6 +277,12 @@ pub const Node = struct {
         extra_data_begin: ?Token,
         extra_data: []*Node,
         extra_data_end: ?Token,
+
+        /// Returns true if this node describes a user-defined CONTROL control
+        /// https://learn.microsoft.com/en-us/windows/win32/menurc/control-control
+        pub fn isUserDefined(self: *const ControlStatement) bool {
+            return self.class != null;
+        }
     };
 
     pub const Toolbar = struct {
@@ -580,6 +588,139 @@ pub const Node = struct {
             .invalid => {
                 const casted = @fieldParentPtr(Node.Invalid, "base", node);
                 return casted.context[0];
+            },
+        }
+    }
+
+    pub fn getLastToken(node: *const Node) Token {
+        switch (node.id) {
+            .root => unreachable,
+            .resource_external => {
+                const casted = @fieldParentPtr(Node.ResourceExternal, "base", node);
+                return casted.filename.getLastToken();
+            },
+            .resource_raw_data => {
+                const casted = @fieldParentPtr(Node.ResourceRawData, "base", node);
+                return casted.end_token;
+            },
+            .literal => {
+                const casted = @fieldParentPtr(Node.Literal, "base", node);
+                return casted.token;
+            },
+            .binary_expression => {
+                const casted = @fieldParentPtr(Node.BinaryExpression, "base", node);
+                return casted.right.getLastToken();
+            },
+            .grouped_expression => {
+                const casted = @fieldParentPtr(Node.GroupedExpression, "base", node);
+                return casted.close_token;
+            },
+            .not_expression => {
+                const casted = @fieldParentPtr(Node.NotExpression, "base", node);
+                return casted.number_token;
+            },
+            .accelerators => {
+                const casted = @fieldParentPtr(Node.Accelerators, "base", node);
+                return casted.end_token;
+            },
+            .accelerator => {
+                const casted = @fieldParentPtr(Node.Accelerator, "base", node);
+                if (casted.type_and_options.len > 0) return casted.type_and_options[casted.type_and_options.len - 1];
+                return casted.idvalue.getLastToken();
+            },
+            .dialog => {
+                const casted = @fieldParentPtr(Node.Dialog, "base", node);
+                return casted.end_token;
+            },
+            .control_statement => {
+                const casted = @fieldParentPtr(Node.ControlStatement, "base", node);
+                if (casted.extra_data_end) |token| return token;
+                if (casted.help_id) |help_id_node| return help_id_node.getLastToken();
+                if (casted.exstyle) |exstyle_node| return exstyle_node.getLastToken();
+                // For user-defined CONTROL controls, the style comes before 'x', but
+                // otherwise it comes after 'height' so it could be the last token if
+                // it's present.
+                if (!casted.isUserDefined()) {
+                    if (casted.style) |style_node| return style_node.getLastToken();
+                }
+                return casted.height.getLastToken();
+            },
+            .toolbar => {
+                const casted = @fieldParentPtr(Node.Toolbar, "base", node);
+                return casted.end_token;
+            },
+            .menu => {
+                const casted = @fieldParentPtr(Node.Menu, "base", node);
+                return casted.end_token;
+            },
+            .menu_item => {
+                const casted = @fieldParentPtr(Node.MenuItem, "base", node);
+                if (casted.option_list.len > 0) return casted.option_list[casted.option_list.len - 1];
+                return casted.result.getLastToken();
+            },
+            .menu_item_separator => {
+                const casted = @fieldParentPtr(Node.MenuItemSeparator, "base", node);
+                return casted.separator;
+            },
+            .menu_item_ex => {
+                const casted = @fieldParentPtr(Node.MenuItemEx, "base", node);
+                if (casted.state) |state_node| return state_node.getLastToken();
+                if (casted.type) |type_node| return type_node.getLastToken();
+                if (casted.id) |id_node| return id_node.getLastToken();
+                return casted.text;
+            },
+            inline .popup, .popup_ex => |popup_type| {
+                const node_type = popup_type.Type();
+                const casted = @fieldParentPtr(node_type, "base", node);
+                return casted.end_token;
+            },
+            .version_info => {
+                const casted = @fieldParentPtr(Node.VersionInfo, "base", node);
+                return casted.end_token;
+            },
+            .version_statement => {
+                const casted = @fieldParentPtr(Node.VersionStatement, "base", node);
+                return casted.parts[casted.parts.len - 1].getLastToken();
+            },
+            .block => {
+                const casted = @fieldParentPtr(Node.Block, "base", node);
+                return casted.end_token;
+            },
+            .block_value => {
+                const casted = @fieldParentPtr(Node.BlockValue, "base", node);
+                if (casted.values.len > 0) return casted.values[casted.values.len - 1].getLastToken();
+                return casted.key;
+            },
+            .block_value_value => {
+                const casted = @fieldParentPtr(Node.BlockValueValue, "base", node);
+                return casted.expression.getLastToken();
+            },
+            .string_table => {
+                const casted = @fieldParentPtr(Node.StringTable, "base", node);
+                return casted.end_token;
+            },
+            .string_table_string => {
+                const casted = @fieldParentPtr(Node.StringTableString, "base", node);
+                return casted.string;
+            },
+            .language_statement => {
+                const casted = @fieldParentPtr(Node.LanguageStatement, "base", node);
+                return casted.sublanguage_id.getLastToken();
+            },
+            .font_statement => {
+                const casted = @fieldParentPtr(Node.FontStatement, "base", node);
+                if (casted.char_set) |char_set_node| return char_set_node.getLastToken();
+                if (casted.italic) |italic_node| return italic_node.getLastToken();
+                if (casted.weight) |weight_node| return weight_node.getLastToken();
+                return casted.typeface;
+            },
+            .simple_statement => {
+                const casted = @fieldParentPtr(Node.SimpleStatement, "base", node);
+                return casted.value.getLastToken();
+            },
+            .invalid => {
+                const casted = @fieldParentPtr(Node.Invalid, "base", node);
+                return casted.context[casted.context.len - 1];
             },
         }
     }

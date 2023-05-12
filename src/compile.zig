@@ -362,8 +362,8 @@ pub const Compiler = struct {
         if (std.mem.indexOfScalar(u8, filename_utf8, 0) != null) {
             return self.addErrorDetailsAndFail(.{
                 .err = .invalid_filename,
-                // TODO: Make this point to the whole expression rather than just the first token
                 .token = node.filename.getFirstToken(),
+                .token_span_end = node.filename.getLastToken(),
                 .extra = .{ .number = 0 },
             });
         }
@@ -377,18 +377,22 @@ pub const Compiler = struct {
             const filename_string_index = try self.diagnostics.putString(filename_utf8);
             try self.addErrorDetails(.{
                 .err = .number_expression_as_filename,
-                // TODO: Make this point to the whole expression rather than just the first token
                 .token = node.filename.getFirstToken(),
+                .token_span_end = node.filename.getLastToken(),
                 .extra = .{ .number = filename_string_index },
             });
             return self.addErrorDetailsAndFail(.{
                 .err = .number_expression_as_filename,
                 .type = .note,
                 .token = node.filename.getFirstToken(),
+                .token_span_end = node.filename.getLastToken(),
                 .print_source_line = false,
                 .extra = .{ .number = filename_string_index },
             });
         }
+        // From here on out, we know that the filename must be comprised of a single token,
+        // so get it here to simplify future usage.
+        const filename_token = node.filename.getFirstToken();
 
         const file = self.searchForFile(filename_utf8) catch |err| switch (err) {
             error.OutOfMemory => |e| return e,
@@ -396,8 +400,7 @@ pub const Compiler = struct {
                 const filename_string_index = try self.diagnostics.putString(filename_utf8);
                 return self.addErrorDetailsAndFail(.{
                     .err = .file_open_error,
-                    // TODO get the most relevant token for filename, e.g. in an expression like (1+-1), get the -1 token
-                    .token = node.filename.getFirstToken(),
+                    .token = filename_token,
                     .extra = .{ .file_open_error = .{
                         .err = ErrorDetails.FileOpenError.enumFromError(e),
                         .filename_string_index = filename_string_index,
@@ -440,8 +443,7 @@ pub const Compiler = struct {
                             return self.iconReadError(
                                 e,
                                 filename_utf8,
-                                // TODO get the most relevant token for filename, e.g. in an expression like (1+-1), get the -1 token
-                                node.filename.getFirstToken(),
+                                filename_token,
                                 predefined_type,
                             );
                         },
@@ -463,7 +465,7 @@ pub const Compiler = struct {
                     if (!res_types_match) {
                         return self.addErrorDetailsAndFail(.{
                             .err = .icon_dir_and_resource_type_mismatch,
-                            .token = node.filename.getFirstToken(),
+                            .token = filename_token,
                             .extra = .{ .resource = switch (predefined_type) {
                                 .GROUP_ICON => .icon,
                                 .GROUP_CURSOR => .cursor,
@@ -511,8 +513,7 @@ pub const Compiler = struct {
                             return self.iconReadError(
                                 error.UnexpectedEOF,
                                 filename_utf8,
-                                // TODO get the most relevant token for filename, e.g. in an expression like (1+-1), get the -1 token
-                                node.filename.getFirstToken(),
+                                filename_token,
                                 predefined_type,
                             );
                         };
@@ -522,8 +523,7 @@ pub const Compiler = struct {
                             return self.iconReadError(
                                 error.InvalidHeader,
                                 filename_utf8,
-                                // TODO get the most relevant token for filename, e.g. in an expression like (1+-1), get the -1 token
-                                node.filename.getFirstToken(),
+                                filename_token,
                                 predefined_type,
                             );
                         }
@@ -537,14 +537,14 @@ pub const Compiler = struct {
                                     try self.addErrorDetails(.{
                                         .err = .rc_would_error_on_icon_dir,
                                         .type = .warning,
-                                        .token = node.filename.getFirstToken(),
+                                        .token = filename_token,
                                         .extra = .{ .icon_dir = .{ .icon_type = .icon, .icon_format = .riff, .index = entry_i } },
                                     });
                                     try self.addErrorDetails(.{
                                         .err = .rc_would_error_on_icon_dir,
                                         .type = .note,
                                         .print_source_line = false,
-                                        .token = node.filename.getFirstToken(),
+                                        .token = filename_token,
                                         .extra = .{ .icon_dir = .{ .icon_type = .icon, .icon_format = .riff, .index = entry_i } },
                                     });
                                 },
@@ -554,7 +554,7 @@ pub const Compiler = struct {
                                     // compiled it.
                                     return self.addErrorDetailsAndFail(.{
                                         .err = .format_not_supported_in_icon_dir,
-                                        .token = node.filename.getFirstToken(),
+                                        .token = filename_token,
                                         .extra = .{ .icon_dir = .{ .icon_type = .cursor, .icon_format = .riff, .index = entry_i } },
                                     });
                                 },
@@ -579,7 +579,7 @@ pub const Compiler = struct {
                                     try self.addErrorDetails(.{
                                         .err = .rc_would_error_on_icon_dir,
                                         .type = .warning,
-                                        .token = node.filename.getFirstToken(),
+                                        .token = filename_token,
                                         .extra = .{ .icon_dir = .{ .icon_type = .cursor, .icon_format = .png, .index = entry_i } },
                                     });
                                 },
@@ -596,7 +596,7 @@ pub const Compiler = struct {
                                 if (bitmap_version == .@"win2.0") {
                                     return self.addErrorDetailsAndFail(.{
                                         .err = .rc_would_error_on_bitmap_version,
-                                        .token = node.filename.getFirstToken(),
+                                        .token = filename_token,
                                         .extra = .{ .icon_dir = .{
                                             .icon_type = if (icon_dir.image_type == .icon) .icon else .cursor,
                                             .icon_format = image_format,
@@ -608,7 +608,7 @@ pub const Compiler = struct {
                                     try self.addErrorDetails(.{
                                         .err = .rc_would_error_on_bitmap_version,
                                         .type = .warning,
-                                        .token = node.filename.getFirstToken(),
+                                        .token = filename_token,
                                         .extra = .{ .icon_dir = .{
                                             .icon_type = if (icon_dir.image_type == .icon) .icon else .cursor,
                                             .icon_format = image_format,
@@ -644,7 +644,7 @@ pub const Compiler = struct {
                             try self.addErrorDetails(.{
                                 .err = .max_icon_ids_exhausted,
                                 .print_source_line = false,
-                                .token = node.filename.getFirstToken(),
+                                .token = filename_token,
                                 .extra = .{ .icon_dir = .{
                                     .icon_type = if (icon_dir.image_type == .icon) .icon else .cursor,
                                     .icon_format = image_format,
@@ -654,7 +654,7 @@ pub const Compiler = struct {
                             return self.addErrorDetailsAndFail(.{
                                 .err = .max_icon_ids_exhausted,
                                 .type = .note,
-                                .token = node.filename.getFirstToken(),
+                                .token = filename_token,
                                 .extra = .{ .icon_dir = .{
                                     .icon_type = if (icon_dir.image_type == .icon) .icon else .cursor,
                                     .icon_format = image_format,
@@ -683,7 +683,7 @@ pub const Compiler = struct {
                         const filename_string_index = try self.diagnostics.putString(filename_utf8);
                         return self.addErrorDetailsAndFail(.{
                             .err = .bmp_read_error,
-                            .token = node.filename.getFirstToken(),
+                            .token = filename_token,
                             .extra = .{ .bmp_read_error = .{
                                 .err = ErrorDetails.BitmapReadError.enumFromError(err),
                                 .filename_string_index = filename_string_index,
@@ -699,7 +699,7 @@ pub const Compiler = struct {
                         try self.addErrorDetails(.{
                             .err = .bmp_ignored_palette_bytes,
                             .type = .warning,
-                            .token = node.filename.getFirstToken(),
+                            .token = filename_token,
                             .extra = .{ .number = value_string_index },
                         });
                     } else if (bitmap_info.getActualPaletteByteLen() < bitmap_info.getExpectedPaletteByteLen()) {
@@ -714,14 +714,14 @@ pub const Compiler = struct {
                             const values_string_index = try self.diagnostics.putString(&numbers_as_bytes);
                             try self.addErrorDetails(.{
                                 .err = .bmp_too_many_missing_palette_bytes,
-                                .token = node.filename.getFirstToken(),
+                                .token = filename_token,
                                 .extra = .{ .number = values_string_index },
                             });
                             return self.addErrorDetailsAndFail(.{
                                 .err = .bmp_too_many_missing_palette_bytes,
                                 .type = .note,
                                 .print_source_line = false,
-                                .token = node.filename.getFirstToken(),
+                                .token = filename_token,
                             });
                         }
 
@@ -731,7 +731,7 @@ pub const Compiler = struct {
                         try self.addErrorDetails(.{
                             .err = .bmp_missing_palette_bytes,
                             .type = .warning,
-                            .token = node.filename.getFirstToken(),
+                            .token = filename_token,
                             .extra = .{ .number = value_string_index },
                         });
                         const pixel_data_len = bitmap_info.getPixelDataLen(file_size);
@@ -742,7 +742,7 @@ pub const Compiler = struct {
                             try self.addErrorDetails(.{
                                 .err = .rc_would_miscompile_bmp_palette_padding,
                                 .type = .warning,
-                                .token = node.filename.getFirstToken(),
+                                .token = filename_token,
                                 .extra = .{ .number = miscompiled_bytes_string_index },
                             });
                         }
@@ -2212,9 +2212,12 @@ pub const Compiler = struct {
                 self.state.characteristics,
             ) catch |err| switch (err) {
                 error.StringAlreadyDefined => {
+                    // It might be nice to have these errors point to the ids rather than the
+                    // string tokens, but that would mean storing the id token of each string
+                    // which doesn't seem worth it just for slightly better error messages.
                     try self.addErrorDetails(ErrorDetails{
                         .err = .string_already_defined,
-                        .token = string.string, // TODO: point to id instead?
+                        .token = string.string,
                         .extra = .{ .string_and_language = .{ .id = string_id, .language = language } },
                     });
                     const existing_def_table = self.state.string_tables.tables.getPtr(language).?;
@@ -2222,7 +2225,7 @@ pub const Compiler = struct {
                     return self.addErrorDetailsAndFail(ErrorDetails{
                         .err = .string_already_defined,
                         .type = .note,
-                        .token = existing_definition, // TODO: point to id instead?
+                        .token = existing_definition,
                         .extra = .{ .string_and_language = .{ .id = string_id, .language = language } },
                     });
                 },

@@ -183,6 +183,7 @@ pub const LexError = error{
     InvalidNumberWithExponent,
     IllegalByte,
     IllegalByteOutsideStringLiterals,
+    IllegalCodepointOutsideStringLiterals,
     IllegalByteOrderMark,
     IllegalPrivateUseCharacter,
     FoundCStyleEscapedQuote,
@@ -813,8 +814,7 @@ pub const Lexer = struct {
             // and miscompilations when used within string literals. We avoid the miscompilation
             // within string literals and emit a warning, but outside of string literals it makes
             // more sense to just disallow these codepoints.
-            // TODO: Error message that can handle codepoints instead of single bytes
-            0x900, 0xA00, 0xA0D, 0x2000, 0xFFFE, 0xD00 => if (!in_string_literal) error.IllegalByteOutsideStringLiterals else return,
+            0x900, 0xA00, 0xA0D, 0x2000, 0xFFFE, 0xD00 => if (!in_string_literal) error.IllegalCodepointOutsideStringLiterals else return,
             else => return,
         };
         self.error_context_token = .{
@@ -975,6 +975,7 @@ pub const Lexer = struct {
             error.InvalidNumberWithExponent => ErrorDetails.Error.invalid_number_with_exponent,
             error.IllegalByte => ErrorDetails.Error.illegal_byte,
             error.IllegalByteOutsideStringLiterals => ErrorDetails.Error.illegal_byte_outside_string_literals,
+            error.IllegalCodepointOutsideStringLiterals => ErrorDetails.Error.illegal_codepoint_outside_string_literals,
             error.IllegalByteOrderMark => ErrorDetails.Error.illegal_byte_order_mark,
             error.IllegalPrivateUseCharacter => ErrorDetails.Error.illegal_private_use_character,
             error.FoundCStyleEscapedQuote => ErrorDetails.Error.found_c_style_escaped_quote,

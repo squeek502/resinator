@@ -99,6 +99,10 @@ pub const DiagnosticsContext = struct {
 pub const ErrorDetails = struct {
     err: Error,
     token: Token,
+    /// If non-null, should be before `token`. If null, `token` is assumed to be the start.
+    token_span_start: ?Token = null,
+    /// If non-null, should be after `token`. If null, `token` is assumed to be the end.
+    token_span_end: ?Token = null,
     type: Type = .err,
     print_source_line: bool = true,
     extra: union {
@@ -244,6 +248,7 @@ pub const ErrorDetails = struct {
         invalid_number_with_exponent,
         illegal_byte,
         illegal_byte_outside_string_literals,
+        illegal_codepoint_outside_string_literals,
         illegal_byte_order_mark,
         illegal_private_use_character,
         found_c_style_escaped_quote,
@@ -354,6 +359,18 @@ pub const ErrorDetails = struct {
             .illegal_byte_outside_string_literals => {
                 const byte = self.token.slice(source)[0];
                 return writer.print("character '\\x{X:0>2}' is not allowed outside of string literals", .{byte});
+            },
+            .illegal_codepoint_outside_string_literals => {
+                // This is somewhat hacky, but we know that:
+                //  - This error is only possible with codepoints outside of the Windows-1252 character range
+                //  - So, the only supported code page that could generate this error is UTF-8
+                // Therefore, we just assume the token bytes are UTF-8 and decode them to get the illegal
+                // codepoint.
+                //
+                // FIXME: Support other code pages if they become relevant
+                const bytes = self.token.slice(source);
+                const codepoint = std.unicode.utf8Decode(bytes) catch unreachable;
+                return writer.print("codepoint <U+{X:0>4}> is not allowed outside of string literals", .{codepoint});
             },
             .illegal_byte_order_mark => {
                 return writer.writeAll("byte order mark <U+FEFF> is not allowed");
@@ -608,20 +625,45 @@ pub const ErrorDetails = struct {
         }
     }
 
-    pub fn visualTokenLen(self: ErrorDetails) usize {
+    pub const VisualTokenInfo = struct {
+        before_len: usize,
+        point_offset: usize,
+        after_len: usize,
+    };
+
+    pub fn visualTokenInfo(self: ErrorDetails, source_line_start: usize, source_line_end: usize) VisualTokenInfo {
+        // Note: A perfect solution here would involve full grapheme cluster
+        //       awareness, but oh well. This will give incorrect offsets
+        //       if there are any multibyte codepoints within the relevant span,
+        //       and even more inflated for grapheme clusters.
+        //
+        //       We mitigate this slightly when we know we'll be pointing at
+        //       something that displays as 1 character.
         return switch (self.err) {
             // These can technically be more than 1 byte depending on encoding,
             // but they always refer to one visual character/grapheme.
             .illegal_byte,
             .illegal_byte_outside_string_literals,
+            .illegal_codepoint_outside_string_literals,
             .illegal_byte_order_mark,
             .illegal_private_use_character,
-            => 1,
-            // Note: A perfect solution here would involve full grapheme cluster
-            //       awareness, but oh well. This will give an inflated length
-            //       for all multibyte codepoints, and even more inflated
-            //       for grapheme clusters.
-            else => self.token.end - self.token.start,
+            => .{
+                .before_len = 0,
+                .point_offset = self.token.start - source_line_start,
+                .after_len = 0,
+            },
+            else => .{
+                .before_len = before: {
+                    const start = @max(source_line_start, if (self.token_span_start) |span_start| span_start.start else self.token.start);
+                    break :before self.token.start - start;
+                },
+                .point_offset = self.token.start - source_line_start,
+                .after_len = after: {
+                    const end = @min(source_line_end, if (self.token_span_end) |span_end| span_end.end else self.token.end);
+                    if (end == self.token.start) break :after 0;
+                    break :after end - self.token.start - 1;
+                },
+            },
         };
     }
 };
@@ -673,8 +715,8 @@ pub fn renderErrorMessage(allocator: std.mem.Allocator, writer: anytype, colors:
         return;
     }
 
-    const token_offset = err_details.token.start - source_line_start;
     const source_line = err_details.token.getLine(source, source_line_start);
+    const visual_info = err_details.visualTokenInfo(source_line_start, source_line_start + source_line.len);
 
     // Need this to determine if the 'line originated from' note is worth printing
     var source_line_for_display_buf = try std.ArrayList(u8).initCapacity(allocator, source_line.len);
@@ -683,7 +725,7 @@ pub fn renderErrorMessage(allocator: std.mem.Allocator, writer: anytype, colors:
 
     // TODO: General handling of long lines, not tied to this specific error
     if (err_details.err == .string_literal_too_long) {
-        const before_slice = source_line[0..@min(source_line.len, token_offset + 16)];
+        const before_slice = source_line[0..@min(source_line.len, visual_info.point_offset + 16)];
         try writeSourceSlice(writer, before_slice);
         colors.set(writer, .dim);
         try writer.writeAll("<...truncated...>");
@@ -694,11 +736,12 @@ pub fn renderErrorMessage(allocator: std.mem.Allocator, writer: anytype, colors:
     try writer.writeByte('\n');
 
     colors.set(writer, .green);
-    try writer.writeByteNTimes(' ', token_offset);
+    const num_spaces = visual_info.point_offset - visual_info.before_len;
+    try writer.writeByteNTimes(' ', num_spaces);
+    try writer.writeByteNTimes('~', visual_info.before_len);
     try writer.writeByte('^');
-    const token_len = err_details.visualTokenLen();
-    if (token_len > 1) {
-        var num_squiggles = token_len - 1;
+    if (visual_info.after_len > 0) {
+        var num_squiggles = visual_info.after_len;
         if (err_details.err == .string_literal_too_long) {
             num_squiggles = @min(num_squiggles, 15);
         }
