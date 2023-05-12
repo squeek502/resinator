@@ -117,6 +117,7 @@ pub const ErrorDetails = struct {
         icon_read_error: IconReadError,
         icon_dir: IconDirContext,
         bmp_read_error: BitmapReadError,
+        accelerator_error: AcceleratorError,
     } = .{ .none = {} },
 
     pub const Type = enum { err, warning, note };
@@ -167,7 +168,7 @@ pub const ErrorDetails = struct {
         icon_format: ico.ImageFormat,
         index: u16,
         bitmap_version: ico.BitmapHeader.Version = .unknown,
-        _: Padding = undefined,
+        _: Padding = 0,
 
         pub const Padding = std.meta.Int(.unsigned, 15 - @bitSizeOf(ico.BitmapHeader.Version) - @bitSizeOf(ico.ImageFormat));
     };
@@ -191,6 +192,20 @@ pub const ErrorDetails = struct {
         filename_string_index: FilenameStringIndex,
 
         pub const FilenameStringIndex = std.meta.Int(.unsigned, 32 - @bitSizeOf(ico.BitmapHeader.Version));
+    };
+
+    pub const AcceleratorError = packed struct(u32) {
+        err: AcceleratorErrorEnum,
+        _: Padding = 0,
+
+        pub const Padding = std.meta.Int(.unsigned, 32 - @bitSizeOf(AcceleratorErrorEnum));
+        pub const AcceleratorErrorEnum = std.meta.FieldEnum(res.ParseAcceleratorKeyStringError);
+
+        pub fn enumFromError(err: res.ParseAcceleratorKeyStringError) AcceleratorErrorEnum {
+            return switch (err) {
+                inline else => |e| @field(ErrorDetails.AcceleratorError.AcceleratorErrorEnum, @errorName(e)),
+            };
+        }
     };
 
     pub const ExpectedTypes = packed struct(u32) {
@@ -291,6 +306,7 @@ pub const ErrorDetails = struct {
         font_id_already_defined,
         /// `file_open_error` is populated
         file_open_error,
+        /// `accelerator_error` is populated
         invalid_accelerator_key,
         accelerator_type_required,
         rc_would_miscompile_control_padding,
@@ -505,7 +521,7 @@ pub const ErrorDetails = struct {
                 try writer.print("unable to open file '{s}': {s}", .{ strings[self.extra.file_open_error.filename_string_index], @tagName(self.extra.file_open_error.err) });
             },
             .invalid_accelerator_key => {
-                try writer.print("invalid accelerator key: {s}", .{self.token.nameForErrorDisplay(source)});
+                try writer.print("invalid accelerator key '{s}': {s}", .{ self.token.nameForErrorDisplay(source), @tagName(self.extra.accelerator_error.err) });
             },
             .accelerator_type_required => {
                 try writer.print("accelerator type [ASCII or VIRTKEY] required when key is an integer", .{});

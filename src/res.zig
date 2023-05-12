@@ -573,18 +573,20 @@ const AcceleratorKeyCodepointTranslator = struct {
     }
 };
 
+pub const ParseAcceleratorKeyStringError = error{ EmptyAccelerator, AcceleratorTooLong, InvalidControlCharacter, ControlCharacterOutOfRange };
+
 /// Expects bytes to be the full bytes of a string literal token (e.g. including the "" or L"").
-pub fn parseAcceleratorKeyString(bytes: SourceBytes, is_virt: bool, options: literals.StringParseOptions) !u16 {
+pub fn parseAcceleratorKeyString(bytes: SourceBytes, is_virt: bool, options: literals.StringParseOptions) (ParseAcceleratorKeyStringError || Allocator.Error)!u16 {
     if (bytes.slice.len == 0) {
-        return error.InvalidAccelerator;
+        return error.EmptyAccelerator;
     }
 
     var parser = literals.IterativeStringParser.init(bytes, options);
     var translator = AcceleratorKeyCodepointTranslator{ .string_type = parser.declared_string_type };
 
-    const first_codepoint = translator.translate(try parser.next()) orelse return error.InvalidAccelerator;
+    const first_codepoint = translator.translate(try parser.next()) orelse return error.EmptyAccelerator;
     // 0 is treated as a terminator, so this is equivalent to an empty string
-    if (first_codepoint == 0) return error.InvalidAccelerator;
+    if (first_codepoint == 0) return error.EmptyAccelerator;
 
     if (first_codepoint == '^') {
         // Note: Emitting this warning unconditonally whenever ^ is the first character
@@ -621,7 +623,7 @@ pub fn parseAcceleratorKeyString(bytes: SourceBytes, is_virt: bool, options: lit
 
     var result: u32 = initial_value: {
         if (first_codepoint >= 0x10000) {
-            if (second_codepoint != null and second_codepoint.? != 0) return error.InvalidAccelerator;
+            if (second_codepoint != null and second_codepoint.? != 0) return error.AcceleratorTooLong;
             // No idea why it works this way, but this seems to match the Windows RC
             // behavior for codepoints >= 0x10000
             const low = @intCast(u16, first_codepoint & 0x3FF) + 0xDC00;
@@ -637,10 +639,10 @@ pub fn parseAcceleratorKeyString(bytes: SourceBytes, is_virt: bool, options: lit
     const third_codepoint = translator.translate(try parser.next());
     // 0 is treated as a terminator, so a 0 in the third position is fine but
     // anything else is too many codepoints for an accelerator
-    if (third_codepoint != null and third_codepoint.? != 0) return error.InvalidAccelerator;
+    if (third_codepoint != null and third_codepoint.? != 0) return error.AcceleratorTooLong;
 
     if (second_codepoint) |c| {
-        if (c >= 0x10000) return error.InvalidAccelerator;
+        if (c >= 0x10000) return error.AcceleratorTooLong;
         result <<= 8;
         result += c;
     } else if (is_virt) {
@@ -774,12 +776,12 @@ test "accelerator keys" {
         false,
         .{},
     ));
-    try std.testing.expectError(error.InvalidAccelerator, parseAcceleratorKeyString(
+    try std.testing.expectError(error.EmptyAccelerator, parseAcceleratorKeyString(
         .{ .slice = "\"\"", .code_page = .windows1252 },
         false,
         .{},
     ));
-    try std.testing.expectError(error.InvalidAccelerator, parseAcceleratorKeyString(
+    try std.testing.expectError(error.AcceleratorTooLong, parseAcceleratorKeyString(
         .{ .slice = "\"hello\"", .code_page = .windows1252 },
         false,
         .{},
@@ -820,12 +822,12 @@ test "accelerator keys" {
         .{},
     ));
     // anything before or after a codepoint >= 0x10000 causes an error
-    try std.testing.expectError(error.InvalidAccelerator, parseAcceleratorKeyString(
+    try std.testing.expectError(error.AcceleratorTooLong, parseAcceleratorKeyString(
         .{ .slice = "\"a\xF0\x90\x80\x80\"", .code_page = .utf8 },
         false,
         .{},
     ));
-    try std.testing.expectError(error.InvalidAccelerator, parseAcceleratorKeyString(
+    try std.testing.expectError(error.AcceleratorTooLong, parseAcceleratorKeyString(
         .{ .slice = "\"\xF0\x90\x80\x80a\"", .code_page = .utf8 },
         false,
         .{},

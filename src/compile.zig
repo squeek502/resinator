@@ -1184,12 +1184,14 @@ pub const Compiler = struct {
             }
             const key = self.evaluateAcceleratorKeyExpression(accelerator.event, modifiers.isSet(.virtkey)) catch |err| switch (err) {
                 error.OutOfMemory => |e| return e,
-                else => {
-                    // TODO: better error with more context from the caught error
+                else => |e| {
                     return self.addErrorDetailsAndFail(.{
                         .err = .invalid_accelerator_key,
                         .token = accelerator.event.getFirstToken(),
                         .token_span_end = accelerator.event.getLastToken(),
+                        .extra = .{ .accelerator_error = .{
+                            .err = ErrorDetails.AcceleratorError.enumFromError(e),
+                        } },
                     });
                 },
             };
