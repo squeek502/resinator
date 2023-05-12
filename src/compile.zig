@@ -2661,16 +2661,10 @@ pub const StringTable = struct {
             }
         }
 
-        pub fn applyNodeAttributes(self: *Block, node: *Node, source: []const u8, code_page_lookup: *const CodePageLookup) void {
-            switch (node.id) {
-                .string_table => {
-                    const string_table = @fieldParentPtr(Node.StringTable, "base", node);
-                    Compiler.applyToMemoryFlags(&self.memory_flags, string_table.common_resource_attributes, source);
-                    var dummy_language: res.Language = undefined;
-                    Compiler.applyToOptionalStatements(&dummy_language, &self.version, &self.characteristics, string_table.optional_statements, source, code_page_lookup);
-                },
-                else => @panic("TODO applyNodeAttributes"),
-            }
+        pub fn applyAttributes(self: *Block, string_table: *Node.StringTable, source: []const u8, code_page_lookup: *const CodePageLookup) void {
+            Compiler.applyToMemoryFlags(&self.memory_flags, string_table.common_resource_attributes, source);
+            var dummy_language: res.Language = undefined;
+            Compiler.applyToOptionalStatements(&dummy_language, &self.version, &self.characteristics, string_table.optional_statements, source, code_page_lookup);
         }
 
         fn trimToDoubleNUL(comptime T: type, str: []const T) []const T {
@@ -2815,7 +2809,7 @@ pub const StringTable = struct {
         var get_or_put_result = try self.blocks.getOrPut(allocator, block_id);
         if (!get_or_put_result.found_existing) {
             get_or_put_result.value_ptr.* = Block{ .version = version, .characteristics = characteristics };
-            get_or_put_result.value_ptr.applyNodeAttributes(node, source, code_page_lookup);
+            get_or_put_result.value_ptr.applyAttributes(node.cast(.string_table).?, source, code_page_lookup);
         } else {
             if (get_or_put_result.value_ptr.set_indexes.isSet(string_index)) {
                 return error.StringAlreadyDefined;
