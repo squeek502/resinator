@@ -1179,6 +1179,7 @@ pub const Compiler = struct {
                 return self.addErrorDetailsAndFail(.{
                     .err = .accelerator_type_required,
                     .token = accelerator.event.getFirstToken(),
+                    .token_span_end = accelerator.event.getLastToken(),
                 });
             }
             const key = self.evaluateAcceleratorKeyExpression(accelerator.event, modifiers.isSet(.virtkey)) catch |err| switch (err) {
@@ -1188,6 +1189,7 @@ pub const Compiler = struct {
                     return self.addErrorDetailsAndFail(.{
                         .err = .invalid_accelerator_key,
                         .token = accelerator.event.getFirstToken(),
+                        .token_span_end = accelerator.event.getLastToken(),
                     });
                 },
             };
@@ -1592,12 +1594,14 @@ pub const Compiler = struct {
                     .err = .control_id_already_defined,
                     .type = .warning,
                     .token = control.id.getFirstToken(),
+                    .token_span_end = control.id.getLastToken(),
                     .extra = .{ .number = control_id_for_map },
                 });
                 try self.addErrorDetails(.{
                     .err = .control_id_already_defined,
                     .type = .note,
                     .token = result.value_ptr.*.id.getFirstToken(),
+                    .token_span_end = result.value_ptr.*.id.getLastToken(),
                     .extra = .{ .number = control_id_for_map },
                 });
             }
@@ -1625,12 +1629,14 @@ pub const Compiler = struct {
                     .err = .rc_would_miscompile_control_class_ordinal,
                     .type = .warning,
                     .token = class_node.getFirstToken(),
+                    .token_span_end = class_node.getLastToken(),
                 });
                 try self.addErrorDetails(.{
                     .err = .rc_would_miscompile_control_class_ordinal,
                     .type = .note,
                     .print_source_line = false,
                     .token = class_node.getFirstToken(),
+                    .token_span_end = class_node.getLastToken(),
                 });
                 // And then write out the ordinal using a proper a NameOrOrdinal encoding.
                 try ordinal.write(data_writer);
@@ -1697,6 +1703,7 @@ pub const Compiler = struct {
                         .err = .control_extra_data_size_exceeds_max,
                         .type = .note,
                         .token = data_expression.getFirstToken(),
+                        .token_span_end = data_expression.getLastToken(),
                     });
                 },
                 else => |e| return e,
@@ -2056,6 +2063,7 @@ pub const Compiler = struct {
                         .err = .version_node_size_exceeds_max,
                         .type = .note,
                         .token = statement.getFirstToken(),
+                        .token_span_end = statement.getLastToken(),
                     });
                 },
                 else => |e| return e,
