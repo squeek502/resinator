@@ -529,6 +529,7 @@ pub const Parser = struct {
                             .err = .too_many_dialog_controls,
                             .type = .note,
                             .token = control_node.getFirstToken(),
+                            .token_span_end = control_node.getLastToken(),
                             .extra = .{ .resource = resource },
                         });
                     }
@@ -895,8 +896,8 @@ pub const Parser = struct {
                 try self.addErrorDetails(.{
                     .err = .rc_could_miscompile_control_params,
                     .type = .note,
-                    // TODO: Point to the whole expression
                     .token = style.?.getFirstToken(),
+                    .token_span_end = style.?.getLastToken(),
                 });
             }
             try self.skipAnyCommas();
@@ -1384,11 +1385,15 @@ pub const Parser = struct {
                 .err = .rc_would_miscompile_version_value_byte_count,
                 .type = .warning,
                 .token = first_string_value.?.getFirstToken(),
+                .token_span_start = values.items[0].getFirstToken(),
+                .token_span_end = values.items[values.items.len - 1].getLastToken(),
             });
             try self.addErrorDetails(.{
                 .err = .rc_would_miscompile_version_value_byte_count,
                 .type = .note,
                 .token = first_string_value.?.getFirstToken(),
+                .token_span_start = values.items[0].getFirstToken(),
+                .token_span_end = values.items[values.items.len - 1].getLastToken(),
                 .print_source_line = false,
             });
         }
@@ -1658,6 +1663,7 @@ pub const Parser = struct {
                 return self.addErrorDetailsAndFail(ErrorDetails{
                     .err = .expected_something_else,
                     .token = rhs_node.getFirstToken(),
+                    .token_span_end = rhs_node.getLastToken(),
                     .extra = .{ .expected_types = .{
                         .number = true,
                         .number_expression = true,
