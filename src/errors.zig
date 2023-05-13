@@ -117,6 +117,7 @@ pub const ErrorDetails = struct {
         icon_dir: IconDirContext,
         bmp_read_error: BitmapReadError,
         accelerator_error: AcceleratorError,
+        versioninfo_statement: VersionInfoStatement,
     } = .{ .none = {} },
 
     pub const Type = enum { err, warning, note };
@@ -127,6 +128,11 @@ pub const ErrorDetails = struct {
             std.debug.assert(@bitSizeOf(field.type) <= 32);
         }
     }
+
+    pub const VersionInfoStatement = enum(u32) {
+        fileversion,
+        productversion,
+    };
 
     pub const StringAndLanguage = packed struct(u32) {
         id: u16,
@@ -348,6 +354,7 @@ pub const ErrorDetails = struct {
         control_id_already_defined,
         /// `number` is populated and contains the disallowed codepoint
         invalid_filename,
+        rc_would_error_long_version_part,
 
         // Literals
         /// `number` is populated
@@ -628,6 +635,10 @@ pub const ErrorDetails = struct {
                 } else {
                     try writer.print("evaluated filename contains a disallowed codepoint: <U+{X:0>4}>", .{disallowed_codepoint});
                 }
+            },
+            .rc_would_error_long_version_part => switch (self.type) {
+                .err, .warning => return writer.print("this part of the {s} would be an error in the Win32 RC compiler", .{@tagName(self.extra.versioninfo_statement)}),
+                .note => return writer.writeAll("to avoid the error, remove any L suffixes from numbers within this part"),
             },
             .rc_would_miscompile_codepoint_byte_swap => switch (self.type) {
                 .err, .warning => return writer.print("codepoint U+{X} within a string literal would be miscompiled by the Win32 RC compiler (the bytes of the UTF-16 code unit would be swapped)", .{self.extra.number}),

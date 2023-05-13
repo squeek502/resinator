@@ -2052,6 +2052,31 @@ pub const Compiler = struct {
                     const version_type = rc.VersionInfo.map.get(version_statement.type.slice(self.source)).?;
                     for (version_statement.parts, 0..) |part, i| {
                         const part_value = evaluateNumberExpression(part, self.source, self.code_pages);
+                        if (part_value.is_long) {
+                            try self.addErrorDetails(.{
+                                .err = .rc_would_error_long_version_part,
+                                .type = .warning,
+                                .token = part.getFirstToken(),
+                                .token_span_end = part.getLastToken(),
+                                .extra = .{ .versioninfo_statement = switch (version_type) {
+                                    .file_version => .fileversion,
+                                    .product_version => .productversion,
+                                    else => unreachable,
+                                } },
+                            });
+                            try self.addErrorDetails(.{
+                                .err = .rc_would_error_long_version_part,
+                                .print_source_line = false,
+                                .type = .note,
+                                .token = part.getFirstToken(),
+                                .token_span_end = part.getLastToken(),
+                                .extra = .{ .versioninfo_statement = switch (version_type) {
+                                    .file_version => .fileversion,
+                                    .product_version => .productversion,
+                                    else => unreachable,
+                                } },
+                            });
+                        }
                         switch (version_type) {
                             .file_version => {
                                 fixed_file_info.file_version.parts[i] = part_value.asWord();
