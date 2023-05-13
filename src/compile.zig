@@ -486,6 +486,7 @@ pub const Compiler = struct {
                         // cast it here to simplify usage sites.
                         const entry_i = @intCast(u16, entry_i_usize);
                         var full_data_size = entry.data_size_in_bytes;
+                        // TODO: This could technically overflow the u32
                         if (icon_dir.image_type == .cursor) full_data_size += 4;
 
                         const image_header = ResourceHeader{
