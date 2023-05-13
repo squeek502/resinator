@@ -4266,3 +4266,20 @@ test "filename evaluation" {
         tmp_dir.dir,
     );
 }
+
+test "fileversion, productversion with L suffixed part" {
+    try testCompileErrorDetails(
+        &.{
+            .{ .type = .warning, .str = "this part of the fileversion would be an error in the Win32 RC compiler" },
+            .{ .type = .note, .str = "to avoid the error, remove any L suffixes from numbers within this part" },
+            .{ .type = .warning, .str = "this part of the productversion would be an error in the Win32 RC compiler" },
+            .{ .type = .note, .str = "to avoid the error, remove any L suffixes from numbers within this part" },
+        },
+        \\1 VERSIONINFO
+        \\FILEVERSION 1L, 2, 3, 4
+        \\PRODUCTVERSION 1, 2, (3+2L), 4
+        \\{}
+    ,
+        null,
+    );
+}
