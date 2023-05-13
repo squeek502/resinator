@@ -110,7 +110,6 @@ pub const ErrorDetails = struct {
         expected: Token.Id,
         number: u32,
         expected_types: ExpectedTypes,
-        // TODO: Add 'nameForErrorDisplay' to Resource for better error messages
         resource: rc.Resource,
         string_and_language: StringAndLanguage,
         file_open_error: FileOpenError,
@@ -446,14 +445,14 @@ pub const ErrorDetails = struct {
                 return writer.print("; got '{s}'", .{self.token.nameForErrorDisplay(source)});
             },
             .resource_type_cant_use_raw_data => switch (self.type) {
-                .err, .warning => try writer.print("expected '<filename>', found '{s}' (resource type '{s}' can't use raw data)", .{ self.token.nameForErrorDisplay(source), @tagName(self.extra.resource) }),
+                .err, .warning => try writer.print("expected '<filename>', found '{s}' (resource type '{s}' can't use raw data)", .{ self.token.nameForErrorDisplay(source), self.extra.resource.nameForErrorDisplay() }),
                 .note => try writer.print("if '{s}' is intended to be a filename, it must be specified as a quoted string literal", .{self.token.nameForErrorDisplay(source)}),
             },
             .id_must_be_ordinal => {
-                try writer.print("id of resource type '{s}' must be an ordinal (u16), got '{s}'", .{ @tagName(self.extra.resource), self.token.nameForErrorDisplay(source) });
+                try writer.print("id of resource type '{s}' must be an ordinal (u16), got '{s}'", .{ self.extra.resource.nameForErrorDisplay(), self.token.nameForErrorDisplay(source) });
             },
             .name_or_id_not_allowed => {
-                try writer.print("name or id is not allowed for resource type '{s}'", .{@tagName(self.extra.resource)});
+                try writer.print("name or id is not allowed for resource type '{s}'", .{self.extra.resource.nameForErrorDisplay()});
             },
             .string_resource_as_numeric_type => switch (self.type) {
                 .err, .warning => try writer.writeAll("the number 6 (RT_STRING) cannot be used as a resource type"),
@@ -485,12 +484,12 @@ pub const ErrorDetails = struct {
                         .menu, .menuex => parse.max_nested_menu_level,
                         else => unreachable,
                     };
-                    return writer.print("{s} contains too many nested children (max is {})", .{ @tagName(self.extra.resource), max });
+                    return writer.print("{s} contains too many nested children (max is {})", .{ self.extra.resource.nameForErrorDisplay(), max });
                 },
-                .note => return writer.print("max {s} nesting level exceeded here", .{@tagName(self.extra.resource)}),
+                .note => return writer.print("max {s} nesting level exceeded here", .{self.extra.resource.nameForErrorDisplay()}),
             },
             .too_many_dialog_controls => switch (self.type) {
-                .err, .warning => return writer.print("{s} contains too many controls (max is {})", .{ @tagName(self.extra.resource), std.math.maxInt(u16) }),
+                .err, .warning => return writer.print("{s} contains too many controls (max is {})", .{ self.extra.resource.nameForErrorDisplay(), std.math.maxInt(u16) }),
                 .note => return writer.writeAll("maximum number of controls exceeded here"),
             },
             .nested_expression_level_exceeds_max => switch (self.type) {
@@ -548,7 +547,7 @@ pub const ErrorDetails = struct {
             .icon_dir_and_resource_type_mismatch => {
                 const unexpected_type: rc.Resource = if (self.extra.resource == .icon) .cursor else .icon;
                 // TODO: Better wording
-                try writer.print("resource type '{s}' does not match type '{s}' specified in the file", .{ @tagName(self.extra.resource), @tagName(unexpected_type) });
+                try writer.print("resource type '{s}' does not match type '{s}' specified in the file", .{ self.extra.resource.nameForErrorDisplay(), unexpected_type.nameForErrorDisplay() });
             },
             .icon_read_error => {
                 try writer.print("unable to read {s} file '{s}': {s}", .{ @tagName(self.extra.icon_read_error.icon_type), strings[self.extra.icon_read_error.filename_string_index], @tagName(self.extra.icon_read_error.err) });

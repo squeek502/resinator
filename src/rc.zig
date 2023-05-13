@@ -122,6 +122,24 @@ pub const Resource = enum {
             else => false,
         };
     }
+
+    pub fn nameForErrorDisplay(resource: Resource) []const u8 {
+        return switch (resource) {
+            // zig fmt: off
+            .accelerators, .bitmap, .cursor, .dialog, .dialogex, .dlginclude, .dlginit, .font,
+            .html, .icon, .menu, .menuex, .messagetable, .plugplay, .rcdata, .stringtable,
+            .toolbar, .versioninfo, .vxd => @tagName(resource),
+            // zig fmt: on
+            .user_defined => "user-defined",
+            .cursor_num => std.fmt.comptimePrint("{d} (cursor)", .{@enumToInt(res.RT.CURSOR)}),
+            .icon_num => std.fmt.comptimePrint("{d} (icon)", .{@enumToInt(res.RT.ICON)}),
+            .string_num => std.fmt.comptimePrint("{d} (string)", .{@enumToInt(res.RT.STRING)}),
+            .anicursor_num => std.fmt.comptimePrint("{d} (anicursor)", .{@enumToInt(res.RT.ANICURSOR)}),
+            .aniicon_num => std.fmt.comptimePrint("{d} (aniicon)", .{@enumToInt(res.RT.ANIICON)}),
+            .fontdir_num => std.fmt.comptimePrint("{d} (fontdir)", .{@enumToInt(res.RT.FONTDIR)}),
+            .manifest_num => std.fmt.comptimePrint("{d} (manifest)", .{@enumToInt(res.RT.MANIFEST)}),
+        };
+    }
 };
 
 /// https://learn.microsoft.com/en-us/windows/win32/menurc/stringtable-resource#parameters

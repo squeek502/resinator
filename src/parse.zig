@@ -91,11 +91,11 @@ pub const Parser = struct {
         while (true) {
             try self.nextToken(.whitespace_delimiter_only);
             if (self.state.token.id == .eof) break;
-            // TODO: Catch something like an 'invalid resource' error and
-            //       append an Invalid node instead or something like that.
-            //       This kind of seems to be how the Windows RC compiler works,
-            //       as if it hits an invalid token it just kinda resets and
-            //       starts parsing from scratch again with the next token.
+            // The Win32 compiler will sometimes try to recover from errors
+            // and then restart parsing afterwards. We don't ever do this
+            // because it almost always leads to unhelpful error messages
+            // (usually it will end up with bogus things like 'file
+            // not found: {')
             var statement = try self.parseStatement();
             try statements.append(statement);
         }
