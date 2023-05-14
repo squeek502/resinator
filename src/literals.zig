@@ -356,6 +356,7 @@ pub const IterativeStringParser = struct {
 pub const StringParseOptions = struct {
     start_column: usize = 0,
     diagnostics: ?DiagnosticsContext = null,
+    output_code_page: CodePage = .windows1252,
 };
 
 pub fn parseQuotedString(
@@ -381,14 +382,26 @@ pub fn parseQuotedString(
             try buf.append(@intCast(T, c));
         } else {
             switch (literal_type) {
-                .ascii => {
-                    if (windows1252.bestFitFromCodepoint(c)) |best_fit| {
-                        try buf.append(best_fit);
-                    } else if (c < 0x10000 or c == code_pages.Codepoint.invalid) {
-                        try buf.append('?');
-                    } else {
-                        try buf.appendSlice("??");
-                    }
+                .ascii => switch (options.output_code_page) {
+                    .windows1252 => {
+                        if (windows1252.bestFitFromCodepoint(c)) |best_fit| {
+                            try buf.append(best_fit);
+                        } else if (c < 0x10000 or c == code_pages.Codepoint.invalid) {
+                            try buf.append('?');
+                        } else {
+                            try buf.appendSlice("??");
+                        }
+                    },
+                    .utf8 => {
+                        var codepoint_to_encode = c;
+                        if (c == code_pages.Codepoint.invalid) {
+                            codepoint_to_encode = '�';
+                        }
+                        var utf8_buf: [4]u8 = undefined;
+                        const utf8_len = std.unicode.utf8Encode(codepoint_to_encode, &utf8_buf) catch unreachable;
+                        try buf.appendSlice(utf8_buf[0..utf8_len]);
+                    },
+                    else => unreachable, // Unsupported code page
                 },
                 .wide => {
                     if (c == code_pages.Codepoint.invalid) {
@@ -608,6 +621,19 @@ test "parse quoted ascii string with utf8 code page" {
         arena,
         .{ .slice = "\"\xF2\xAF\xBA\xB4\"", .code_page = .utf8 },
         .{},
+    ));
+
+    // Output code page changes how invalid UTF-8 gets converted, since it
+    // now encodes the result as UTF-8 so it can write replacement characters.
+    try std.testing.expectEqualSlices(u8, "����", try parseQuotedAsciiString(
+        arena,
+        .{ .slice = "\"\xf0\xf0\x80\x80\x80\"", .code_page = .utf8 },
+        .{ .output_code_page = .utf8 },
+    ));
+    try std.testing.expectEqualSlices(u8, "\xF2\xAF\xBA\xB4", try parseQuotedAsciiString(
+        arena,
+        .{ .slice = "\"\xF2\xAF\xBA\xB4\"", .code_page = .utf8 },
+        .{ .output_code_page = .utf8 },
     ));
 }
 

@@ -69,7 +69,8 @@ pub fn compile(allocator: Allocator, source: []const u8, writer: anytype, option
         .allocator = allocator,
         .cwd = options.cwd,
         .diagnostics = options.diagnostics,
-        .code_pages = &tree.code_pages,
+        .input_code_pages = &tree.input_code_pages,
+        .output_code_pages = &tree.output_code_pages,
         .ignore_include_env_var = options.ignore_include_env_var,
         .extra_include_paths = options.extra_include_paths,
         .null_terminate_string_table_strings = options.null_terminate_string_table_strings,
@@ -89,7 +90,8 @@ pub const Compiler = struct {
     cwd: std.fs.Dir,
     state: State = .{},
     diagnostics: *Diagnostics,
-    code_pages: *const CodePageLookup,
+    input_code_pages: *const CodePageLookup,
+    output_code_pages: *const CodePageLookup,
     extra_include_paths: []const []const u8,
     ignore_include_env_var: bool,
     null_terminate_string_table_strings: bool,
@@ -164,7 +166,7 @@ pub const Compiler = struct {
                 switch (literal_node.token.id) {
                     .literal, .number => {
                         const slice = literal_node.token.slice(self.source);
-                        const code_page = self.code_pages.getForToken(literal_node.token);
+                        const code_page = self.input_code_pages.getForToken(literal_node.token);
                         var buf = try std.ArrayList(u8).initCapacity(self.allocator, slice.len);
                         errdefer buf.deinit();
 
@@ -187,7 +189,7 @@ pub const Compiler = struct {
                     .quoted_ascii_string, .quoted_wide_string => {
                         const slice = literal_node.token.slice(self.source);
                         const column = literal_node.token.calculateColumn(self.source, 8, null);
-                        const bytes = SourceBytes{ .slice = slice, .code_page = self.code_pages.getForToken(literal_node.token) };
+                        const bytes = SourceBytes{ .slice = slice, .code_page = self.input_code_pages.getForToken(literal_node.token) };
 
                         var buf = std.ArrayList(u8).init(self.allocator);
                         errdefer buf.deinit();
@@ -317,11 +319,11 @@ pub const Compiler = struct {
     pub fn writeResourceExternal(self: *Compiler, node: *Node.ResourceExternal, writer: anytype) !void {
         const id_bytes = SourceBytes{
             .slice = node.id.slice(self.source),
-            .code_page = self.code_pages.getForToken(node.id),
+            .code_page = self.input_code_pages.getForToken(node.id),
         };
         const type_bytes = SourceBytes{
             .slice = node.type.slice(self.source),
-            .code_page = self.code_pages.getForToken(node.type),
+            .code_page = self.input_code_pages.getForToken(node.type),
         };
         // Init header with data size zero for now, will need to fill it in later
         var header = try ResourceHeader.init(
@@ -1027,18 +1029,19 @@ pub const Compiler = struct {
                 const literal_node = expression_node.cast(.literal).?;
                 switch (literal_node.token.id) {
                     .number => {
-                        const number = evaluateNumberExpression(expression_node, self.source, self.code_pages);
+                        const number = evaluateNumberExpression(expression_node, self.source, self.input_code_pages);
                         return .{ .number = number };
                     },
                     .quoted_ascii_string => {
                         const column = literal_node.token.calculateColumn(self.source, 8, null);
                         const bytes = SourceBytes{
                             .slice = literal_node.token.slice(self.source),
-                            .code_page = self.code_pages.getForToken(literal_node.token),
+                            .code_page = self.input_code_pages.getForToken(literal_node.token),
                         };
                         const parsed = try literals.parseQuotedAsciiString(self.allocator, bytes, .{
                             .start_column = column,
                             .diagnostics = .{ .diagnostics = self.diagnostics, .token = literal_node.token },
+                            .output_code_page = self.output_code_pages.getForToken(literal_node.token),
                         });
                         errdefer self.allocator.free(parsed);
                         return .{ .ascii_string = parsed };
@@ -1047,7 +1050,7 @@ pub const Compiler = struct {
                         const column = literal_node.token.calculateColumn(self.source, 8, null);
                         const bytes = SourceBytes{
                             .slice = literal_node.token.slice(self.source),
-                            .code_page = self.code_pages.getForToken(literal_node.token),
+                            .code_page = self.input_code_pages.getForToken(literal_node.token),
                         };
                         const parsed_string = try literals.parseQuotedWideString(self.allocator, bytes, .{
                             .start_column = column,
@@ -1063,7 +1066,7 @@ pub const Compiler = struct {
                 }
             },
             .binary_expression, .grouped_expression => {
-                const result = evaluateNumberExpression(expression_node, self.source, self.code_pages);
+                const result = evaluateNumberExpression(expression_node, self.source, self.input_code_pages);
                 return .{ .number = result };
             },
             .not_expression => unreachable,
@@ -1108,11 +1111,11 @@ pub const Compiler = struct {
     pub fn writeResourceHeader(self: *Compiler, writer: anytype, id_token: Token, type_token: Token, data_size: u32, common_resource_attributes: []Token, language: res.Language) !void {
         const id_bytes = SourceBytes{
             .slice = id_token.slice(self.source),
-            .code_page = self.code_pages.getForToken(id_token),
+            .code_page = self.input_code_pages.getForToken(id_token),
         };
         const type_bytes = SourceBytes{
             .slice = type_token.slice(self.source),
-            .code_page = self.code_pages.getForToken(type_token),
+            .code_page = self.input_code_pages.getForToken(type_token),
         };
         var header = try ResourceHeader.init(
             self.allocator,
@@ -1154,13 +1157,13 @@ pub const Compiler = struct {
 
     pub fn evaluateAcceleratorKeyExpression(self: *Compiler, node: *Node, is_virt: bool) !u16 {
         if (node.isNumberExpression()) {
-            return evaluateNumberExpression(node, self.source, self.code_pages).asWord();
+            return evaluateNumberExpression(node, self.source, self.input_code_pages).asWord();
         } else {
             std.debug.assert(node.isStringLiteral());
             const literal = @fieldParentPtr(Node.Literal, "base", node);
             const bytes = SourceBytes{
                 .slice = literal.token.slice(self.source),
-                .code_page = self.code_pages.getForToken(literal.token),
+                .code_page = self.input_code_pages.getForToken(literal.token),
             };
             const column = literal.token.calculateColumn(self.source, 8, null);
             return res.parseAcceleratorKeyString(bytes, is_virt, .{
@@ -1194,11 +1197,11 @@ pub const Compiler = struct {
         const data_size = @intCast(u32, data_buffer.items.len);
         const id_bytes = SourceBytes{
             .slice = node.id.slice(self.source),
-            .code_page = self.code_pages.getForToken(node.id),
+            .code_page = self.input_code_pages.getForToken(node.id),
         };
         const type_bytes = SourceBytes{
             .slice = node.type.slice(self.source),
-            .code_page = self.code_pages.getForToken(node.type),
+            .code_page = self.input_code_pages.getForToken(node.type),
         };
         var header = try ResourceHeader.init(
             self.allocator,
@@ -1212,7 +1215,7 @@ pub const Compiler = struct {
         defer header.deinit(self.allocator);
 
         header.applyMemoryFlags(node.common_resource_attributes, self.source);
-        header.applyOptionalStatements(node.optional_statements, self.source, self.code_pages);
+        header.applyOptionalStatements(node.optional_statements, self.source, self.input_code_pages);
 
         try header.write(writer, .{ .diagnostics = self.diagnostics, .token = node.id });
 
@@ -1250,7 +1253,7 @@ pub const Compiler = struct {
                     });
                 },
             };
-            const cmd_id = evaluateNumberExpression(accelerator.idvalue, self.source, self.code_pages);
+            const cmd_id = evaluateNumberExpression(accelerator.idvalue, self.source, self.input_code_pages);
 
             if (i == node.accelerators.len - 1) {
                 modifiers.markLast();
@@ -1283,7 +1286,7 @@ pub const Compiler = struct {
 
         const resource = Resource.fromString(.{
             .slice = node.type.slice(self.source),
-            .code_page = self.code_pages.getForToken(node.type),
+            .code_page = self.input_code_pages.getForToken(node.type),
         });
         std.debug.assert(resource == .dialog or resource == .dialogex);
 
@@ -1304,7 +1307,7 @@ pub const Compiler = struct {
                     const statement_type = rc.OptionalStatements.dialog_map.get(statement_identifier.slice(self.source)) orelse continue;
                     switch (statement_type) {
                         .style, .exstyle => {
-                            const style = evaluateFlagsExpressionWithDefault(0, simple_statement.value, self.source, self.code_pages);
+                            const style = evaluateFlagsExpressionWithDefault(0, simple_statement.value, self.source, self.input_code_pages);
                             if (statement_type == .style) {
                                 optional_statement_values.style = style;
                             } else {
@@ -1325,7 +1328,7 @@ pub const Compiler = struct {
                             }
 
                             if (simple_statement.value.isNumberExpression()) {
-                                const class_ordinal = evaluateNumberExpression(simple_statement.value, self.source, self.code_pages);
+                                const class_ordinal = evaluateNumberExpression(simple_statement.value, self.source, self.input_code_pages);
                                 optional_statement_values.class = NameOrOrdinal{ .ordinal = class_ordinal.asWord() };
                             } else {
                                 std.debug.assert(simple_statement.value.isStringLiteral());
@@ -1353,7 +1356,7 @@ pub const Compiler = struct {
                             const token_slice = literal_node.token.slice(self.source);
                             const bytes = SourceBytes{
                                 .slice = token_slice,
-                                .code_page = self.code_pages.getForToken(literal_node.token),
+                                .code_page = self.input_code_pages.getForToken(literal_node.token),
                             };
                             if (forced_ordinal or std.ascii.isDigit(token_slice[0])) {
                                 optional_statement_values.menu = .{ .ordinal = res.ForcedOrdinal.fromBytes(bytes) };
@@ -1372,21 +1375,21 @@ pub const Compiler = struct {
                         optional_statement_values.font = FontStatementValues{ .node = font };
                     }
                     if (font.weight) |weight| {
-                        const value = evaluateNumberExpression(weight, self.source, self.code_pages);
+                        const value = evaluateNumberExpression(weight, self.source, self.input_code_pages);
                         optional_statement_values.font.?.weight = value.asWord();
                     }
                     if (font.italic) |italic| {
-                        const value = evaluateNumberExpression(italic, self.source, self.code_pages);
+                        const value = evaluateNumberExpression(italic, self.source, self.input_code_pages);
                         optional_statement_values.font.?.italic = value.asWord() != 0;
                     }
                 },
                 else => {},
             }
         }
-        const x = evaluateNumberExpression(node.x, self.source, self.code_pages);
-        const y = evaluateNumberExpression(node.y, self.source, self.code_pages);
-        const width = evaluateNumberExpression(node.width, self.source, self.code_pages);
-        const height = evaluateNumberExpression(node.height, self.source, self.code_pages);
+        const x = evaluateNumberExpression(node.x, self.source, self.input_code_pages);
+        const y = evaluateNumberExpression(node.y, self.source, self.input_code_pages);
+        const width = evaluateNumberExpression(node.width, self.source, self.input_code_pages);
+        const height = evaluateNumberExpression(node.height, self.source, self.input_code_pages);
 
         // FONT statement requires DS_SETFONT, and if it's not present DS_SETFRONT must be unset
         if (optional_statement_values.font) |_| {
@@ -1449,11 +1452,11 @@ pub const Compiler = struct {
         const data_size = @intCast(u32, data_buffer.items.len);
         const id_bytes = SourceBytes{
             .slice = node.id.slice(self.source),
-            .code_page = self.code_pages.getForToken(node.id),
+            .code_page = self.input_code_pages.getForToken(node.id),
         };
         const type_bytes = SourceBytes{
             .slice = node.type.slice(self.source),
-            .code_page = self.code_pages.getForToken(node.type),
+            .code_page = self.input_code_pages.getForToken(node.type),
         };
         var header = try ResourceHeader.init(
             self.allocator,
@@ -1467,7 +1470,7 @@ pub const Compiler = struct {
         defer header.deinit(self.allocator);
 
         header.applyMemoryFlags(node.common_resource_attributes, self.source);
-        header.applyOptionalStatements(node.optional_statements, self.source, self.code_pages);
+        header.applyOptionalStatements(node.optional_statements, self.source, self.input_code_pages);
 
         try header.write(writer, .{ .diagnostics = self.diagnostics, .token = node.id });
 
@@ -1490,7 +1493,7 @@ pub const Compiler = struct {
         if (resource == .dialogex) {
             const help_id: u32 = help_id: {
                 if (node.help_id == null) break :help_id 0;
-                break :help_id evaluateNumberExpression(node.help_id.?, self.source, self.code_pages).value;
+                break :help_id evaluateNumberExpression(node.help_id.?, self.source, self.input_code_pages).value;
             };
             try data_writer.writeIntLittle(u16, 1); // version number, always 1
             try data_writer.writeIntLittle(u16, 0xFFFF); // signature, always 0xFFFF
@@ -1566,12 +1569,12 @@ pub const Compiler = struct {
 
         var style = if (control.style) |style_expression|
             // Certain styles are implied by the control type
-            evaluateFlagsExpressionWithDefault(res.ControlClass.getImpliedStyle(control_type), style_expression, self.source, self.code_pages)
+            evaluateFlagsExpressionWithDefault(res.ControlClass.getImpliedStyle(control_type), style_expression, self.source, self.input_code_pages)
         else
             res.ControlClass.getImpliedStyle(control_type);
 
         var exstyle = if (control.exstyle) |exstyle_expression|
-            evaluateFlagsExpressionWithDefault(0, exstyle_expression, self.source, self.code_pages)
+            evaluateFlagsExpressionWithDefault(0, exstyle_expression, self.source, self.input_code_pages)
         else
             0;
 
@@ -1583,7 +1586,7 @@ pub const Compiler = struct {
             },
             .dialogex => {
                 const help_id: u32 = if (control.help_id) |help_id_expression|
-                    evaluateNumberExpression(help_id_expression, self.source, self.code_pages).value
+                    evaluateNumberExpression(help_id_expression, self.source, self.input_code_pages).value
                 else
                     0;
                 try data_writer.writeIntLittle(u32, help_id);
@@ -1594,17 +1597,17 @@ pub const Compiler = struct {
             else => unreachable,
         }
 
-        const control_x = evaluateNumberExpression(control.x, self.source, self.code_pages);
-        const control_y = evaluateNumberExpression(control.y, self.source, self.code_pages);
-        const control_width = evaluateNumberExpression(control.width, self.source, self.code_pages);
-        const control_height = evaluateNumberExpression(control.height, self.source, self.code_pages);
+        const control_x = evaluateNumberExpression(control.x, self.source, self.input_code_pages);
+        const control_y = evaluateNumberExpression(control.y, self.source, self.input_code_pages);
+        const control_width = evaluateNumberExpression(control.width, self.source, self.input_code_pages);
+        const control_height = evaluateNumberExpression(control.height, self.source, self.input_code_pages);
 
         try data_writer.writeIntLittle(u16, control_x.asWord());
         try data_writer.writeIntLittle(u16, control_y.asWord());
         try data_writer.writeIntLittle(u16, control_width.asWord());
         try data_writer.writeIntLittle(u16, control_height.asWord());
 
-        const control_id = evaluateNumberExpression(control.id, self.source, self.code_pages);
+        const control_id = evaluateNumberExpression(control.id, self.source, self.input_code_pages);
         switch (resource) {
             .dialog => try data_writer.writeIntLittle(u16, control_id.asWord()),
             .dialogex => try data_writer.writeIntLittle(u32, control_id.value),
@@ -1644,7 +1647,7 @@ pub const Compiler = struct {
         } else {
             const class_node = control.class.?;
             if (class_node.isNumberExpression()) {
-                const number = evaluateNumberExpression(class_node, self.source, self.code_pages);
+                const number = evaluateNumberExpression(class_node, self.source, self.input_code_pages);
                 const ordinal = NameOrOrdinal{ .ordinal = number.asWord() };
                 // This is different from how the Windows RC compiles ordinals here,
                 // but I think that's a miscompilation/bug of the Windows implementation.
@@ -1697,7 +1700,7 @@ pub const Compiler = struct {
         if (control.text) |text_token| {
             const bytes = SourceBytes{
                 .slice = text_token.slice(self.source),
-                .code_page = self.code_pages.getForToken(text_token),
+                .code_page = self.input_code_pages.getForToken(text_token),
             };
             if (text_token.isStringLiteral()) {
                 const text = try self.parseQuotedStringAsWideString(text_token);
@@ -1749,8 +1752,8 @@ pub const Compiler = struct {
         defer data_buffer.deinit();
         const data_writer = data_buffer.writer();
 
-        const button_width = evaluateNumberExpression(node.button_width, self.source, self.code_pages);
-        const button_height = evaluateNumberExpression(node.button_height, self.source, self.code_pages);
+        const button_width = evaluateNumberExpression(node.button_width, self.source, self.input_code_pages);
+        const button_height = evaluateNumberExpression(node.button_height, self.source, self.input_code_pages);
 
         // I'm assuming this is some sort of version
         // TODO: Try to find something mentioning this
@@ -1767,7 +1770,7 @@ pub const Compiler = struct {
                 },
                 .simple_statement => {
                     const value_node = button_or_sep.cast(.simple_statement).?.value;
-                    const value = evaluateNumberExpression(value_node, self.source, self.code_pages);
+                    const value = evaluateNumberExpression(value_node, self.source, self.input_code_pages);
                     try data_writer.writeIntLittle(u16, value.asWord());
                 },
                 else => unreachable, // This is a bug in the parser
@@ -1777,11 +1780,11 @@ pub const Compiler = struct {
         const data_size = @intCast(u32, data_buffer.items.len);
         const id_bytes = SourceBytes{
             .slice = node.id.slice(self.source),
-            .code_page = self.code_pages.getForToken(node.id),
+            .code_page = self.input_code_pages.getForToken(node.id),
         };
         const type_bytes = SourceBytes{
             .slice = node.type.slice(self.source),
-            .code_page = self.code_pages.getForToken(node.type),
+            .code_page = self.input_code_pages.getForToken(node.type),
         };
         var header = try ResourceHeader.init(
             self.allocator,
@@ -1812,7 +1815,7 @@ pub const Compiler = struct {
 
     pub fn writeDialogFont(self: *Compiler, resource: Resource, values: FontStatementValues, writer: anytype) !void {
         const node = values.node;
-        const point_size = evaluateNumberExpression(node.point_size, self.source, self.code_pages);
+        const point_size = evaluateNumberExpression(node.point_size, self.source, self.input_code_pages);
         try writer.writeIntLittle(u16, point_size.asWord());
 
         if (resource == .dialogex) {
@@ -1824,7 +1827,7 @@ pub const Compiler = struct {
         }
 
         if (node.char_set) |char_set| {
-            const value = evaluateNumberExpression(char_set, self.source, self.code_pages);
+            const value = evaluateNumberExpression(char_set, self.source, self.input_code_pages);
             try writer.writeIntLittle(u8, @truncate(u8, value.value));
         } else if (resource == .dialogex) {
             try writer.writeIntLittle(u8, 1); // DEFAULT_CHARSET
@@ -1845,7 +1848,7 @@ pub const Compiler = struct {
 
         const type_bytes = SourceBytes{
             .slice = node.type.slice(self.source),
-            .code_page = self.code_pages.getForToken(node.type),
+            .code_page = self.input_code_pages.getForToken(node.type),
         };
         const resource = Resource.fromString(type_bytes);
         std.debug.assert(resource == .menu or resource == .menuex);
@@ -1865,7 +1868,7 @@ pub const Compiler = struct {
         const data_size = @intCast(u32, data_buffer.items.len);
         const id_bytes = SourceBytes{
             .slice = node.id.slice(self.source),
-            .code_page = self.code_pages.getForToken(node.id),
+            .code_page = self.input_code_pages.getForToken(node.id),
         };
         var header = try ResourceHeader.init(
             self.allocator,
@@ -1879,7 +1882,7 @@ pub const Compiler = struct {
         defer header.deinit(self.allocator);
 
         header.applyMemoryFlags(node.common_resource_attributes, self.source);
-        header.applyOptionalStatements(node.optional_statements, self.source, self.code_pages);
+        header.applyOptionalStatements(node.optional_statements, self.source, self.input_code_pages);
 
         try header.write(writer, .{ .diagnostics = self.diagnostics, .token = node.id });
 
@@ -1903,7 +1906,7 @@ pub const Compiler = struct {
 
         if (resource == .menuex) {
             if (node.help_id) |help_id_node| {
-                const help_id = evaluateNumberExpression(help_id_node, self.source, self.code_pages);
+                const help_id = evaluateNumberExpression(help_id_node, self.source, self.input_code_pages);
                 try data_writer.writeIntLittle(u32, help_id.value);
             } else {
                 try data_writer.writeIntLittle(u32, 0);
@@ -1941,7 +1944,7 @@ pub const Compiler = struct {
                 if (is_last_of_parent) flags.markLast();
                 try writer.writeIntLittle(u16, flags.value);
 
-                var result = evaluateNumberExpression(menu_item.result, self.source, self.code_pages);
+                var result = evaluateNumberExpression(menu_item.result, self.source, self.input_code_pages);
                 try writer.writeIntLittle(u16, result.asWord());
 
                 var text = try self.parseQuotedStringAsWideString(menu_item.text);
@@ -1972,21 +1975,21 @@ pub const Compiler = struct {
                 const menu_item = @fieldParentPtr(node_type.Type(), "base", node);
 
                 if (menu_item.type) |flags| {
-                    const value = evaluateNumberExpression(flags, self.source, self.code_pages);
+                    const value = evaluateNumberExpression(flags, self.source, self.input_code_pages);
                     try writer.writeIntLittle(u32, value.value);
                 } else {
                     try writer.writeIntLittle(u32, 0);
                 }
 
                 if (menu_item.state) |state| {
-                    const value = evaluateNumberExpression(state, self.source, self.code_pages);
+                    const value = evaluateNumberExpression(state, self.source, self.input_code_pages);
                     try writer.writeIntLittle(u32, value.value);
                 } else {
                     try writer.writeIntLittle(u32, 0);
                 }
 
                 if (menu_item.id) |id| {
-                    const value = evaluateNumberExpression(id, self.source, self.code_pages);
+                    const value = evaluateNumberExpression(id, self.source, self.input_code_pages);
                     try writer.writeIntLittle(u32, value.value);
                 } else {
                     try writer.writeIntLittle(u32, 0);
@@ -2010,7 +2013,7 @@ pub const Compiler = struct {
 
                 if (node_type == .popup_ex) {
                     if (menu_item.help_id) |help_id_node| {
-                        const help_id = evaluateNumberExpression(help_id_node, self.source, self.code_pages);
+                        const help_id = evaluateNumberExpression(help_id_node, self.source, self.input_code_pages);
                         try writer.writeIntLittle(u32, help_id.value);
                     } else {
                         try writer.writeIntLittle(u32, 0);
@@ -2051,7 +2054,7 @@ pub const Compiler = struct {
                     const version_statement = @fieldParentPtr(Node.VersionStatement, "base", fixed_info);
                     const version_type = rc.VersionInfo.map.get(version_statement.type.slice(self.source)).?;
                     for (version_statement.parts, 0..) |part, i| {
-                        const part_value = evaluateNumberExpression(part, self.source, self.code_pages);
+                        const part_value = evaluateNumberExpression(part, self.source, self.input_code_pages);
                         if (part_value.is_long) {
                             try self.addErrorDetails(.{
                                 .err = .rc_would_error_long_version_part,
@@ -2091,7 +2094,7 @@ pub const Compiler = struct {
                 .simple_statement => {
                     const statement = @fieldParentPtr(Node.SimpleStatement, "base", fixed_info);
                     const statement_type = rc.VersionInfo.map.get(statement.identifier.slice(self.source)).?;
-                    const value = evaluateNumberExpression(statement.value, self.source, self.code_pages);
+                    const value = evaluateNumberExpression(statement.value, self.source, self.input_code_pages);
                     switch (statement_type) {
                         .file_flags_mask => fixed_file_info.file_flags_mask = value.value,
                         .file_flags => fixed_file_info.file_flags = value.value,
@@ -2198,7 +2201,7 @@ pub const Compiler = struct {
                     const value_value_node = value_value_node_uncasted.cast(.block_value_value).?;
                     const value_node = value_value_node.expression;
                     if (value_node.isNumberExpression()) {
-                        const number = evaluateNumberExpression(value_node, self.source, self.code_pages);
+                        const number = evaluateNumberExpression(value_node, self.source, self.input_code_pages);
                         // This is used to write u16 or u32 depending on the number's suffix
                         const data_wrapper = Data{ .number = number };
                         try data_wrapper.write(writer);
@@ -2255,7 +2258,7 @@ pub const Compiler = struct {
     }
 
     pub fn writeStringTable(self: *Compiler, node: *Node.StringTable) !void {
-        const language = getLanguageFromOptionalStatements(node.optional_statements, self.source, self.code_pages) orelse self.state.language;
+        const language = getLanguageFromOptionalStatements(node.optional_statements, self.source, self.input_code_pages) orelse self.state.language;
 
         for (node.strings) |string_node| {
             const string = @fieldParentPtr(Node.StringTableString, "base", string_node);
@@ -2269,7 +2272,7 @@ pub const Compiler = struct {
                 string.string,
                 &node.base,
                 self.source,
-                self.code_pages,
+                self.input_code_pages,
                 self.state.version,
                 self.state.characteristics,
             ) catch |err| switch (err) {
@@ -2298,15 +2301,15 @@ pub const Compiler = struct {
 
     /// Expects this to be a top-level LANGUAGE statement
     pub fn writeLanguageStatement(self: *Compiler, node: *Node.LanguageStatement) void {
-        const primary = Compiler.evaluateNumberExpression(node.primary_language_id, self.source, self.code_pages);
-        const sublanguage = Compiler.evaluateNumberExpression(node.sublanguage_id, self.source, self.code_pages);
+        const primary = Compiler.evaluateNumberExpression(node.primary_language_id, self.source, self.input_code_pages);
+        const sublanguage = Compiler.evaluateNumberExpression(node.sublanguage_id, self.source, self.input_code_pages);
         self.state.language.primary_language_id = @truncate(u10, primary.value);
         self.state.language.sublanguage_id = @truncate(u6, sublanguage.value);
     }
 
     /// Expects this to be a top-level VERSION or CHARACTERISTICS statement
     pub fn writeTopLevelSimpleStatement(self: *Compiler, node: *Node.SimpleStatement) void {
-        const value = Compiler.evaluateNumberExpression(node.value, self.source, self.code_pages);
+        const value = Compiler.evaluateNumberExpression(node.value, self.source, self.input_code_pages);
         const statement_type = rc.TopLevelKeywords.map.get(node.identifier.slice(self.source)).?;
         switch (statement_type) {
             .characteristics => self.state.characteristics = value.value,
@@ -2539,7 +2542,7 @@ pub const Compiler = struct {
     pub fn sourceBytesForToken(self: *Compiler, token: Token) SourceBytes {
         return .{
             .slice = token.slice(self.source),
-            .code_page = self.code_pages.getForToken(token),
+            .code_page = self.input_code_pages.getForToken(token),
         };
     }
 
@@ -2766,26 +2769,12 @@ pub const StringTable = struct {
                 const string_token = self.strings.items[string_i];
                 const slice = string_token.slice(compiler.source);
                 const column = string_token.calculateColumn(compiler.source, 8, null);
-                const code_page = compiler.code_pages.getForToken(string_token);
+                const code_page = compiler.input_code_pages.getForToken(string_token);
                 const bytes = SourceBytes{ .slice = slice, .code_page = code_page };
-                const utf16_string = utf16: {
-                    switch (string_token.id) {
-                        .quoted_ascii_string => {
-                            const parsed = try literals.parseQuotedAsciiString(compiler.allocator, bytes, .{
-                                .start_column = column,
-                                .diagnostics = .{ .diagnostics = compiler.diagnostics, .token = string_token },
-                            });
-                            defer compiler.allocator.free(parsed);
-                            // TODO: This needs more testing to make sure that this is always the right conversion to do.
-                            break :utf16 try windows1252.windows1252ToUtf16AllocZ(compiler.allocator, parsed);
-                        },
-                        .quoted_wide_string => break :utf16 try literals.parseQuotedWideString(compiler.allocator, bytes, .{
-                            .start_column = column,
-                            .diagnostics = .{ .diagnostics = compiler.diagnostics, .token = string_token },
-                        }),
-                        else => unreachable,
-                    }
-                };
+                const utf16_string = try literals.parseQuotedStringAsWideString(compiler.allocator, bytes, .{
+                    .start_column = column,
+                    .diagnostics = .{ .diagnostics = compiler.diagnostics, .token = string_token },
+                });
                 defer compiler.allocator.free(utf16_string);
 
                 const trimmed_string = trim: {
@@ -2981,15 +2970,25 @@ fn testCompile(source: []const u8, cwd: std.fs.Dir) !void {
 }
 
 fn testCompileWithOutput(source: []const u8, expected_output: []const u8, cwd: std.fs.Dir) !void {
+    return testCompileWithOutputAndOptions(source, expected_output, .{ .cwd = cwd });
+}
+
+fn testCompileWithOutputAndOptions(source: []const u8, expected_output: []const u8, options: TestCompileOptions) !void {
     var buffer = std.ArrayList(u8).init(std.testing.allocator);
     defer buffer.deinit();
 
     var diagnostics = Diagnostics.init(std.testing.allocator);
     defer diagnostics.deinit();
 
-    compile(std.testing.allocator, source, buffer.writer(), .{ .cwd = cwd, .diagnostics = &diagnostics }) catch |err| switch (err) {
+    compile(std.testing.allocator, source, buffer.writer(), .{
+        .cwd = options.cwd,
+        .diagnostics = &diagnostics,
+        .default_code_page = options.default_code_page,
+        .ignore_include_env_var = options.ignore_include_env_var,
+        .extra_include_paths = options.extra_include_paths,
+    }) catch |err| switch (err) {
         error.ParseError, error.CompileError => {
-            diagnostics.renderToStdErr(cwd, source, null);
+            diagnostics.renderToStdErr(options.cwd, source, null);
             return err;
         },
         else => return err,
@@ -3603,6 +3602,19 @@ test "basic stringtable" {
         "STRINGTABLE { 1 \"hello \x93world\x94 i guess\" }",
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00J\x00\x00\x00 \x00\x00\x00\xff\xff\x06\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x15\x00h\x00e\x00l\x00l\x00o\x00 \x00\x1c w\x00o\x00r\x00l\x00d\x00\x1d  \x00i\x00 \x00g\x00u\x00e\x00s\x00s\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
         std.fs.cwd(),
+    );
+
+    // Invalid UTF-8 gets converted to the replacement character
+    try testCompileWithOutputAndOptions(
+        "STRINGTABLE { 1 \"\x80\" }",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\"\x00\x00\x00 \x00\x00\x00\xff\xff\x06\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\xfd\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+        .{ .cwd = std.fs.cwd(), .default_code_page = .utf8 },
+    );
+    // Even if the output code page is 1252
+    try testCompileWithOutputAndOptions(
+        "#pragma code_page(65001)\nSTRINGTABLE { 1 \"\x80\" }",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\"\x00\x00\x00 \x00\x00\x00\xff\xff\x06\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\xfd\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+        .{ .cwd = std.fs.cwd(), .default_code_page = .windows1252 },
     );
 
     // 1. single escaped NUL character *does not* act as a terminator
@@ -4281,5 +4293,19 @@ test "fileversion, productversion with L suffixed part" {
         \\{}
     ,
         null,
+    );
+}
+
+test "separate input and output code pages" {
+    // The string in the first RCDATA should be interpreted as UTF-8 but
+    // encoded as Windows-1252, since the first #pragma code_page does not affect
+    // the output code page.
+    // The string in the second RCDATA should be interpreted as UTF-8 and also
+    // encoded as UTF-8, since the second #pragma code_page affects both the input
+    // and output code pages.
+    try testCompileWithOutput(
+        "#pragma code_page(65001)\n1 RCDATA { \"\x80\" }\n#pragma code_page(65001)\n2 RCDATA { \"\x80\" }",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00?\x00\x00\x00\x03\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x02\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\xef\xbf\xbd\x00",
+        std.fs.cwd(),
     );
 }

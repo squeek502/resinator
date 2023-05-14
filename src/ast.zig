@@ -5,7 +5,8 @@ const CodePage = @import("code_pages.zig").CodePage;
 
 pub const Tree = struct {
     node: *Node,
-    code_pages: CodePageLookup,
+    input_code_pages: CodePageLookup,
+    output_code_pages: CodePageLookup,
 
     /// not owned by the tree
     source: []const u8,

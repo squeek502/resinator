@@ -210,6 +210,9 @@ pub const Lexer = struct {
     default_code_page: CodePage,
     source_mappings: ?*SourceMappings,
     max_string_literal_codepoints: u15,
+    /// Needed to determine whether or not the output code page should
+    /// be set in the parser.
+    seen_pragma_code_pages: u2 = 0,
 
     pub const Error = LexError;
 
@@ -951,6 +954,7 @@ pub const Lexer = struct {
             }
         }
 
+        self.seen_pragma_code_pages +|= 1;
         self.current_code_page = code_page;
     }
 

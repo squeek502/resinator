@@ -75,6 +75,7 @@ pub fn build(b: *std.build.Builder) void {
     _ = addFuzzyTest(b, "code_pages", mode, target, resinator, all_fuzzy_tests_step, test_options);
     _ = addFuzzyTest(b, "icons", mode, target, resinator, all_fuzzy_tests_step, test_options);
     _ = addFuzzyTest(b, "bitmaps", mode, target, resinator, all_fuzzy_tests_step, test_options);
+    _ = addFuzzyTest(b, "stringtable", mode, target, resinator, all_fuzzy_tests_step, test_options);
 
     _ = addFuzzer(b, "fuzz_rc", &.{}, resinator, target);
 

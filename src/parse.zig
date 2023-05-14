@@ -44,7 +44,8 @@ pub const Parser = struct {
         allocator: Allocator,
         arena: Allocator,
         diagnostics: *Diagnostics,
-        code_page_lookup: CodePageLookup,
+        input_code_page_lookup: CodePageLookup,
+        output_code_page_lookup: CodePageLookup,
     };
 
     pub fn parse(self: *Self, allocator: Allocator, diagnostics: *Diagnostics) Error!*Tree {
@@ -57,7 +58,8 @@ pub const Parser = struct {
             .allocator = allocator,
             .arena = arena.allocator(),
             .diagnostics = diagnostics,
-            .code_page_lookup = CodePageLookup.init(arena.allocator(), self.lexer.current_code_page),
+            .input_code_page_lookup = CodePageLookup.init(arena.allocator(), self.lexer.default_code_page),
+            .output_code_page_lookup = CodePageLookup.init(arena.allocator(), self.lexer.default_code_page),
         };
 
         const parsed_root = try self.parseRoot();
@@ -65,7 +67,8 @@ pub const Parser = struct {
         const tree = try self.state.arena.create(Tree);
         tree.* = .{
             .node = parsed_root,
-            .code_pages = self.state.code_page_lookup,
+            .input_code_pages = self.state.input_code_page_lookup,
+            .output_code_pages = self.state.output_code_page_lookup,
             .source = self.lexer.buffer,
             .arena = arena.state,
             .allocator = allocator,
@@ -1741,8 +1744,13 @@ pub const Parser = struct {
             };
             break :token token;
         };
-        // After every token, set the code page for its line
-        try self.state.code_page_lookup.setForToken(self.state.token, self.lexer.current_code_page);
+        // After every token, set the input code page for its line
+        try self.state.input_code_page_lookup.setForToken(self.state.token, self.lexer.current_code_page);
+        // But only set the output code page to the current code page if we are past the first code_page pragma in the file.
+        // Otherwise, we want to fill the lookup using the default code page so that lookups still work for lines that
+        // don't have an explicit output code page set.
+        const output_code_page = if (self.lexer.seen_pragma_code_pages > 1) self.lexer.current_code_page else self.state.output_code_page_lookup.default_code_page;
+        try self.state.output_code_page_lookup.setForToken(self.state.token, output_code_page);
     }
 
     fn lookaheadToken(self: *Self, comptime method: Lexer.LexMethod) Error!Token {

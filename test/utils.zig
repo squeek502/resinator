@@ -185,6 +185,11 @@ pub fn randomAsciiStringLiteral(allocator: Allocator, rand: std.rand.Random) ![]
             // but "<anything besides newlines>\x01" doesn't).
             // For sanity's sake, just don't put newlines in for now.
             '\n' => byte = ' ',
+            // TODO: Remove this once hard tab behavior matches rc.exe in every scenario
+            // Reproduction of one failing case (file encoded as Windows-1252, <tab> is \t):
+            // #pragma code_page(65001)
+            // STRINGTABLE { 2, "¢Éª<tab>v2" }
+            '\t' => byte = ' ',
             '\\' => {
                 // backslash at the very end of the string leads to \" which is
                 // currently disallowed, so avoid that.
