@@ -9,6 +9,7 @@ const Allocator = std.mem.Allocator;
 const ErrorDetails = @import("errors.zig").ErrorDetails;
 const Diagnostics = @import("errors.zig").Diagnostics;
 const SourceBytes = @import("literals.zig").SourceBytes;
+const Compiler = @import("compile.zig").Compiler;
 const rc = @import("rc.zig");
 const res = @import("res.zig");
 
@@ -1417,6 +1418,11 @@ pub const Parser = struct {
         return values.toOwnedSlice(self.state.arena);
     }
 
+    fn numberExpressionContainsAnyLSuffixes(expression_node: *Node, source: []const u8, code_page_lookup: *const CodePageLookup) bool {
+        // TODO: This could probably be done without evaluating the whole expression
+        return Compiler.evaluateNumberExpression(expression_node, source, code_page_lookup).is_long;
+    }
+
     /// Expects the current token to be a literal token that contains the string LANGUAGE
     fn parseLanguageStatement(self: *Self) Error!*Node {
         const language_token = self.state.token;
@@ -1427,6 +1433,44 @@ pub const Parser = struct {
         try self.check(.comma);
 
         const sublanguage = try self.parseExpression(.{ .allowed_types = .{ .number = true } });
+
+        // The Win32 RC compiler errors if either parameter contains any number with an L
+        // suffix. Instead of that, we want to warn and then let the values get truncated.
+        // The warning is done here to allow the compiler logic to not have to deal with this.
+        if (numberExpressionContainsAnyLSuffixes(primary_language, self.lexer.buffer, &self.state.input_code_page_lookup)) {
+            try self.addErrorDetails(.{
+                .err = .rc_would_error_u16_with_l_suffix,
+                .type = .warning,
+                .token = primary_language.getFirstToken(),
+                .token_span_end = primary_language.getLastToken(),
+                .extra = .{ .statement_with_u16_param = .language },
+            });
+            try self.addErrorDetails(.{
+                .err = .rc_would_error_u16_with_l_suffix,
+                .print_source_line = false,
+                .type = .note,
+                .token = primary_language.getFirstToken(),
+                .token_span_end = primary_language.getLastToken(),
+                .extra = .{ .statement_with_u16_param = .language },
+            });
+        }
+        if (numberExpressionContainsAnyLSuffixes(sublanguage, self.lexer.buffer, &self.state.input_code_page_lookup)) {
+            try self.addErrorDetails(.{
+                .err = .rc_would_error_u16_with_l_suffix,
+                .type = .warning,
+                .token = sublanguage.getFirstToken(),
+                .token_span_end = sublanguage.getLastToken(),
+                .extra = .{ .statement_with_u16_param = .language },
+            });
+            try self.addErrorDetails(.{
+                .err = .rc_would_error_u16_with_l_suffix,
+                .print_source_line = false,
+                .type = .note,
+                .token = sublanguage.getFirstToken(),
+                .token_span_end = sublanguage.getLastToken(),
+                .extra = .{ .statement_with_u16_param = .language },
+            });
+        }
 
         const node = try self.state.arena.create(Node.LanguageStatement);
         node.* = .{
@@ -3915,6 +3959,29 @@ test "control style potential miscompilation" {
             .{ .type = .note, .str = "to avoid the potential miscompilation, consider adding a comma after the style parameter" },
         },
         "1 DIALOGEX 1, 2, 3, 4 { CONTROL \"text\", 100, BUTTON, 3 1, 2, 3, 4, 100 }",
+        null,
+    );
+}
+
+test "language with L suffixed part" {
+    // As a top-level statement
+    try testParseErrorDetails(
+        &.{
+            .{ .type = .warning, .str = "this language parameter would be an error in the Win32 RC compiler" },
+            .{ .type = .note, .str = "to avoid the error, remove any L suffixes from numbers within the parameter" },
+        },
+        \\LANGUAGE 1L, 2
+    ,
+        null,
+    );
+    // As an optional statement in a resource
+    try testParseErrorDetails(
+        &.{
+            .{ .type = .warning, .str = "this language parameter would be an error in the Win32 RC compiler" },
+            .{ .type = .note, .str = "to avoid the error, remove any L suffixes from numbers within the parameter" },
+        },
+        \\STRINGTABLE LANGUAGE (2-1L), 1 { 1, "" }
+    ,
         null,
     );
 }

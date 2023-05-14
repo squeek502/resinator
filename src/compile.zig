@@ -917,7 +917,7 @@ pub const Compiler = struct {
     };
 
     /// Assumes that the node is a number or number expression
-    fn evaluateNumberExpression(expression_node: *Node, source: []const u8, code_page_lookup: *const CodePageLookup) Number {
+    pub fn evaluateNumberExpression(expression_node: *Node, source: []const u8, code_page_lookup: *const CodePageLookup) Number {
         switch (expression_node.id) {
             .literal => {
                 const literal_node = expression_node.cast(.literal).?;
@@ -2057,23 +2057,23 @@ pub const Compiler = struct {
                         const part_value = evaluateNumberExpression(part, self.source, self.input_code_pages);
                         if (part_value.is_long) {
                             try self.addErrorDetails(.{
-                                .err = .rc_would_error_long_version_part,
+                                .err = .rc_would_error_u16_with_l_suffix,
                                 .type = .warning,
                                 .token = part.getFirstToken(),
                                 .token_span_end = part.getLastToken(),
-                                .extra = .{ .versioninfo_statement = switch (version_type) {
+                                .extra = .{ .statement_with_u16_param = switch (version_type) {
                                     .file_version => .fileversion,
                                     .product_version => .productversion,
                                     else => unreachable,
                                 } },
                             });
                             try self.addErrorDetails(.{
-                                .err = .rc_would_error_long_version_part,
+                                .err = .rc_would_error_u16_with_l_suffix,
                                 .print_source_line = false,
                                 .type = .note,
                                 .token = part.getFirstToken(),
                                 .token_span_end = part.getLastToken(),
-                                .extra = .{ .versioninfo_statement = switch (version_type) {
+                                .extra = .{ .statement_with_u16_param = switch (version_type) {
                                     .file_version => .fileversion,
                                     .product_version => .productversion,
                                     else => unreachable,
@@ -4296,10 +4296,10 @@ test "filename evaluation" {
 test "fileversion, productversion with L suffixed part" {
     try testCompileErrorDetails(
         &.{
-            .{ .type = .warning, .str = "this part of the fileversion would be an error in the Win32 RC compiler" },
-            .{ .type = .note, .str = "to avoid the error, remove any L suffixes from numbers within this part" },
-            .{ .type = .warning, .str = "this part of the productversion would be an error in the Win32 RC compiler" },
-            .{ .type = .note, .str = "to avoid the error, remove any L suffixes from numbers within this part" },
+            .{ .type = .warning, .str = "this fileversion parameter would be an error in the Win32 RC compiler" },
+            .{ .type = .note, .str = "to avoid the error, remove any L suffixes from numbers within the parameter" },
+            .{ .type = .warning, .str = "this productversion parameter would be an error in the Win32 RC compiler" },
+            .{ .type = .note, .str = "to avoid the error, remove any L suffixes from numbers within the parameter" },
         },
         \\1 VERSIONINFO
         \\FILEVERSION 1L, 2, 3, 4

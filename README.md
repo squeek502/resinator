@@ -118,8 +118,9 @@ The plan is to use fuzz testing with the `rc` tool as an oracle to ensure that `
   + The Win32 RC compiler allows an extra expression after the `style` parameter of `CONTROL`s within `DIALOG`/`DIALOGEX` resources, but only if there is no comma separating them. Example: `CONTROL "text", 1, BUTTON, 15 30, 1, 2, 3, 4`; the `15` is the style parameter and the `30` is completely ignored (i.e. the `1, 2, 3, 4` are `x`, `y`, `w`, `h`).
     - The extra expression can be various things (quoted string, `=`, etc) but not *anything*, e.g. if it's `;` then it will error with `expected numerical dialog constant`
     - If the extra expression is a number expression it will no longer ignore it but will behave strangely, e.g. if it is `(30+5)` then `5` will be used as the `x` parameter
-- `resinator` will not error if a `FILEVERSION` or `PRODUCTVERSION` within a `VERSIONINFO` resource contains a part that has an `L` suffix on a number literal. Instead, it will warn about the Win32 behavior and truncate the value to a `u16`.
-  + The Win32 RC compiler will error with `version WORDs separated by commas expected` if the character `l`/`L` is anywhere in a number literal within a parameter of a `PRODUCTVERSION` or `FILEVERSION` statement of a `VERSIONINFO` resource. This is due to PRODUCTVERSION and FILEVERSION being a `u16` and the `l`/`L` suffix of a number indicating that it should be a `u32`. It doesn't complain about numbers that overflow a `u16` and uses wrapping overflow as is common everywhere else.
+- `resinator` will allow parameters that are limited to a `u16` to contain numbers with `L` suffixes, but will truncate the value to a `u16` and emit a warning about the Win32 behavior.
+  + The Win32 RC compiler will error with something like `version WORDs separated by commas expected` or `PRIMARY LANGUAGE ID too large` if any number literal within such a parameter is evaluated to have an `l`/`L` suffix (since in theory that tells the compiler to use a `u32` for that number). Note, though, that it doesn't complain about numbers that overflow a `u16` and uses wrapping overflow as is common everywhere else.
+  + Statements that this affects all parameters of: `PRODUCTVERSION`, `FILEVERSION`, `LANGUAGE`
 
 #### Resource data and `.res` filesize limits
 
