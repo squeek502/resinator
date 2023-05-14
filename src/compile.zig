@@ -3555,6 +3555,20 @@ test "basic html" {
     );
 }
 
+test "tab column counting" {
+    // Tab column is calculated via byte count, not codepoint count.
+    // If the tab column were counted in codepoints, there would be 1 space in the .res
+    // but since the tab columns are counted in bytes, there are 7 spaces in the .res.
+    try testCompileWithOutputAndOptions(
+        "1 € { \"\t\" }",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x07\x00\x00\x00 \x00\x00\x00\xac \x00\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00       \x00",
+        .{
+            .cwd = std.fs.cwd(),
+            .default_code_page = .utf8,
+        },
+    );
+}
+
 test "basic stringtable" {
     try testCompileWithOutput(
         "STRINGTABLE { 1, \"hello\" }",

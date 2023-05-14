@@ -165,7 +165,7 @@ pub const IterativeStringParser = struct {
                     if (c == '\t') {
                         self.column += columnsUntilTabStop(self.column, 8);
                     } else {
-                        self.column += 1;
+                        self.column += codepoint.byte_len;
                     }
                 }
             }
