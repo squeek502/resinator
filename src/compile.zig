@@ -202,7 +202,7 @@ pub const Compiler = struct {
                             .diagnostics = .{ .diagnostics = self.diagnostics, .token = literal_node.token },
                         });
 
-                        while (parser.nextUnchecked()) |parsed| {
+                        while (try parser.nextUnchecked()) |parsed| {
                             const c = parsed.codepoint;
                             if (c == code_pages.Codepoint.invalid) {
                                 try buf.appendSlice("�");
@@ -4321,5 +4321,19 @@ test "separate input and output code pages" {
         "#pragma code_page(65001)\n1 RCDATA { \"\x80\" }\n#pragma code_page(65001)\n2 RCDATA { \"\x80\" }",
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00?\x00\x00\x00\x03\x00\x00\x00 \x00\x00\x00\xff\xff\n\x00\xff\xff\x02\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\xef\xbf\xbd\x00",
         std.fs.cwd(),
+    );
+}
+
+test "tab within a string literal" {
+    try testCompileErrorDetails(
+        &.{
+            .{ .type = .warning, .str = "the tab character(s) in this string will be converted into a variable number of spaces (determined by the column of the tab character in the .rc file)" },
+            .{ .type = .note, .str = "to include the tab character itself in a string, the escape sequence \\t should be used" },
+        },
+        // These \t are literal tab characters in the parsed Zig string.
+        // There is a maximum of one warning per string, so even though
+        // there are two tab characters, only one warning is produced.
+        "1 RCDATA { \"\t\t\" }",
+        null,
     );
 }

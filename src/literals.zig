@@ -63,6 +63,7 @@ pub const IterativeStringParser = struct {
     index: usize = 0,
     column: usize = 0,
     diagnostics: ?DiagnosticsContext = null,
+    seen_tab: bool = false,
 
     const State = enum {
         normal,
@@ -100,8 +101,8 @@ pub const IterativeStringParser = struct {
         from_escaped_integer: bool = false,
     };
 
-    pub fn next(self: *IterativeStringParser) !?ParsedCodepoint {
-        const result = self.nextUnchecked();
+    pub fn next(self: *IterativeStringParser) std.mem.Allocator.Error!?ParsedCodepoint {
+        const result = try self.nextUnchecked();
         if (self.diagnostics != null and result != null and !result.?.from_escaped_integer) {
             switch (result.?.codepoint) {
                 0x900, 0xA00, 0xA0D, 0x2000, 0xFFFE, 0xD00 => {
@@ -129,7 +130,7 @@ pub const IterativeStringParser = struct {
         return result;
     }
 
-    pub fn nextUnchecked(self: *IterativeStringParser) ?ParsedCodepoint {
+    pub fn nextUnchecked(self: *IterativeStringParser) std.mem.Allocator.Error!?ParsedCodepoint {
         if (self.num_pending_spaces > 0) {
             // Ensure that we don't get into this predicament so we can ensure that
             // the order of processing any pending stuff doesn't matter
@@ -176,6 +177,21 @@ pub const IterativeStringParser = struct {
                     '\r' => {},
                     '\n' => state = .newline,
                     '\t' => {
+                        // Only warn about a tab getting converted to spaces once per string
+                        if (self.diagnostics != null and !self.seen_tab) {
+                            try self.diagnostics.?.diagnostics.append(ErrorDetails{
+                                .err = .tab_converted_to_spaces,
+                                .type = .warning,
+                                .token = self.diagnostics.?.token,
+                            });
+                            try self.diagnostics.?.diagnostics.append(ErrorDetails{
+                                .err = .tab_converted_to_spaces,
+                                .type = .note,
+                                .token = self.diagnostics.?.token,
+                                .print_source_line = false,
+                            });
+                            self.seen_tab = true;
+                        }
                         const cols = columnsUntilTabStop(self.column, 8);
                         self.num_pending_spaces = @intCast(u8, cols - 1);
                         self.index += codepoint.byte_len;

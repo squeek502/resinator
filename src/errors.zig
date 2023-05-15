@@ -363,6 +363,7 @@ pub const ErrorDetails = struct {
         rc_would_miscompile_codepoint_byte_swap,
         /// `number` is populated
         rc_would_miscompile_codepoint_skip,
+        tab_converted_to_spaces,
     };
 
     pub fn render(self: ErrorDetails, writer: anytype, source: []const u8, strings: []const []const u8) !void {
@@ -649,6 +650,10 @@ pub const ErrorDetails = struct {
             .rc_would_miscompile_codepoint_skip => switch (self.type) {
                 .err, .warning => return writer.print("codepoint U+{X} within a string literal would be miscompiled by the Win32 RC compiler (the codepoint would be missing from the compiled resource)", .{self.extra.number}),
                 .note => return writer.print("to avoid the potential miscompilation, an integer escape sequence in a wide string literal could be used instead: L\"\\x{X}\"", .{self.extra.number}),
+            },
+            .tab_converted_to_spaces => switch (self.type) {
+                .err, .warning => return writer.writeAll("the tab character(s) in this string will be converted into a variable number of spaces (determined by the column of the tab character in the .rc file)"),
+                .note => return writer.writeAll("to include the tab character itself in a string, the escape sequence \\t should be used"),
             },
         }
     }
