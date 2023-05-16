@@ -665,7 +665,9 @@ pub const Lexer = struct {
                     },
                     '\r' => {
                         // \r doesn't count towards string literal length
-                        // TODO: shouldn't this potentially increment line number?
+
+                        // Increment line number but don't affect the result token's line number
+                        _ = self.incrementLineNumber();
                     },
                     '\n' => {
                         // first \n expands to <space><\n>
@@ -674,7 +676,9 @@ pub const Lexer = struct {
                             string_literal_collapsing_whitespace = true;
                         }
                         // the rest are collapsed into the <space><\n>
-                        // TODO: shouldn't this potentially increment line number?
+
+                        // Increment line number but don't affect the result token's line number
+                        _ = self.incrementLineNumber();
                     },
                     // only \t, space, Vertical Tab, and Form Feed count as whitespace when collapsing
                     '\t', ' ', '\x0b', '\x0c' => {
