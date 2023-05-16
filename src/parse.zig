@@ -3611,6 +3611,14 @@ test "parse errors" {
         null,
     );
     try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "character '@' is not allowed outside of string literals" }},
+        // This @ is outside the string literal from the perspective of a C preprocessor
+        // but inside the string literal from the perspective of the RC parser. We still
+        // want to error to emulate the behavior of the Win32 RC preprocessor.
+        "id RCDATA { \"hello\n@\" }",
+        null,
+    );
+    try testParseErrorDetails(
         &.{.{ .type = .err, .str = "escaping quotes with \\\" is not allowed (use \"\" instead)" }},
         "id RCDATA { \"\\\"\"\" }",
         null,

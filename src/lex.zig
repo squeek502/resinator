@@ -414,7 +414,24 @@ pub const Lexer = struct {
                 .quoted_wide_string_escape,
                 .quoted_ascii_string_maybe_end,
                 .quoted_wide_string_maybe_end,
-                => true,
+                =>
+                // If the current line is not the same line as the start of the string literal,
+                // then we want to treat the current codepoint as 'not in a string literal'
+                // for the purposes of detecting illegal codepoints. This means that we will
+                // error on illegal-outside-string-literal characters that are outside string
+                // literals from the perspective of a C preprocessor, but that may be
+                // inside string literals from the perspective of the RC lexer. For example,
+                // "hello
+                // @"
+                // will be treated as a single string literal by the RC lexer but the Win32
+                // preprocessor will consider this an unclosed string literal followed by
+                // the character @ and ", and will therefore error since the Win32 RC preprocessor
+                // errors on the @ character outside string literals.
+                //
+                // By doing this here, we can effectively emulate the Win32 RC preprocessor behavior
+                // at lex-time, and avoid the need for a separate step that checks for this edge-case
+                // specifically.
+                result.line_number == self.line_handler.line_number,
                 else => false,
             };
             try self.checkForIllegalCodepoint(codepoint, in_string_literal);
