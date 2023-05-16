@@ -378,12 +378,10 @@ pub const ErrorDetails = struct {
                 return writer.print("base 10 number literal with exponent is not allowed: {s}", .{self.token.slice(source)});
             },
             .illegal_byte => {
-                const byte = self.token.slice(source)[0];
-                return writer.print("character '\\x{X:0>2}' is not allowed", .{byte});
+                return writer.print("character '{s}' is not allowed", .{std.fmt.fmtSliceEscapeUpper(self.token.slice(source))});
             },
             .illegal_byte_outside_string_literals => {
-                const byte = self.token.slice(source)[0];
-                return writer.print("character '\\x{X:0>2}' is not allowed outside of string literals", .{byte});
+                return writer.print("character '{s}' is not allowed outside of string literals", .{std.fmt.fmtSliceEscapeUpper(self.token.slice(source))});
             },
             .illegal_codepoint_outside_string_literals => {
                 // This is somewhat hacky, but we know that:
