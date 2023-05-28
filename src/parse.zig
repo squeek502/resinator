@@ -929,7 +929,8 @@ pub const Parser = struct {
         var extra_data: []*Node = &[_]*Node{};
         var extra_data_begin: ?Token = null;
         var extra_data_end: ?Token = null;
-        if (try self.parseOptionalToken(.begin)) {
+        // extra data is DIALOGEX-only
+        if (resource == .dialogex and try self.parseOptionalToken(.begin)) {
             extra_data_begin = self.state.token;
             extra_data = try self.parseRawDataBlock();
             extra_data_end = self.state.token;
