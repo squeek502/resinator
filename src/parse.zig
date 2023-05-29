@@ -243,26 +243,24 @@ pub const Parser = struct {
                     };
                     var ex_specific = ExSpecificValues{};
                     ex_specific: {
+                        var optional_param_parser = OptionalParamParser{ .parser = self };
                         switch (resource) {
                             .dialogex => {
                                 {
-                                    if (!(try self.parseOptionalToken(.comma))) break :ex_specific;
-
-                                    ex_specific.weight = try self.parseExpression(.{ .allowed_types = .{ .number = true } });
+                                    ex_specific.weight = try optional_param_parser.parse(.{});
+                                    if (optional_param_parser.finished) break :ex_specific;
                                 }
                                 {
                                     if (!(try self.parseOptionalToken(.comma))) break :ex_specific;
-
                                     ex_specific.italic = try self.parseExpression(.{ .allowed_types = .{ .number = true } });
                                 }
                                 {
-                                    if (!(try self.parseOptionalToken(.comma))) break :ex_specific;
-
-                                    ex_specific.char_set = try self.parseExpression(.{ .allowed_types = .{ .number = true } });
+                                    ex_specific.char_set = try optional_param_parser.parse(.{});
+                                    if (optional_param_parser.finished) break :ex_specific;
                                 }
                             },
                             .dialog => {},
-                            else => @panic("TODO non-DIALOG resource with FONT optional statement"),
+                            else => unreachable, // only DIALOG and DIALOGEX have FONT optional-statements
                         }
                     }
 
@@ -2300,6 +2298,33 @@ test "dialogs" {
         \\ {
         \\ }
         \\
+    );
+    // FONT allows empty values for weight and charset in DIALOGEX
+    try testParse("1 DIALOGEX 1, 2, 3, 4 FONT 1,,, \"hello\", , 1, {}",
+        \\root
+        \\ dialog 1 DIALOGEX [0 common_resource_attributes]
+        \\  x:
+        \\   literal 1
+        \\  y:
+        \\   literal 2
+        \\  width:
+        \\   literal 3
+        \\  height:
+        \\   literal 4
+        \\  font_statement FONT typeface: "hello"
+        \\   point_size:
+        \\    literal 1
+        \\   italic:
+        \\    literal 1
+        \\ {
+        \\ }
+        \\
+    );
+    // but italic cannot be empty
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "expected number or number expression; got ','" }},
+        "1 DIALOGEX 1, 2, 3, 4 FONT 1,,, \"hello\", 1, , 1 {}",
+        null,
     );
     try testParse(
         \\1 DIALOGEX FIXED DISCARDABLE 1, 2, 3, 4
