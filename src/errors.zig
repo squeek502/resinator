@@ -535,7 +535,7 @@ pub const ErrorDetails = struct {
             },
             .rc_would_miscompile_control_padding => switch (self.type) {
                 .err, .warning => return writer.print("the padding before this control would be miscompiled by the Win32 RC compiler (it would insert 2 extra bytes of padding)", .{}),
-                .note => return writer.print("to avoid the potential miscompilation, consider removing any 'extra data' blocks from the controls in this dialog", .{}),
+                .note => return writer.print("to avoid the potential miscompilation, consider removing any 'control data' blocks from the controls in this dialog", .{}),
             },
             .rc_would_miscompile_control_class_ordinal => switch (self.type) {
                 .err, .warning => return writer.print("the control class of this CONTROL would be miscompiled by the Win32 RC compiler", .{}),
@@ -614,8 +614,8 @@ pub const ErrorDetails = struct {
                 .note => return writer.print("maximum data length exceeded here", .{}),
             },
             .control_extra_data_size_exceeds_max => switch (self.type) {
-                .err, .warning => try writer.print("control's extra data length exceeds maximum of {} bytes", .{std.math.maxInt(u16)}),
-                .note => return writer.print("maximum extra data length exceeded here", .{}),
+                .err, .warning => try writer.print("control data length exceeds maximum of {} bytes", .{std.math.maxInt(u16)}),
+                .note => return writer.print("maximum control data length exceeded here", .{}),
             },
             .version_node_size_exceeds_max => switch (self.type) {
                 .err, .warning => return writer.print("version node tree size exceeds maximum of {} bytes", .{std.math.maxInt(u16)}),
