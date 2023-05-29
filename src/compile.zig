@@ -681,7 +681,7 @@ pub const Compiler = struct {
                     try writeDataPadding(writer, header.data_size);
                     return;
                 },
-                .RCDATA, .HTML, .MANIFEST, .MESSAGETABLE, .DLGINIT => {
+                .RCDATA, .HTML, .MANIFEST, .MESSAGETABLE, .DLGINIT, .PLUGPLAY => {
                     header.applyMemoryFlags(node.common_resource_attributes, self.source);
                 },
                 .BITMAP => {
@@ -828,7 +828,6 @@ pub const Compiler = struct {
                 .FONTDIR,
                 .ICON,
                 .MENU,
-                .PLUGPLAY,
                 .STRING,
                 .TOOLBAR,
                 .VERSION,
