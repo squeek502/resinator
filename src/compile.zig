@@ -1361,6 +1361,12 @@ pub const Compiler = struct {
                             if (forced_ordinal or std.ascii.isDigit(token_slice[0])) {
                                 optional_statement_values.menu = .{ .ordinal = res.ForcedOrdinal.fromBytes(bytes) };
                             } else {
+                                // TODO: Warning if this does any uppercasing of the name, since
+                                //       the Win32 compiler doesn't do uppercase here (but it should
+                                //       since in theory it should match the behavior of resource IDs
+                                //       which are automatically uppercased).
+                                // TODO: Test if this uppercasing actually matters in terms of how MENU
+                                //       is used within a DIALOG/DIALOGEX
                                 optional_statement_values.menu = try NameOrOrdinal.nameFromString(self.allocator, bytes);
                             }
                         },
