@@ -93,7 +93,7 @@ pub fn ComptimeCaseInsensitiveStringMap(comptime V: type, comptime kvs_list: any
                 sorted_kvs[i] = .{ .key = kv.@"0", .value = {} };
             }
         }
-        std.sort.sort(KV, &sorted_kvs, {}, lenAsc);
+        std.mem.sort(KV, &sorted_kvs, {}, lenAsc);
         const min_len = sorted_kvs[0].key.len;
         const max_len = sorted_kvs[sorted_kvs.len - 1].key.len;
         var len_indexes: [max_len + 1]usize = undefined;
@@ -309,7 +309,7 @@ pub fn openFileNotDir(cwd: std.fs.Dir, path: []const u8, flags: std.fs.File.Open
     if (builtin.os.tag != .windows) {
         const stat = try file.stat();
 
-        if (stat.kind == .Directory)
+        if (stat.kind == .directory)
             return error.IsDir;
     }
     return file;
