@@ -357,6 +357,8 @@ pub const ErrorDetails = struct {
         invalid_filename,
         /// `statement_with_u16_param` is populated
         rc_would_error_u16_with_l_suffix,
+        /// `number` is populated and contains the filesize of the .fnt file
+        rc_might_miscompile_fontdir_entry,
 
         // Literals
         /// `number` is populated
@@ -640,6 +642,10 @@ pub const ErrorDetails = struct {
             .rc_would_error_u16_with_l_suffix => switch (self.type) {
                 .err, .warning => return writer.print("this {s} parameter would be an error in the Win32 RC compiler", .{@tagName(self.extra.statement_with_u16_param)}),
                 .note => return writer.writeAll("to avoid the error, remove any L suffixes from numbers within the parameter"),
+            },
+            .rc_might_miscompile_fontdir_entry => switch (self.type) {
+                .err, .warning => return writer.writeAll("this font file could cause the Win32 RC compiler to miscompile or crash"),
+                .note => return writer.print("font files less than 148 bytes are likely invalid; this file is only {} bytes long", .{self.extra.number}),
             },
             .rc_would_miscompile_codepoint_byte_swap => switch (self.type) {
                 .err, .warning => return writer.print("codepoint U+{X} within a string literal would be miscompiled by the Win32 RC compiler (the bytes of the UTF-16 code unit would be swapped)", .{self.extra.number}),

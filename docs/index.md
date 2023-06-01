@@ -70,7 +70,7 @@ Currently a dumping ground for various pieces of information related to `.rc` an
 
 - The `<id>` in the `<id> FONT` definition **must** be an ordinal, not a string.
 - The `<id>` of each `FONT` must be unique, but this does not fail the compilation, only emits an error. The first `FONT` defined with the `<id>` takes precedence, all others with the same `<id>` are ignored.
-- Each `FONT` is stored with type `RT_FONT`. The entire binary contents of the sepcified file are the data. No validation/parsing is done of the data.
+- Each `FONT` is stored with type `RT_FONT`. The entire binary contents of the specified file are the data. No validation/parsing is done of the data.
 
 At the end of the .res, a single `RT_FONTDIR` resource with the name `FONTDIR` is written with the data:
 
@@ -79,15 +79,12 @@ At the end of the .res, a single `RT_FONTDIR` resource with the name `FONTDIR` i
 | `u16` | Number of total font resources |
 | - | *Below is repeated for each `RT_FONT` in the `.res`* |
 | `u16` | ID of the `RT_FONT` |
-| 150 bytes | The first 150 bytes of the `FONT`'s file. If the file is smaller than 150 bytes, all missing bytes are filled with `0x00`. |
+| 150 bytes | The first 148 bytes of the `FONT`'s file, followed by two `0x00` bytes. If the file is smaller than 148 bytes, all missing bytes are filled with `0x00`. |
 
 {: .note }
-> There appears to be a bug in the MSVC++ `rc` tool where more than 150 bytes are written for a given `RT_FONT`, or the 150 bytes are not exactly the first 150 bytes of the file. It seems to be dictated by the length of the file and `0x00` bytes within the file.
+> There appears to be some bugs in the MSVC++ `rc` tool for files smaller than 148 bytes
 > - If the file is 75 bytes or smaller with no null bytes, the `FONTDIR` data for it will be 149 bytes (the first `n` being the bytes from the file, then the rest are `0x00` padding bytes). After that, there will be `n` bytes from the file again, and then a final `0x00`.
 > - If the file is between 76 and 140 bytes long with no null bytes, the MSVC++ `rc` tool will crash.
-> - There seems to be a variable number of `0x00` bytes at the end of the 150 bytes in certain circumstances, e.g. if a file is 150 non-NULL bytes in a row, the `FONTDIR` data for it will be 148 bytes and then 2 `0x00` bytes. However, if a file is 31 non-NULL bytes, then a `0x00`, and then 110 more non-NULL bytes, the `FONTDIR` data for it will be the first 142 bytes from the file and then 8 `0x00` bytes.
->
-> More investigation is needed to understand what's going on here, how it affects the usage, and what behavior actually matters/is correct in terms of what to replicate.
 
 ## `ACCELERATORS` resource
 

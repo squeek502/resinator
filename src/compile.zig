@@ -787,6 +787,8 @@ pub const Compiler = struct {
                 .FONT => {
                     if (self.state.font_dir.ids.get(header.name_value.ordinal) != null) {
                         // Add warning and skip this resource
+                        // Note: The Win32 compiler prints this as an error but it doesn't fail the compilation
+                        // and the duplicate resource is skipped.
                         try self.addErrorDetails(ErrorDetails{
                             .err = .font_id_already_defined,
                             .token = node.id,
@@ -803,14 +805,44 @@ pub const Compiler = struct {
                     }
                     header.applyMemoryFlags(node.common_resource_attributes, self.source);
                     const file_size = try file.getEndPos();
-                    // TODO: Error on too large files?
+                    if (file_size > std.math.maxInt(u32)) {
+                        return self.addErrorDetailsAndFail(.{
+                            .err = .resource_data_size_exceeds_max,
+                            .token = node.id,
+                        });
+                    }
+                    // If the .FNT file is less than 148 bytes (really 140 seems to be where things get weird),
+                    // then the Win32 implementation starts doing weird things and/or crashing, so we emit a warning.
+                    // This likely has to do with the format of the .FNT file expecting something like a FONTDIRENTRY
+                    // (120 bytes) at the start + some stuff afterwards.
+                    //
+                    // See https://learn.microsoft.com/en-us/windows/win32/menurc/fontdirentry
+                    // Note, though, that the 148 bytes don't seem to be related to szDeviceName or szFaceName. If those
+                    // are > 0 length strings, the bytes written to the .res are always still just the first 148 bytes of
+                    // the file.
+                    //
+                    // Note: It doesn't seem like it's possible to construct a valid .FNT file that's less than 148 bytes
+                    // anyway so this warning shouldn't affect any valid .FNT files.
+                    else if (file_size < 148) {
+                        try self.addErrorDetails(.{
+                            .err = .rc_might_miscompile_fontdir_entry,
+                            .type = .warning,
+                            .token = filename_token,
+                            .extra = .{ .number = @intCast(u32, file_size) },
+                        });
+                        try self.addErrorDetails(.{
+                            .err = .rc_might_miscompile_fontdir_entry,
+                            .type = .note,
+                            .print_source_line = false,
+                            .token = filename_token,
+                            .extra = .{ .number = @intCast(u32, file_size) },
+                        });
+                    }
+                    // We now know that the data size will fit in a u32
                     header.data_size = @intCast(u32, file_size);
                     try header.write(writer, .{ .diagnostics = self.diagnostics, .token = node.id });
 
-                    // TODO: This is much weirder than just the first 150 bytes for certain
-                    //       file contents, need to investigate more to understand what should
-                    //       actually be happening here
-                    var header_slurping_reader = utils.headerSlurpingReader(150, file.reader());
+                    var header_slurping_reader = utils.headerSlurpingReader(148, file.reader());
                     try writeResourceData(writer, header_slurping_reader.reader(), header.data_size);
 
                     try self.state.font_dir.add(self.arena, FontDir.Font{
@@ -2594,7 +2626,7 @@ pub const FontDir = struct {
 
     pub const Font = struct {
         id: u16,
-        header_bytes: [150]u8,
+        header_bytes: [148]u8,
     };
 
     pub fn deinit(self: *FontDir, allocator: Allocator) void {
@@ -2632,7 +2664,10 @@ pub const FontDir = struct {
         try writer.writeIntLittle(u16, num_fonts);
         for (self.fonts.items) |font| {
             try writer.writeIntLittle(u16, font.id);
+            // 148 bytes from the file (padded with zeroes if needed)
             try writer.writeAll(&font.header_bytes);
+            // and then 2 extra padding bytes to make it 150 total
+            try writer.writeByteNTimes(0, 2);
         }
         try Compiler.writeDataPadding(writer, data_size);
     }
