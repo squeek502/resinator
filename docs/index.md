@@ -66,26 +66,6 @@ Currently a dumping ground for various pieces of information related to `.rc` an
 | `IMPURE` | `flags & ~(PURE | DISCARDABLE)` |
 | `DISCARDABLE` | `flags | (DISCARDABLE | MOVEABLE | SHARED)` |
 
-## `FONT` resource
-
-- The `<id>` in the `<id> FONT` definition **must** be an ordinal, not a string.
-- The `<id>` of each `FONT` must be unique, but this does not fail the compilation, only emits an error. The first `FONT` defined with the `<id>` takes precedence, all others with the same `<id>` are ignored.
-- Each `FONT` is stored with type `RT_FONT`. The entire binary contents of the specified file are the data. No validation/parsing is done of the data.
-
-At the end of the .res, a single `RT_FONTDIR` resource with the name `FONTDIR` is written with the data:
-
-| Size/Type | Description |
-|-----------|--------|
-| `u16` | Number of total font resources |
-| - | *Below is repeated for each `RT_FONT` in the `.res`* |
-| `u16` | ID of the `RT_FONT` |
-| 150 bytes | The first 148 bytes of the `FONT`'s file, followed by two `0x00` bytes. If the file is smaller than 148 bytes, all missing bytes are filled with `0x00`. |
-
-{: .note }
-> There appears to be some bugs in the MSVC++ `rc` tool for files smaller than 148 bytes
-> - If the file is 75 bytes or smaller with no null bytes, the `FONTDIR` data for it will be 149 bytes (the first `n` being the bytes from the file, then the rest are `0x00` padding bytes). After that, there will be `n` bytes from the file again, and then a final `0x00`.
-> - If the file is between 76 and 140 bytes long with no null bytes, the MSVC++ `rc` tool will crash.
-
 ## `ACCELERATORS` resource
 
 - Warning on `SHIFT` or `CONTROL` without `VIRTKEY`

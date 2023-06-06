@@ -8,6 +8,7 @@ const ico = @import("ico.zig");
 const bmp = @import("bmp.zig");
 const parse = @import("parse.zig");
 const CodePage = @import("code_pages.zig").CodePage;
+const fnt = @import("fnt.zig");
 
 pub const Diagnostics = struct {
     errors: std.ArrayListUnmanaged(ErrorDetails) = .{},
@@ -35,7 +36,10 @@ pub const Diagnostics = struct {
     }
 
     const SmallestStringIndexType = std.meta.Int(.unsigned, @min(
-        @bitSizeOf(ErrorDetails.FileOpenError.FilenameStringIndex),
+        @min(
+            @bitSizeOf(ErrorDetails.FileOpenError.FilenameStringIndex),
+            @bitSizeOf(ErrorDetails.FontReadError.FilenameStringIndex),
+        ),
         @min(
             @bitSizeOf(ErrorDetails.IconReadError.FilenameStringIndex),
             @bitSizeOf(ErrorDetails.BitmapReadError.FilenameStringIndex),
@@ -118,9 +122,24 @@ pub const ErrorDetails = struct {
         bmp_read_error: BitmapReadError,
         accelerator_error: AcceleratorError,
         statement_with_u16_param: StatementWithU16Param,
+        font_read_error: FontReadError,
     } = .{ .none = {} },
 
-    pub const Type = enum { err, warning, note };
+    pub const Type = enum {
+        /// Fatal error, stops compilation
+        err,
+        /// Warning that does not affect compilation result
+        warning,
+        /// A note that typically provides further context for a warning/error
+        note,
+        /// An invisible diagnostic that is not printed to stderr but can
+        /// provide information useful when comparing the behavior of different
+        /// implementations. For example, a hint is emitted when a FONTDIR resource
+        /// was included in the .RES file which is significant because rc.exe
+        /// does something different than us, but ultimately it's not important
+        /// enough to be a warning/note.
+        hint,
+    };
 
     comptime {
         // all fields in the extra union should be 32 bits or less
@@ -210,6 +229,20 @@ pub const ErrorDetails = struct {
         pub fn enumFromError(err: res.ParseAcceleratorKeyStringError) AcceleratorErrorEnum {
             return switch (err) {
                 inline else => |e| @field(ErrorDetails.AcceleratorError.AcceleratorErrorEnum, @errorName(e)),
+            };
+        }
+    };
+
+    pub const FontReadError = packed struct(u32) {
+        err: FontReadErrorEnum,
+        filename_string_index: FilenameStringIndex,
+
+        pub const FilenameStringIndex = std.meta.Int(.unsigned, 32 - @bitSizeOf(FontReadErrorEnum));
+        pub const FontReadErrorEnum = std.meta.FieldEnum(fnt.ReadError);
+
+        pub fn enumFromError(err: fnt.ReadError) FontReadErrorEnum {
+            return switch (err) {
+                inline else => |e| @field(ErrorDetails.FontReadError.FontReadErrorEnum, @errorName(e)),
             };
         }
     };
@@ -349,6 +382,7 @@ pub const ErrorDetails = struct {
         resource_data_size_exceeds_max,
         control_extra_data_size_exceeds_max,
         version_node_size_exceeds_max,
+        fontdir_size_exceeds_max,
         /// `number` is populated and contains a string index for the filename
         number_expression_as_filename,
         /// `number` is populated and contains the control ID that is a duplicate
@@ -357,8 +391,9 @@ pub const ErrorDetails = struct {
         invalid_filename,
         /// `statement_with_u16_param` is populated
         rc_would_error_u16_with_l_suffix,
-        /// `number` is populated and contains the filesize of the .fnt file
         rc_might_miscompile_fontdir_entry,
+        /// `font_read_error` is populated
+        font_read_error,
 
         // Literals
         /// `number` is populated
@@ -457,6 +492,7 @@ pub const ErrorDetails = struct {
             .resource_type_cant_use_raw_data => switch (self.type) {
                 .err, .warning => try writer.print("expected '<filename>', found '{s}' (resource type '{s}' can't use raw data)", .{ self.token.nameForErrorDisplay(source), self.extra.resource.nameForErrorDisplay() }),
                 .note => try writer.print("if '{s}' is intended to be a filename, it must be specified as a quoted string literal", .{self.token.nameForErrorDisplay(source)}),
+                .hint => return,
             },
             .id_must_be_ordinal => {
                 try writer.print("id of resource type '{s}' must be an ordinal (u16), got '{s}'", .{ self.extra.resource.nameForErrorDisplay(), self.token.nameForErrorDisplay(source) });
@@ -467,6 +503,7 @@ pub const ErrorDetails = struct {
             .string_resource_as_numeric_type => switch (self.type) {
                 .err, .warning => try writer.writeAll("the number 6 (RT_STRING) cannot be used as a resource type"),
                 .note => try writer.writeAll("using RT_STRING directly likely results in an invalid .res file, use a STRINGTABLE instead"),
+                .hint => return,
             },
             .ascii_character_not_equivalent_to_virtual_key_code => {
                 // TODO: Better wording? This is what the Win32 RC compiler emits.
@@ -479,10 +516,12 @@ pub const ErrorDetails = struct {
             .rc_would_miscompile_version_value_padding => switch (self.type) {
                 .err, .warning => return writer.print("the padding before this quoted string value would be miscompiled by the Win32 RC compiler", .{}),
                 .note => return writer.print("to avoid the potential miscompilation, consider adding a comma between the key and the quoted string", .{}),
+                .hint => return,
             },
             .rc_would_miscompile_version_value_byte_count => switch (self.type) {
                 .err, .warning => return writer.print("the byte count of this value would be miscompiled by the Win32 RC compiler", .{}),
                 .note => return writer.print("to avoid the potential miscompilation, do not mix numbers and strings within a value", .{}),
+                .hint => return,
             },
             .code_page_pragma_in_included_file => {
                 try writer.print("#pragma code_page is not supported in an included resource file", .{});
@@ -497,14 +536,17 @@ pub const ErrorDetails = struct {
                     return writer.print("{s} contains too many nested children (max is {})", .{ self.extra.resource.nameForErrorDisplay(), max });
                 },
                 .note => return writer.print("max {s} nesting level exceeded here", .{self.extra.resource.nameForErrorDisplay()}),
+                .hint => return,
             },
             .too_many_dialog_controls => switch (self.type) {
                 .err, .warning => return writer.print("{s} contains too many controls (max is {})", .{ self.extra.resource.nameForErrorDisplay(), std.math.maxInt(u16) }),
                 .note => return writer.writeAll("maximum number of controls exceeded here"),
+                .hint => return,
             },
             .nested_expression_level_exceeds_max => switch (self.type) {
                 .err, .warning => return writer.print("expression contains too many syntax levels (max is {})", .{parse.max_nested_expression_level}),
                 .note => return writer.print("maximum expression level exceeded here", .{}),
+                .hint => return,
             },
             .close_paren_expression => {
                 try writer.writeAll("the Win32 RC compiler would accept ')' as a valid expression, but it would be skipped over and potentially lead to unexpected outcomes");
@@ -515,16 +557,19 @@ pub const ErrorDetails = struct {
             .rc_could_miscompile_control_params => switch (self.type) {
                 .err, .warning => return writer.print("this token could be erroneously skipped over by the Win32 RC compiler", .{}),
                 .note => return writer.print("to avoid the potential miscompilation, consider adding a comma after the style parameter", .{}),
+                .hint => return,
             },
             .string_already_defined => switch (self.type) {
                 // TODO: better printing of language, using constant names from WinNT.h
                 .err, .warning => return writer.print("string with id {d} (0x{X}) already defined for language {d},{d}", .{ self.extra.string_and_language.id, self.extra.string_and_language.id, self.extra.string_and_language.language.primary_language_id, self.extra.string_and_language.language.sublanguage_id }),
                 .note => return writer.print("previous definition of string with id {d} (0x{X}) here", .{ self.extra.string_and_language.id, self.extra.string_and_language.id }),
+                .hint => return,
             },
             .font_id_already_defined => switch (self.type) {
                 .err => return writer.print("font with id {d} already defined", .{self.extra.number}),
                 .warning => return writer.print("skipped duplicate font with id {d}", .{self.extra.number}),
                 .note => return writer.print("previous definition of font with id {d} here", .{self.extra.number}),
+                .hint => return,
             },
             .file_open_error => {
                 try writer.print("unable to open file '{s}': {s}", .{ strings[self.extra.file_open_error.filename_string_index], @tagName(self.extra.file_open_error.err) });
@@ -538,10 +583,12 @@ pub const ErrorDetails = struct {
             .rc_would_miscompile_control_padding => switch (self.type) {
                 .err, .warning => return writer.print("the padding before this control would be miscompiled by the Win32 RC compiler (it would insert 2 extra bytes of padding)", .{}),
                 .note => return writer.print("to avoid the potential miscompilation, consider removing any 'control data' blocks from the controls in this dialog", .{}),
+                .hint => return,
             },
             .rc_would_miscompile_control_class_ordinal => switch (self.type) {
                 .err, .warning => return writer.print("the control class of this CONTROL would be miscompiled by the Win32 RC compiler", .{}),
                 .note => return writer.print("to avoid the potential miscompilation, consider specifying the control class using a string (BUTTON, EDIT, etc) instead of a number", .{}),
+                .hint => return,
             },
             .rc_would_error_on_icon_dir => switch (self.type) {
                 .err, .warning => return writer.print("the resource at index {} of this {s} has the format '{s}'; this would be an error in the Win32 RC compiler", .{ self.extra.icon_dir.index, @tagName(self.extra.icon_dir.icon_type), @tagName(self.extra.icon_dir.icon_format) }),
@@ -550,6 +597,7 @@ pub const ErrorDetails = struct {
                     if (!(self.extra.icon_dir.icon_type == .icon and self.extra.icon_dir.icon_format == .riff)) unreachable;
                     try writer.print("animated RIFF icons within resource groups may not be well supported, consider using an animated icon file (.ani) instead", .{});
                 },
+                .hint => return,
             },
             .format_not_supported_in_icon_dir => {
                 try writer.print("resource with format '{s}' (at index {}) is not allowed in {s} resource groups", .{ @tagName(self.extra.icon_dir.icon_format), self.extra.icon_dir.index, @tagName(self.extra.icon_dir.icon_type) });
@@ -575,10 +623,12 @@ pub const ErrorDetails = struct {
                     self.extra.icon_dir.bitmap_version.nameForErrorDisplay(),
                 }),
                 .note => unreachable,
+                .hint => return,
             },
             .max_icon_ids_exhausted => switch (self.type) {
                 .err, .warning => try writer.print("maximum global icon/cursor ids exhausted (max is {})", .{std.math.maxInt(u16) - 1}),
                 .note => try writer.print("maximum icon/cursor id exceeded at index {} of this {s}", .{ self.extra.icon_dir.index, @tagName(self.extra.icon_dir.icon_type) }),
+                .hint => return,
             },
             .bmp_read_error => {
                 try writer.print("invalid bitmap file '{s}': {s}", .{ strings[self.extra.bmp_read_error.filename_string_index], @tagName(self.extra.bmp_read_error.err) });
@@ -607,6 +657,7 @@ pub const ErrorDetails = struct {
                 },
                 // TODO: command line option
                 .note => try writer.writeAll("the maximum number of missing color palette bytes is configurable via <<TODO command line option>>"),
+                .hint => return,
             },
             .resource_header_size_exceeds_max => {
                 try writer.print("resource's header length exceeds maximum of {} bytes", .{std.math.maxInt(u32)});
@@ -614,22 +665,32 @@ pub const ErrorDetails = struct {
             .resource_data_size_exceeds_max => switch (self.type) {
                 .err, .warning => return writer.print("resource's data length exceeds maximum of {} bytes", .{std.math.maxInt(u32)}),
                 .note => return writer.print("maximum data length exceeded here", .{}),
+                .hint => return,
             },
             .control_extra_data_size_exceeds_max => switch (self.type) {
                 .err, .warning => try writer.print("control data length exceeds maximum of {} bytes", .{std.math.maxInt(u16)}),
                 .note => return writer.print("maximum control data length exceeded here", .{}),
+                .hint => return,
             },
             .version_node_size_exceeds_max => switch (self.type) {
                 .err, .warning => return writer.print("version node tree size exceeds maximum of {} bytes", .{std.math.maxInt(u16)}),
                 .note => return writer.print("maximum tree size exceeded while writing this child", .{}),
+                .hint => return,
+            },
+            .fontdir_size_exceeds_max => switch (self.type) {
+                .err, .warning => return writer.print("FONTDIR data length exceeds maximum of {} bytes", .{std.math.maxInt(u32)}),
+                .note => return writer.writeAll("this is likely due to the size of the combined lengths of the device/face names of all FONT resources"),
+                .hint => return,
             },
             .number_expression_as_filename => switch (self.type) {
                 .err, .warning => return writer.writeAll("filename cannot be specified using a number expression, consider using a quoted string instead"),
                 .note => return writer.print("the Win32 RC compiler would evaluate this number expression as the filename '{s}'", .{strings[self.extra.number]}),
+                .hint => return,
             },
             .control_id_already_defined => switch (self.type) {
                 .err, .warning => return writer.print("control with id {d} already defined for this dialog", .{self.extra.number}),
                 .note => return writer.print("previous definition of control with id {d} here", .{self.extra.number}),
+                .hint => return,
             },
             .invalid_filename => {
                 const disallowed_codepoint = self.extra.number;
@@ -642,22 +703,30 @@ pub const ErrorDetails = struct {
             .rc_would_error_u16_with_l_suffix => switch (self.type) {
                 .err, .warning => return writer.print("this {s} parameter would be an error in the Win32 RC compiler", .{@tagName(self.extra.statement_with_u16_param)}),
                 .note => return writer.writeAll("to avoid the error, remove any L suffixes from numbers within the parameter"),
+                .hint => return,
             },
             .rc_might_miscompile_fontdir_entry => switch (self.type) {
-                .err, .warning => return writer.writeAll("this font file could cause the Win32 RC compiler to miscompile or crash"),
-                .note => return writer.print("font files less than 148 bytes are likely invalid; this file is only {} bytes long", .{self.extra.number}),
+                .err, .warning => return writer.writeAll("the Win32 RC compiler uses a different (and probably incorrect) format for the FONTDIR resource"),
+                .note => return writer.writeAll("FONTDIR is automatically added when FONT resources are specified; first FONT resource is here"),
+                .hint => return,
+            },
+            .font_read_error => {
+                try writer.print("unable to read font file '{s}': {s}", .{ strings[self.extra.font_read_error.filename_string_index], @tagName(self.extra.font_read_error.err) });
             },
             .rc_would_miscompile_codepoint_byte_swap => switch (self.type) {
                 .err, .warning => return writer.print("codepoint U+{X} within a string literal would be miscompiled by the Win32 RC compiler (the bytes of the UTF-16 code unit would be swapped)", .{self.extra.number}),
                 .note => return writer.print("to avoid the potential miscompilation, an integer escape sequence in a wide string literal could be used instead: L\"\\x{X}\"", .{self.extra.number}),
+                .hint => return,
             },
             .rc_would_miscompile_codepoint_skip => switch (self.type) {
                 .err, .warning => return writer.print("codepoint U+{X} within a string literal would be miscompiled by the Win32 RC compiler (the codepoint would be missing from the compiled resource)", .{self.extra.number}),
                 .note => return writer.print("to avoid the potential miscompilation, an integer escape sequence in a wide string literal could be used instead: L\"\\x{X}\"", .{self.extra.number}),
+                .hint => return,
             },
             .tab_converted_to_spaces => switch (self.type) {
                 .err, .warning => return writer.writeAll("the tab character(s) in this string will be converted into a variable number of spaces (determined by the column of the tab character in the .rc file)"),
                 .note => return writer.writeAll("to include the tab character itself in a string, the escape sequence \\t should be used"),
+                .hint => return,
             },
         }
     }
@@ -706,6 +775,8 @@ pub const ErrorDetails = struct {
 };
 
 pub fn renderErrorMessage(allocator: std.mem.Allocator, writer: anytype, colors: utils.Colors, cwd: std.fs.Dir, err_details: ErrorDetails, source: []const u8, strings: []const []const u8, source_mappings: ?SourceMappings) !void {
+    if (err_details.type == .hint) return;
+
     const source_line_start = err_details.token.getLineStart(source);
     const column = err_details.token.calculateColumn(source, 1, source_line_start);
 
@@ -740,6 +811,7 @@ pub fn renderErrorMessage(allocator: std.mem.Allocator, writer: anytype, colors:
             colors.set(writer, .cyan);
             try writer.writeAll("note: ");
         },
+        .hint => unreachable,
     }
     colors.set(writer, .reset);
     colors.set(writer, .bold);

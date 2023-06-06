@@ -121,6 +121,8 @@ The plan is to use fuzz testing with the `rc` tool as an oracle to ensure that `
 - `resinator` will allow parameters that are limited to a `u16` to contain numbers with `L` suffixes, but will truncate the value to a `u16` and emit a warning about the Win32 behavior.
   + The Win32 RC compiler will error with something like `version WORDs separated by commas expected` or `PRIMARY LANGUAGE ID too large` if any number literal within such a parameter is evaluated to have an `l`/`L` suffix (since in theory that tells the compiler to use a `u32` for that number). Note, though, that it doesn't complain about numbers that overflow a `u16` and uses wrapping overflow as is common everywhere else.
   + Statements that this affects all parameters of: `PRODUCTVERSION`, `FILEVERSION`, `LANGUAGE`
+- `resinator` will write (what seems to be) a more correct `FONTDIR` resource when `FONT` resources are present in the `.rc` file
+  + See [the resinator `FONT` documentation for a full explanation](https://squeek502.github.io/resinator/resources/font)
 
 #### Resource data and `.res` filesize limits
 
