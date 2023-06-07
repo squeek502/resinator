@@ -28,7 +28,6 @@ const windows1252 = @import("windows1252.zig");
 const lang = @import("lang.zig");
 const code_pages = @import("code_pages.zig");
 const errors = @import("errors.zig");
-const fnt = @import("fnt.zig");
 
 pub const CompileOptions = struct {
     cwd: std.fs.Dir,
@@ -116,20 +115,20 @@ pub const Compiler = struct {
         // now write the FONTDIR (if it has anything in it)
         try self.state.font_dir.writeResData(self, writer);
         if (self.state.font_dir.fonts.items.len != 0) {
-            // The Win32 RC compiler uses a different (but probably incorrect) format for its FONTDIR
-            // resources. However, the FONTDIR resource doesn't seem to practically matter at all
-            // and can actually be omitted entirely with no repercussions for what the FONT resource
-            // is actually used for: resource-only DLLs renamed to use a .FON extension which can then
-            // be installed as fonts. At least on modern Windows versions, the FONTDIR does not even
-            // seem to be checked/look for at all.
+            // The Win32 RC compiler may write a different FONTDIR resource than us,
+            // due to it sometimes writing a non-zero-length device name/face name
+            // whereas we *always* write them both as zero-length.
             //
-            // We still want to emit some sort of diagnostic, though, for the purposes of being able
+            // In practical terms, this doesn't matter, since for various reasons the format
+            // of the FONTDIR cannot be relied on and is seemingly not actually used by anything
+            // anymore. We still want to emit some sort of diagnostic for the purposes of being able
             // to know that out .RES is intentionally not meant to be byte-for-byte identical with
             // the rc.exe output.
             //
-            // By using hint, we allow this diagnostic to be detected in code, but it will not be printed.
+            // By using the hint type here, we allow this diagnostic to be detected in code,
+            // but it will not be printed since the end-user doesn't need to care.
             try self.addErrorDetails(.{
-                .err = .rc_might_miscompile_fontdir_entry,
+                .err = .result_contains_fontdir,
                 .type = .hint,
                 .token = undefined,
             });
@@ -836,27 +835,12 @@ pub const Compiler = struct {
                     header.data_size = @intCast(u32, file_size);
                     try header.write(writer, .{ .diagnostics = self.diagnostics, .token = node.id });
 
-                    var font = fnt.read(self.arena, file.reader(), file_size) catch |err| switch (err) {
-                        error.OutOfMemory => |e| return e,
-                        else => {
-                            const filename_string_index = try self.diagnostics.putString(filename_utf8);
-                            return self.addErrorDetailsAndFail(.{
-                                .err = .font_read_error,
-                                .token = filename_token,
-                                .extra = .{ .font_read_error = .{
-                                    .err = ErrorDetails.FontReadError.enumFromError(err),
-                                    .filename_string_index = filename_string_index,
-                                } },
-                            });
-                        },
-                    };
-
-                    try file.seekTo(0);
-                    try writeResourceData(writer, file.reader(), header.data_size);
+                    var header_slurping_reader = utils.headerSlurpingReader(148, file.reader());
+                    try writeResourceData(writer, header_slurping_reader.reader(), header.data_size);
 
                     try self.state.font_dir.add(self.arena, FontDir.Font{
                         .id = header.name_value.ordinal,
-                        .font = font,
+                        .header_bytes = header_slurping_reader.slurped_header,
                     }, node.id);
                     return;
                 },
@@ -2635,8 +2619,7 @@ pub const FontDir = struct {
 
     pub const Font = struct {
         id: u16,
-        /// Should be allocated with the compiler's arena so it doesn't need to be deinit'd
-        font: fnt.Font,
+        header_bytes: [148]u8,
     };
 
     pub fn deinit(self: *FontDir, allocator: Allocator) void {
@@ -2656,31 +2639,9 @@ pub const FontDir = struct {
         // with e.g. id 65536 will give a compile error).
         const num_fonts = @intCast(u16, self.fonts.items.len);
 
-        // u16 count + [(u16 id + FontDirEntry.len bytes + 2 NUL terminators) for each font]
-        const static_data_size: u32 = 2 + (2 + fnt.FontDirEntry.len + 2) * num_fonts;
-        var total_name_lengths: u32 = 0;
-        for (self.fonts.items) |font| {
-            // Saturating arithmetic here so that we can handle exceeding u32
-            // in one place after this loop is done.
-            total_name_lengths +|= std.math.cast(u32, font.font.device_name.len) orelse std.math.maxInt(u32);
-            total_name_lengths +|= std.math.cast(u32, font.font.face_name.len) orelse std.math.maxInt(u32);
-        }
-        const data_size = std.math.add(u32, static_data_size, total_name_lengths) catch {
-            // This is essentially a fake token; there's not really a token to point to since
-            // it's the entirety of the FONT resources that are the cause.
-            const first_id_token = self.ids.get(self.fonts.items[0].id).?;
-            try compiler.addErrorDetails(.{
-                .err = .fontdir_size_exceeds_max,
-                .token = first_id_token,
-                .print_source_line = false,
-            });
-            return compiler.addErrorDetailsAndFail(.{
-                .err = .fontdir_size_exceeds_max,
-                .type = .note,
-                .token = first_id_token,
-                .print_source_line = false,
-            });
-        };
+        // u16 count + [(u16 id + 150 bytes) for each font]
+        // Note: This works out to a maximum data_size of 9,961,322.
+        const data_size: u32 = 2 + (2 + 150) * num_fonts;
 
         var header = Compiler.ResourceHeader{
             .name_value = try NameOrOrdinal.nameFromString(compiler.allocator, .{ .slice = "FONTDIR", .code_page = .windows1252 }),
@@ -2696,8 +2657,59 @@ pub const FontDir = struct {
         try header.writeAssertNoOverflow(writer);
         try writer.writeIntLittle(u16, num_fonts);
         for (self.fonts.items) |font| {
+            // The format of the FONTDIR is a strange beast.
+            // Technically, each FONT is seemingly meant to be written as a
+            // FONTDIRENTRY with two trailing NUL-terminated strings corresponding to
+            // the 'device name' and 'face name' of the .FNT file, but:
+            //
+            // 1. When dealing with .FNT files, the Win32 implementation
+            //    gets the device name and face name from the wrong locations,
+            //    so it's basically never going to write the real device/face name
+            //    strings.
+            // 2. When dealing with files 76-140 bytes long, the Win32 implementation
+            //    can just crash (if there are no NUL bytes in the file).
+            // 3. The 32-bit Win32 rc.exe uses a 148 byte size for the portion of
+            //    the FONTDIRENTRY before the NUL-terminated strings, which
+            //    does not match the documented FONTDIRENTRY size that (presumably)
+            //    this format is meant to be using, so anything iterating the
+            //    FONTDIR according to the available documentation will get bogus results.
+            // 4. The FONT resource can be used for non-.FNT types like TTF and OTF,
+            //    in which case emulating the Win32 behavior of unconditionally
+            //    interpreting the bytes as a .FNT and trying to grab device/face names
+            //    from random bytes in the TTF/OTF file can lead to weird behavior
+            //    and errors in the Win32 implementation (for example, the device/face
+            //    name fields are offsets into the file where the NUL-terminated
+            //    string is located, but the Win32 implementation actually treats
+            //    them as signed so if they are negative then the Win32 implementation
+            //    will error; this happening for TTF fonts would just be a bug
+            //    since the TTF could otherwise be valid)
+            // 5. The FONTDIR resource doesn't actually seem to be used at all by
+            //    anything that I've found, and instead in Windows 3.0 and newer
+            //    it seems like the FONT resources are always just iterated/accessed
+            //    directly without ever looking at the FONTDIR.
+            //
+            // All of these combined means that we:
+            // - Do not need or want to emulate Win32 behavior here
+            // - For maximum simplicity and compatibility, we just write the first
+            //   148 bytes of the file without any interpretation (padded with
+            //   zeroes to get up to 148 bytes if necessary), and then
+            //   unconditionally write two NUL bytes, meaning that we always
+            //   write 'device name' and 'face name' as if they were 0-length
+            //   strings.
+            //
+            // This gives us byte-for-byte .RES compatibility in the common case while
+            // allowing us to avoid any erroneous errors caused by trying to read
+            // the face/device name from a bogus location. Note that the Win32
+            // implementation never actually writes the real device/face name here
+            // anyway (except in the bizarre case that a .FNT file has the proper
+            // device/face name offsets within a reserved section of the .FNT file)
+            // so there's no feasible way that anything can actually think that the
+            // device name/face name in the FONTDIR is reliable.
+
+            // First, the ID is written, though
             try writer.writeIntLittle(u16, font.id);
-            try font.font.writeResData(writer);
+            try writer.writeAll(&font.header_bytes);
+            try writer.writeByteNTimes(0, 2);
         }
         try Compiler.writeDataPadding(writer, data_size);
     }
@@ -3790,13 +3802,13 @@ test "font resource" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
-    try tmp_dir.dir.writeFile("headeronly.fnt", &[_]u8{0x00} ** fnt.FontDirEntry.len);
+    try tmp_dir.dir.writeFile("empty.fnt", "");
 
-    const expected = "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00q\x00\x00\x00 \x00\x00\x00\xff\xff\x08\x00\xff\xff\x01\x00\x00\x00\x00\x00 \x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00q\x00\x00\x00 \x00\x00\x00\xff\xff\x08\x00\xff\xff\x02\x00\x00\x00\x00\x00p\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xec\x00\x00\x00,\x00\x00\x00\xff\xff\x07\x00F\x00O\x00N\x00T\x00D\x00I\x00R\x00\x00\x00\x00\x00\x00\x00P\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
+    const expected = "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x08\x00\xff\xff\x01\x00\x00\x00\x00\x00 \x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x08\x00\xff\xff\x02\x00\x00\x00\x00\x00p\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x002\x01\x00\x00,\x00\x00\x00\xff\xff\x07\x00F\x00O\x00N\x00T\x00D\x00I\x00R\x00\x00\x00\x00\x00\x00\x00P\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
 
     try testCompileWithOutput(
-        \\1 FONT FIXED headeronly.fnt
-        \\2 FONT MOVEABLE DISCARDABLE PRELOAD headeronly.fnt
+        \\1 FONT FIXED empty.fnt
+        \\2 FONT MOVEABLE DISCARDABLE PRELOAD empty.fnt
     ,
         expected,
         tmp_dir.dir,
@@ -3804,10 +3816,10 @@ test "font resource" {
 
     // For duplicate IDs, all but the first are ignored
     try testCompileWithOutput(
-        \\1 FONT FIXED headeronly.fnt
-        \\2 FONT MOVEABLE DISCARDABLE PRELOAD headeronly.fnt
-        \\2 FONT FIXED headeronly.fnt
-        \\0x1 FONT FIXED headeronly.fnt
+        \\1 FONT FIXED empty.fnt
+        \\2 FONT MOVEABLE DISCARDABLE PRELOAD empty.fnt
+        \\2 FONT FIXED empty.fnt
+        \\0x1 FONT FIXED empty.fnt
     ,
         expected,
         tmp_dir.dir,

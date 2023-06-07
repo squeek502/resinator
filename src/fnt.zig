@@ -7,6 +7,16 @@
 //! http://justsolve.archiveteam.org/wiki/FNT_(Windows_Font)
 //! http://justsolve.archiveteam.org/wiki/FON
 
+// TODO: This is currently entirely unused. A possible use would be to add
+//       something like a --fon-compat option which would switch to writing
+//       the FONTDIR as if it were the 16-bit rc.exe to potentially be able to emit
+//       a byte-for-byte identical (or close to it) .FON file but on a modern
+//       system.
+//
+//       Note, however, that this byte-for-byte identical-ness would be purely
+//       cosmetic in nature, since Windows doesn't seem to care about the FONTDIR
+//       resource at all anymore.
+
 const std = @import("std");
 const builtin = @import("builtin");
 const native_endian = builtin.cpu.arch.endian();

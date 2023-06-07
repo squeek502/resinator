@@ -8,7 +8,6 @@ const ico = @import("ico.zig");
 const bmp = @import("bmp.zig");
 const parse = @import("parse.zig");
 const CodePage = @import("code_pages.zig").CodePage;
-const fnt = @import("fnt.zig");
 
 pub const Diagnostics = struct {
     errors: std.ArrayListUnmanaged(ErrorDetails) = .{},
@@ -36,10 +35,7 @@ pub const Diagnostics = struct {
     }
 
     const SmallestStringIndexType = std.meta.Int(.unsigned, @min(
-        @min(
-            @bitSizeOf(ErrorDetails.FileOpenError.FilenameStringIndex),
-            @bitSizeOf(ErrorDetails.FontReadError.FilenameStringIndex),
-        ),
+        @bitSizeOf(ErrorDetails.FileOpenError.FilenameStringIndex),
         @min(
             @bitSizeOf(ErrorDetails.IconReadError.FilenameStringIndex),
             @bitSizeOf(ErrorDetails.BitmapReadError.FilenameStringIndex),
@@ -122,7 +118,6 @@ pub const ErrorDetails = struct {
         bmp_read_error: BitmapReadError,
         accelerator_error: AcceleratorError,
         statement_with_u16_param: StatementWithU16Param,
-        font_read_error: FontReadError,
     } = .{ .none = {} },
 
     pub const Type = enum {
@@ -229,20 +224,6 @@ pub const ErrorDetails = struct {
         pub fn enumFromError(err: res.ParseAcceleratorKeyStringError) AcceleratorErrorEnum {
             return switch (err) {
                 inline else => |e| @field(ErrorDetails.AcceleratorError.AcceleratorErrorEnum, @errorName(e)),
-            };
-        }
-    };
-
-    pub const FontReadError = packed struct(u32) {
-        err: FontReadErrorEnum,
-        filename_string_index: FilenameStringIndex,
-
-        pub const FilenameStringIndex = std.meta.Int(.unsigned, 32 - @bitSizeOf(FontReadErrorEnum));
-        pub const FontReadErrorEnum = std.meta.FieldEnum(fnt.ReadError);
-
-        pub fn enumFromError(err: fnt.ReadError) FontReadErrorEnum {
-            return switch (err) {
-                inline else => |e| @field(ErrorDetails.FontReadError.FontReadErrorEnum, @errorName(e)),
             };
         }
     };
@@ -391,9 +372,7 @@ pub const ErrorDetails = struct {
         invalid_filename,
         /// `statement_with_u16_param` is populated
         rc_would_error_u16_with_l_suffix,
-        rc_might_miscompile_fontdir_entry,
-        /// `font_read_error` is populated
-        font_read_error,
+        result_contains_fontdir,
 
         // Literals
         /// `number` is populated
@@ -705,14 +684,7 @@ pub const ErrorDetails = struct {
                 .note => return writer.writeAll("to avoid the error, remove any L suffixes from numbers within the parameter"),
                 .hint => return,
             },
-            .rc_might_miscompile_fontdir_entry => switch (self.type) {
-                .err, .warning => return writer.writeAll("the Win32 RC compiler uses a different (and probably incorrect) format for the FONTDIR resource"),
-                .note => return writer.writeAll("FONTDIR is automatically added when FONT resources are specified; first FONT resource is here"),
-                .hint => return,
-            },
-            .font_read_error => {
-                try writer.print("unable to read font file '{s}': {s}", .{ strings[self.extra.font_read_error.filename_string_index], @tagName(self.extra.font_read_error.err) });
-            },
+            .result_contains_fontdir => return,
             .rc_would_miscompile_codepoint_byte_swap => switch (self.type) {
                 .err, .warning => return writer.print("codepoint U+{X} within a string literal would be miscompiled by the Win32 RC compiler (the bytes of the UTF-16 code unit would be swapped)", .{self.extra.number}),
                 .note => return writer.print("to avoid the potential miscompilation, an integer escape sequence in a wide string literal could be used instead: L\"\\x{X}\"", .{self.extra.number}),

@@ -14,7 +14,8 @@ test "FONT fuzz" {
     const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
     defer allocator.free(tmp_path);
 
-    var font_buffer = std.ArrayList(u8).init(allocator);
+    const max_file_len = 1000;
+    var font_buffer = try std.ArrayList(u8).initCapacity(allocator, max_file_len);
     defer font_buffer.deinit();
 
     const source = "1 FONT test.fnt";
@@ -25,33 +26,12 @@ test "FONT fuzz" {
     var i: u64 = 0;
     while (iterations == 0 or i < iterations) : (i += 1) {
         font_buffer.shrinkRetainingCapacity(0);
-        const font_writer = font_buffer.writer();
 
-        var fnt_header = std.mem.zeroes(resinator.fnt.FontDirEntry);
-
-        const random_bytes_len = rand.uintLessThanBiased(u32, 1000);
-        const real_data_size = resinator.fnt.FontDirEntry.len + random_bytes_len;
-
-        // Add some jitter to the reported data size, but don't make it fully random
-        const reported_data_size = if (rand.boolean())
-            @intCast(u32, @max(0, @intCast(i33, real_data_size) - rand.int(i8)))
-        else
-            real_data_size;
-
-        fnt_header.size = reported_data_size;
-        fnt_header.version = if (rand.boolean()) 0x300 else 0x200;
-        fnt_header.device_offset = rand.uintLessThanBiased(u32, real_data_size + 10);
-        fnt_header.face_offset = rand.uintLessThanBiased(u32, real_data_size + 10);
-        rand.bytes(&fnt_header.copyright);
-
-        try fnt_header.write(font_writer);
-
-        // and now a bunch of random bytes
+        // Just a bunch of random bytes
+        const random_bytes_len = rand.uintLessThanBiased(u32, max_file_len);
         try font_buffer.ensureUnusedCapacity(random_bytes_len);
-
         var slice_to_fill = font_buffer.unusedCapacitySlice()[0..random_bytes_len];
         rand.bytes(slice_to_fill);
-
         font_buffer.items.len += random_bytes_len;
 
         try tmp.dir.writeFile("test.fnt", font_buffer.items);
