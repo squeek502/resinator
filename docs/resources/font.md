@@ -19,7 +19,7 @@ This is the format that the Win32 RC compiler writes:
 | `u16` | Number of total font resources |
 | - | *Below is repeated for each `RT_FONT` in the `.res`* |
 | `u16` | ID of the `RT_FONT` |
-| 148 bytes | The first 148 bytes of the `FONT`'s file |
+| 148 bytes | The first 148 bytes of the `FONT`'s file. Any missing bytes are padded with `0x00` |
 | At least 1 byte | `NUL`-terminated string containing the 'device name'. The device name is the string located at the offset specified by the `u32` value at offset `140` of the file (e.g. if the `u32` at file offset `140` contains the value `500`, then the string is at offset `500` from the start of the file) |
 | At least 1 byte | `NUL`-terminated string containing the 'face name'. The face name is the `NUL`-terminated string located at the offset specified by the `u32` value at the offset `144` of the file (e.g. if the `u32` at file offset `140` contains the value `500`, then the string is at offset `500` from the start of the file) |
 
@@ -92,7 +92,7 @@ My conclusion is that this is almost the wrong question to be asking. Instead, t
 
 One possible idea would be to "do the right thing" with regards to the available documentation and what the `.FNT` format seems to suggest--write each `FONTDIRENTRY` as `113` bytes plus the real `szDeviceName`/`szFaceName`. However, this is complicated by the potential for non-`.FNT` font formats to be used in a `FONT` resource.
 
-Treating these non-`.FNT` formats as a `.FNT` file and attempting to read `szDeviceName`/`szFaceName` from them is guaranteed to lead to bogus results. This is actually what the Win32 RC compiler does, though, and it means that it could error on otherwise valid `.TTF`/`.OTT`/etc font files (if the `dfDevice`/`dfFace` values are interpreted as negative; see the note above). This is the reason that using `FONT` for non-`.FNT` font files is likely a mistake alluded to at the start.
+Treating these non-`.FNT` formats as a `.FNT` file and attempting to read `szDeviceName`/`szFaceName` from them is guaranteed to lead to bogus results. This is actually what the Win32 RC compiler does, though, and it means that it could error on otherwise valid `.TTF`/`.OTF`/etc font files (if the `dfDevice`/`dfFace` values are interpreted as negative; see the note above). This is the reason that using `FONT` for non-`.FNT` font files is likely a mistake (alluded to previously in the 'Including custom fonts in a program' section).
 
 In any case, it becomes unclear exactly how non-`.FNT` files should be handled if the goal is to "do the right thing," since there's no available precedent besides the obviously wrong current Win32 RC compiler behavior.
 

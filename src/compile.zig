@@ -122,7 +122,7 @@ pub const Compiler = struct {
             // In practical terms, this doesn't matter, since for various reasons the format
             // of the FONTDIR cannot be relied on and is seemingly not actually used by anything
             // anymore. We still want to emit some sort of diagnostic for the purposes of being able
-            // to know that out .RES is intentionally not meant to be byte-for-byte identical with
+            // to know that our .RES is intentionally not meant to be byte-for-byte identical with
             // the rc.exe output.
             //
             // By using the hint type here, we allow this diagnostic to be detected in code,
