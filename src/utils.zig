@@ -1,6 +1,5 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const windows = std.os.windows;
 
 /// Like std.io.FixedBufferStream but does no bounds checking
 pub const UncheckedSliceWriter = struct {
