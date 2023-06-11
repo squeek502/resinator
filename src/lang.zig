@@ -215,7 +215,7 @@ pub fn MAKELANGID(primary: u10, sublang: u6) u16 {
 ///      - the suffix is numeric-only and has a length of 3, or
 ///      - the lang is `qps` and the suffix is `ploca` or `plocm`
 pub fn parse(lang_tag: []const u8) error{InvalidLanguageTag}!Parsed {
-    var it = splitAny(u8, lang_tag, "-_");
+    var it = std.mem.splitAny(u8, lang_tag, "-_");
     const lang_code = it.first();
     const is_valid_lang_code = lang_code.len >= 1 and lang_code.len <= 3 and isAllAlphabetic(lang_code);
     if (!is_valid_lang_code) return error.InvalidLanguageTag;
@@ -439,68 +439,6 @@ fn isAllNumeric(str: []const u8) bool {
         if (!std.ascii.isDigit(c)) return false;
     }
     return true;
-}
-
-/// Like std.mem.split but splits on any of the delimiter bytes
-fn splitAny(comptime T: type, buffer: []const T, delimiter_bytes: []const T) SplitAnyIterator(T) {
-    std.debug.assert(delimiter_bytes.len != 0);
-    return .{
-        .index = 0,
-        .buffer = buffer,
-        .delimiter_bytes = delimiter_bytes,
-    };
-}
-
-/// Like std.mem.SplitIterator but splits on any of the delimiter bytes
-fn SplitAnyIterator(comptime T: type) type {
-    return struct {
-        buffer: []const T,
-        index: ?usize,
-        delimiter_bytes: []const T,
-
-        const Self = @This();
-
-        /// Returns a slice of the first field. This never fails.
-        /// Call this only to get the first field and then use `next` to get all subsequent fields.
-        pub fn first(self: *Self) []const T {
-            std.debug.assert(self.index.? == 0);
-            return self.next().?;
-        }
-
-        /// Returns a slice of the next field, or null if splitting is complete.
-        pub fn next(self: *Self) ?[]const T {
-            const start = self.index orelse return null;
-            const end = if (std.mem.indexOfAnyPos(T, self.buffer, start, self.delimiter_bytes)) |delim_start| blk: {
-                self.index = delim_start + 1;
-                break :blk delim_start;
-            } else blk: {
-                self.index = null;
-                break :blk self.buffer.len;
-            };
-            return self.buffer[start..end];
-        }
-
-        /// Returns a slice of the remaining bytes. Does not affect iterator state.
-        pub fn rest(self: Self) []const T {
-            const end = self.buffer.len;
-            const start = self.index orelse end;
-            return self.buffer[start..end];
-        }
-
-        /// Resets the iterator to the initial slice.
-        pub fn reset(self: *Self) void {
-            self.index = 0;
-        }
-
-        fn isSplitByte(self: Self, byte: T) bool {
-            for (self.delimiter_bytes) |delimiter_byte| {
-                if (byte == delimiter_byte) {
-                    return true;
-                }
-            }
-            return false;
-        }
-    };
 }
 
 /// Derived from https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-lcid/70feba9f-294e-491e-b6eb-56532684c37f
