@@ -34,6 +34,8 @@ pub fn zigMain() !void {
     var prng = std.rand.DefaultPrng.init(prng_seed);
     const rand = prng.random();
 
+    const stderr_config = std.io.tty.detectConfig(std.io.getStdErr());
+
     resinator.compile.compile(allocator, final_input, output_buf.writer(), .{
         .cwd = std.fs.cwd(),
         .diagnostics = &diagnostics,
@@ -46,12 +48,12 @@ pub fn zigMain() !void {
         .warn_instead_of_error_on_invalid_code_page = rand.boolean(),
     }) catch |err| switch (err) {
         error.ParseError, error.CompileError => {
-            diagnostics.renderToStdErr(std.fs.cwd(), final_input, mapping_results.mappings);
+            diagnostics.renderToStdErr(std.fs.cwd(), final_input, stderr_config, mapping_results.mappings);
             return;
         },
         else => |e| return e,
     };
 
     // print any warnings/notes
-    diagnostics.renderToStdErr(std.fs.cwd(), final_input, mapping_results.mappings);
+    diagnostics.renderToStdErr(std.fs.cwd(), final_input, stderr_config, mapping_results.mappings);
 }

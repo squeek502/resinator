@@ -56,21 +56,18 @@ pub const Diagnostics = struct {
         return @intCast(SmallestStringIndexType, index);
     }
 
-    pub fn renderToStdErr(self: *Diagnostics, cwd: std.fs.Dir, source: []const u8, source_mappings: ?SourceMappings) void {
-        // Set the codepage to UTF-8 unconditionally to ensure that everything renders okay
-        // TODO: Reset codepage afterwards?
-        if (@import("builtin").os.tag == .windows) {
-            _ = std.os.windows.kernel32.SetConsoleOutputCP(65001);
-        }
-
-        // TODO: take this as a param probably
-        const colors = utils.Colors.detect();
+    pub fn renderToStdErr(self: *Diagnostics, cwd: std.fs.Dir, source: []const u8, tty_config: std.io.tty.Config, source_mappings: ?SourceMappings) void {
         std.debug.getStderrMutex().lock();
         defer std.debug.getStderrMutex().unlock();
         const stderr = std.io.getStdErr().writer();
         for (self.errors.items) |err_details| {
-            renderErrorMessage(self.allocator, stderr, colors, cwd, err_details, source, self.strings.items, source_mappings) catch return;
+            renderErrorMessage(self.allocator, stderr, tty_config, cwd, err_details, source, self.strings.items, source_mappings) catch return;
         }
+    }
+
+    pub fn renderToStdErrDetectTTY(self: *Diagnostics, cwd: std.fs.Dir, source: []const u8, source_mappings: ?SourceMappings) void {
+        const tty_config = std.io.tty.detectConfig(std.io.getStdErr());
+        return self.renderToStdErr(cwd, source, tty_config, source_mappings);
     }
 
     pub fn contains(self: *const Diagnostics, err: ErrorDetails.Error) bool {
@@ -746,7 +743,7 @@ pub const ErrorDetails = struct {
     }
 };
 
-pub fn renderErrorMessage(allocator: std.mem.Allocator, writer: anytype, colors: utils.Colors, cwd: std.fs.Dir, err_details: ErrorDetails, source: []const u8, strings: []const []const u8, source_mappings: ?SourceMappings) !void {
+pub fn renderErrorMessage(allocator: std.mem.Allocator, writer: anytype, tty_config: std.io.tty.Config, cwd: std.fs.Dir, err_details: ErrorDetails, source: []const u8, strings: []const []const u8, source_mappings: ?SourceMappings) !void {
     if (err_details.type == .hint) return;
 
     const source_line_start = err_details.token.getLineStart(source);
@@ -760,36 +757,36 @@ pub fn renderErrorMessage(allocator: std.mem.Allocator, writer: anytype, colors:
 
     const err_line = if (corresponding_span) |span| span.start_line else err_details.token.line_number;
 
-    colors.set(writer, .bold);
+    try tty_config.setColor(writer, .bold);
     if (corresponding_file) |file| {
         try writer.writeAll(file);
     } else {
-        colors.set(writer, .dim);
+        try tty_config.setColor(writer, .dim);
         try writer.writeAll("<after preprocessor>");
-        colors.set(writer, .reset);
-        colors.set(writer, .bold);
+        try tty_config.setColor(writer, .reset);
+        try tty_config.setColor(writer, .bold);
     }
     try writer.print(":{d}:{d}: ", .{ err_line, column });
     switch (err_details.type) {
         .err => {
-            colors.set(writer, .red);
+            try tty_config.setColor(writer, .red);
             try writer.writeAll("error: ");
         },
         .warning => {
-            colors.set(writer, .yellow);
+            try tty_config.setColor(writer, .yellow);
             try writer.writeAll("warning: ");
         },
         .note => {
-            colors.set(writer, .cyan);
+            try tty_config.setColor(writer, .cyan);
             try writer.writeAll("note: ");
         },
         .hint => unreachable,
     }
-    colors.set(writer, .reset);
-    colors.set(writer, .bold);
+    try tty_config.setColor(writer, .reset);
+    try tty_config.setColor(writer, .bold);
     try err_details.render(writer, source, strings);
     try writer.writeByte('\n');
-    colors.set(writer, .reset);
+    try tty_config.setColor(writer, .reset);
 
     if (!err_details.print_source_line) {
         try writer.writeByte('\n');
@@ -808,15 +805,15 @@ pub fn renderErrorMessage(allocator: std.mem.Allocator, writer: anytype, colors:
     if (err_details.err == .string_literal_too_long) {
         const before_slice = source_line[0..@min(source_line.len, visual_info.point_offset + 16)];
         try writeSourceSlice(writer, before_slice);
-        colors.set(writer, .dim);
+        try tty_config.setColor(writer, .dim);
         try writer.writeAll("<...truncated...>");
-        colors.set(writer, .reset);
+        try tty_config.setColor(writer, .reset);
     } else {
         try writer.writeAll(source_line_for_display_buf.items);
     }
     try writer.writeByte('\n');
 
-    colors.set(writer, .green);
+    try tty_config.setColor(writer, .green);
     const num_spaces = visual_info.point_offset - visual_info.before_len;
     try writer.writeByteNTimes(' ', num_spaces);
     try writer.writeByteNTimes('~', visual_info.before_len);
@@ -829,7 +826,7 @@ pub fn renderErrorMessage(allocator: std.mem.Allocator, writer: anytype, colors:
         try writer.writeByteNTimes('~', num_squiggles);
     }
     try writer.writeByte('\n');
-    colors.set(writer, .reset);
+    try tty_config.setColor(writer, .reset);
 
     if (source_mappings) |_| {
         var corresponding_lines = try CorrespondingLines.init(allocator, cwd, err_details, source_line_for_display_buf.items, corresponding_span.?, corresponding_file.?);
@@ -837,20 +834,20 @@ pub fn renderErrorMessage(allocator: std.mem.Allocator, writer: anytype, colors:
 
         if (!corresponding_lines.worth_printing_note) return;
 
-        colors.set(writer, .bold);
+        try tty_config.setColor(writer, .bold);
         if (corresponding_file) |file| {
             try writer.writeAll(file);
         } else {
-            colors.set(writer, .dim);
+            try tty_config.setColor(writer, .dim);
             try writer.writeAll("<after preprocessor>");
-            colors.set(writer, .reset);
-            colors.set(writer, .bold);
+            try tty_config.setColor(writer, .reset);
+            try tty_config.setColor(writer, .bold);
         }
         try writer.print(":{d}:{d}: ", .{ err_line, column });
-        colors.set(writer, .cyan);
+        try tty_config.setColor(writer, .cyan);
         try writer.writeAll("note: ");
-        colors.set(writer, .reset);
-        colors.set(writer, .bold);
+        try tty_config.setColor(writer, .reset);
+        try tty_config.setColor(writer, .bold);
         try writer.writeAll("this line originated from line");
         if (corresponding_span.?.start_line != corresponding_span.?.end_line) {
             try writer.print("s {}-{}", .{ corresponding_span.?.start_line, corresponding_span.?.end_line });
@@ -858,17 +855,17 @@ pub fn renderErrorMessage(allocator: std.mem.Allocator, writer: anytype, colors:
             try writer.print(" {}", .{corresponding_span.?.start_line});
         }
         try writer.print(" of file '{s}'\n", .{corresponding_file.?});
-        colors.set(writer, .reset);
+        try tty_config.setColor(writer, .reset);
 
         if (!corresponding_lines.worth_printing_lines) return;
 
         if (corresponding_lines.lines_is_error_message) {
-            colors.set(writer, .red);
+            try tty_config.setColor(writer, .red);
             try writer.writeAll(" | ");
-            colors.set(writer, .reset);
-            colors.set(writer, .dim);
+            try tty_config.setColor(writer, .reset);
+            try tty_config.setColor(writer, .dim);
             try writer.writeAll(corresponding_lines.lines.items);
-            colors.set(writer, .reset);
+            try tty_config.setColor(writer, .reset);
             try writer.writeAll("\n\n");
             return;
         }

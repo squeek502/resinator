@@ -1862,7 +1862,7 @@ fn testParse(source: []const u8, expected_ast_dump: []const u8) !void {
     var parser = Parser.init(&lexer, .{});
     var tree = parser.parse(allocator, &diagnostics) catch |err| switch (err) {
         error.ParseError => {
-            diagnostics.renderToStdErr(std.fs.cwd(), source, null);
+            diagnostics.renderToStdErrDetectTTY(std.fs.cwd(), source, null);
             return err;
         },
         else => |e| return e,
@@ -4041,7 +4041,7 @@ fn testParseErrorDetails(expected_details: []const ExpectedErrorDetails, source:
             error.OutOfMemory => |e| return e,
             error.ParseError => {
                 if (!expect_fail) {
-                    diagnostics.renderToStdErr(std.fs.cwd(), source, null);
+                    diagnostics.renderToStdErrDetectTTY(std.fs.cwd(), source, null);
                     return err;
                 }
                 break :tree null;
@@ -4059,12 +4059,12 @@ fn testParseErrorDetails(expected_details: []const ExpectedErrorDetails, source:
 
     if (expected_details.len != diagnostics.errors.items.len) {
         std.debug.print("expected {} error details, got {}:\n", .{ expected_details.len, diagnostics.errors.items.len });
-        diagnostics.renderToStdErr(std.fs.cwd(), source, null);
+        diagnostics.renderToStdErrDetectTTY(std.fs.cwd(), source, null);
         return error.ErrorDetailMismatch;
     }
     for (diagnostics.errors.items, expected_details) |actual, expected| {
         std.testing.expectEqual(expected.type, actual.type) catch |e| {
-            diagnostics.renderToStdErr(std.fs.cwd(), source, null);
+            diagnostics.renderToStdErrDetectTTY(std.fs.cwd(), source, null);
             return e;
         };
         var buf: [256]u8 = undefined;

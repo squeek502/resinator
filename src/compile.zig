@@ -3070,7 +3070,7 @@ fn testCompileWithOutputAndOptions(source: []const u8, expected_output: []const 
         .extra_include_paths = options.extra_include_paths,
     }) catch |err| switch (err) {
         error.ParseError, error.CompileError => {
-            diagnostics.renderToStdErr(options.cwd, source, null);
+            diagnostics.renderToStdErrDetectTTY(options.cwd, source, null);
             return err;
         },
         else => return err,
@@ -3124,7 +3124,7 @@ fn testCompileErrorDetailsWithOptions(expected_details: []const ExpectedErrorDet
         }) catch |err| switch (err) {
             error.ParseError, error.CompileError => {
                 if (!expect_fail) {
-                    diagnostics.renderToStdErr(options.cwd, source, null);
+                    diagnostics.renderToStdErrDetectTTY(options.cwd, source, null);
                     return err;
                 }
                 break :did_fail true;
@@ -3141,12 +3141,12 @@ fn testCompileErrorDetailsWithOptions(expected_details: []const ExpectedErrorDet
 
     if (expected_details.len != diagnostics.errors.items.len) {
         std.debug.print("expected {} error details, got {}:\n", .{ expected_details.len, diagnostics.errors.items.len });
-        diagnostics.renderToStdErr(options.cwd, source, null);
+        diagnostics.renderToStdErrDetectTTY(options.cwd, source, null);
         return error.ErrorDetailMismatch;
     }
     for (diagnostics.errors.items, expected_details) |actual, expected| {
         std.testing.expectEqual(expected.type, actual.type) catch |e| {
-            diagnostics.renderToStdErr(options.cwd, source, null);
+            diagnostics.renderToStdErrDetectTTY(options.cwd, source, null);
             return e;
         };
         var buf: [256]u8 = undefined;

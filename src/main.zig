@@ -12,6 +12,13 @@ pub fn main() !void {
     defer std.debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
 
+    // Set the codepage to UTF-8 unconditionally to ensure that everything renders okay
+    // TODO: Reset codepage afterwards?
+    if (@import("builtin").os.tag == .windows) {
+        _ = std.os.windows.kernel32.SetConsoleOutputCP(65001);
+    }
+    const stderr_config = std.io.tty.detectConfig(std.io.getStdErr());
+
     var options = options: {
         var args = try std.process.argsAlloc(allocator);
         defer std.process.argsFree(allocator, args);
@@ -20,7 +27,7 @@ pub fn main() !void {
         defer cli_diagnostics.deinit();
         var options = cli.parse(allocator, args, &cli_diagnostics) catch |err| switch (err) {
             error.ParseError => {
-                cli_diagnostics.renderToStdErr(args);
+                cli_diagnostics.renderToStdErr(args, stderr_config);
                 std.os.exit(1);
             },
             else => |e| return e,
@@ -28,7 +35,7 @@ pub fn main() !void {
         try options.maybeAppendRC(std.fs.cwd());
 
         // print any warnings/notes
-        cli_diagnostics.renderToStdErr(args);
+        cli_diagnostics.renderToStdErr(args, stderr_config);
         // If there was something printed, then add an extra newline separator
         // so that there is a clear separation between the cli diagnostics and whatever
         // gets printed after
@@ -203,7 +210,7 @@ pub fn main() !void {
         .warn_instead_of_error_on_invalid_code_page = options.warn_instead_of_error_on_invalid_code_page,
     }) catch |err| switch (err) {
         error.ParseError, error.CompileError => {
-            diagnostics.renderToStdErr(std.fs.cwd(), final_input, mapping_results.mappings);
+            diagnostics.renderToStdErr(std.fs.cwd(), final_input, stderr_config, mapping_results.mappings);
             // Delete the output file on error
             output_file.close();
             output_file_closed = true;
@@ -217,5 +224,5 @@ pub fn main() !void {
     try output_buffered_stream.flush();
 
     // print any warnings/notes
-    diagnostics.renderToStdErr(std.fs.cwd(), final_input, mapping_results.mappings);
+    diagnostics.renderToStdErr(std.fs.cwd(), final_input, stderr_config, mapping_results.mappings);
 }

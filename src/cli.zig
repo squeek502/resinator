@@ -86,24 +86,16 @@ pub const Diagnostics = struct {
         try self.errors.append(self.allocator, error_details);
     }
 
-    pub fn renderToStdErr(self: *Diagnostics, args: []const []const u8) void {
-        // Set the codepage to UTF-8 unconditionally to ensure that everything renders okay
-        // TODO: Reset codepage afterwards?
-        if (@import("builtin").os.tag == .windows) {
-            _ = std.os.windows.kernel32.SetConsoleOutputCP(65001);
-        }
-
-        // TODO: take this as a param probably
-        const colors = utils.Colors.detect();
+    pub fn renderToStdErr(self: *Diagnostics, args: []const []const u8, config: std.io.tty.Config) void {
         std.debug.getStderrMutex().lock();
         defer std.debug.getStderrMutex().unlock();
         const stderr = std.io.getStdErr().writer();
-        self.renderToWriter(args, stderr, colors) catch return;
+        self.renderToWriter(args, stderr, config) catch return;
     }
 
-    pub fn renderToWriter(self: *Diagnostics, args: []const []const u8, writer: anytype, colors: utils.Colors) !void {
+    pub fn renderToWriter(self: *Diagnostics, args: []const []const u8, writer: anytype, config: std.io.tty.Config) !void {
         for (self.errors.items) |err_details| {
-            try renderErrorMessage(writer, colors, err_details, args);
+            try renderErrorMessage(writer, config, err_details, args);
         }
     }
 
@@ -941,41 +933,41 @@ test parsePercent {
     try std.testing.expectError(error.InvalidFormat, parsePercent("~1"));
 }
 
-pub fn renderErrorMessage(writer: anytype, colors: utils.Colors, err_details: Diagnostics.ErrorDetails, args: []const []const u8) !void {
-    colors.set(writer, .dim);
+pub fn renderErrorMessage(writer: anytype, config: std.io.tty.Config, err_details: Diagnostics.ErrorDetails, args: []const []const u8) !void {
+    try config.setColor(writer, .dim);
     try writer.writeAll("<cli>");
-    colors.set(writer, .reset);
-    colors.set(writer, .bold);
+    try config.setColor(writer, .reset);
+    try config.setColor(writer, .bold);
     try writer.writeAll(": ");
     switch (err_details.type) {
         .err => {
-            colors.set(writer, .red);
+            try config.setColor(writer, .red);
             try writer.writeAll("error: ");
         },
         .warning => {
-            colors.set(writer, .yellow);
+            try config.setColor(writer, .yellow);
             try writer.writeAll("warning: ");
         },
         .note => {
-            colors.set(writer, .cyan);
+            try config.setColor(writer, .cyan);
             try writer.writeAll("note: ");
         },
     }
-    colors.set(writer, .reset);
-    colors.set(writer, .bold);
+    try config.setColor(writer, .reset);
+    try config.setColor(writer, .bold);
     try writer.writeAll(err_details.msg.items);
     try writer.writeByte('\n');
-    colors.set(writer, .reset);
+    try config.setColor(writer, .reset);
 
     if (!err_details.print_args) {
         try writer.writeByte('\n');
         return;
     }
 
-    colors.set(writer, .dim);
+    try config.setColor(writer, .dim);
     const prefix = " ... ";
     try writer.writeAll(prefix);
-    colors.set(writer, .reset);
+    try config.setColor(writer, .reset);
 
     const arg_with_name = args[err_details.arg_index];
     const prefix_slice = arg_with_name[0..err_details.arg_span.prefix_len];
@@ -986,15 +978,15 @@ pub fn renderErrorMessage(writer: anytype, colors: utils.Colors, err_details: Di
 
     try writer.writeAll(prefix_slice);
     if (before_name_slice.len > 0) {
-        colors.set(writer, .dim);
+        try config.setColor(writer, .dim);
         try writer.writeAll(before_name_slice);
-        colors.set(writer, .reset);
+        try config.setColor(writer, .reset);
     }
     try writer.writeAll(name_slice);
     if (after_name_slice.len > 0) {
-        colors.set(writer, .dim);
+        try config.setColor(writer, .dim);
         try writer.writeAll(after_name_slice);
-        colors.set(writer, .reset);
+        try config.setColor(writer, .reset);
     }
 
     var next_arg_len: usize = 0;
@@ -1012,13 +1004,13 @@ pub fn renderErrorMessage(writer: anytype, colors: utils.Colors, err_details: Di
         if (err_details.arg_span.value_offset >= arg_with_name.len) {
             try writer.writeByte(' ');
         }
-        colors.set(writer, .dim);
+        try config.setColor(writer, .dim);
         try writer.writeAll(" ...");
-        colors.set(writer, .reset);
+        try config.setColor(writer, .reset);
     }
     try writer.writeByte('\n');
 
-    colors.set(writer, .green);
+    try config.setColor(writer, .green);
     try writer.writeByteNTimes(' ', prefix.len);
     // Special case for when the option is *only* a prefix (e.g. invalid option: -)
     if (err_details.arg_span.prefix_len == arg_with_name.len) {
@@ -1044,7 +1036,7 @@ pub fn renderErrorMessage(writer: anytype, colors: utils.Colors, err_details: Di
         }
     }
     try writer.writeByte('\n');
-    colors.set(writer, .reset);
+    try config.setColor(writer, .reset);
 }
 
 fn testParse(args: []const []const u8) !Options {
