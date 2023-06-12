@@ -2083,6 +2083,15 @@ pub const Compiler = struct {
                 .version_statement => {
                     const version_statement = @fieldParentPtr(Node.VersionStatement, "base", fixed_info);
                     const version_type = rc.VersionInfo.map.get(version_statement.type.slice(self.source)).?;
+
+                    // Ensure that all parts are cleared for each version, to properly account for
+                    // potential duplicate PRODUCTVERSION/FILEVERSION statements
+                    switch (version_type) {
+                        .file_version => @memset(&fixed_file_info.file_version.parts, 0),
+                        .product_version => @memset(&fixed_file_info.product_version.parts, 0),
+                        else => unreachable,
+                    }
+
                     for (version_statement.parts, 0..) |part, i| {
                         const part_value = evaluateNumberExpression(part, self.source, self.input_code_pages);
                         if (part_value.is_long) {
@@ -4029,6 +4038,7 @@ test "menu, menuex resource" {
 test "versioninfo resource" {
     try testCompileWithOutput(
         \\1 VERSIONINFO FIXED
+        \\FILEVERSION 1,2,3,4
         \\FILEVERSION 1
         \\PRODUCTVERSION 1,3-1,3,4
         \\FILEFLAGSMASK 1
