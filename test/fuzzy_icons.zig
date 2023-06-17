@@ -19,9 +19,6 @@ test "ICON fuzz" {
 
     const source = "1 ICON test.ico";
 
-    var buffer = std.ArrayList(u8).init(allocator);
-    defer buffer.deinit();
-
     var i: u64 = 0;
     while (iterations == 0 or i < iterations) : (i += 1) {
         icon_buffer.shrinkRetainingCapacity(0);
@@ -84,6 +81,10 @@ test "ICON fuzz" {
         // also write it to the top-level tmp dir for debugging
         try std.fs.cwd().writeFile("zig-cache/tmp/fuzzy_icons.ico", icon_buffer.items);
 
-        try utils.expectSameResOutput(allocator, source, &buffer, tmp.dir, tmp_path);
+        try utils.expectSameResOutput(allocator, source, .{
+            .cwd = tmp.dir,
+            .cwd_path = tmp_path,
+            .run_preprocessor = false,
+        });
     }
 }

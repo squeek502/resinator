@@ -3045,21 +3045,6 @@ test "StringTable" {
     try std.testing.expectEqual(@as(?Token, null), string_table.get(100));
 }
 
-fn testCompile(source: []const u8, cwd: std.fs.Dir) !void {
-    var buffer = std.ArrayList(u8).init(std.testing.allocator);
-    defer buffer.deinit();
-
-    var diagnostics = Diagnostics.init(std.testing.allocator);
-    defer diagnostics.deinit();
-
-    try compile(std.testing.allocator, source, buffer.writer(), .{ .cwd = cwd, .diagnostics = &diagnostics });
-
-    const expected_res = try getExpectedFromWindowsRC(std.testing.allocator, source);
-    defer std.testing.allocator.free(expected_res);
-
-    try std.testing.expectEqualSlices(u8, expected_res, buffer.items);
-}
-
 fn testCompileWithOutput(source: []const u8, expected_output: []const u8, cwd: std.fs.Dir) !void {
     return testCompileWithOutputAndOptions(source, expected_output, .{ .cwd = cwd });
 }
@@ -3167,45 +3152,6 @@ fn testCompileErrorDetailsWithOptions(expected_details: []const ExpectedErrorDet
     if (maybe_expected_output) |expected_output| {
         try std.testing.expectEqualSlices(u8, expected_output, buffer.items);
     }
-}
-
-pub fn getExpectedFromWindowsRCWithDir(allocator: Allocator, source: []const u8, cwd: std.fs.Dir, cwd_path: []const u8) ![]const u8 {
-    try cwd.writeFile("test.rc", source);
-
-    var result = try std.ChildProcess.exec(.{
-        .allocator = allocator,
-        .argv = &[_][]const u8{
-            // Note: This relies on `rc.exe` being in the PATH
-            "rc.exe",
-            "test.rc",
-        },
-        .cwd = cwd_path,
-    });
-    defer allocator.free(result.stdout);
-    defer allocator.free(result.stderr);
-
-    switch (result.term) {
-        .Exited => |code| {
-            if (code != 0) {
-                std.debug.print("exit code: {}\n", .{result.term});
-                std.debug.print("stdout: {s}\n", .{result.stdout});
-                std.debug.print("stderr: {s}\n", .{result.stderr});
-                return error.ExitCodeFailure;
-            }
-        },
-        .Signal, .Stopped, .Unknown => {
-            return error.ProcessTerminated;
-        },
-    }
-
-    return cwd.readFileAlloc(allocator, "test.res", std.math.maxInt(usize));
-}
-
-pub fn getExpectedFromWindowsRC(allocator: Allocator, source: []const u8) ![]const u8 {
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    return getExpectedFromWindowsRCWithDir(allocator, source, tmp.dir, "zig-cache/tmp/" ++ tmp.sub_path);
 }
 
 test "empty rc" {

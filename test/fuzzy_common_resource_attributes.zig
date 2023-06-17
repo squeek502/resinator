@@ -10,8 +10,6 @@ const common_resource_attributes: []const []const u8 = &.{
 // TODO: For each resource type as well
 test "RCDATA common resource attribute permutations" {
     const allocator = std.testing.allocator;
-    var buffer = std.ArrayList(u8).init(allocator);
-    defer buffer.deinit();
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -46,7 +44,11 @@ test "RCDATA common resource attribute permutations" {
             std.debug.print("{}\n", .{perm_i});
             const source = source_buffer.items;
 
-            try utils.expectSameResOutput(allocator, source, &buffer, tmp.dir, tmp_path);
+            try utils.expectSameResOutput(allocator, source, .{
+                .cwd = tmp.dir,
+                .cwd_path = tmp_path,
+                .run_preprocessor = false,
+            });
 
             source_buffer.shrinkRetainingCapacity(0);
         }
@@ -58,8 +60,6 @@ test "ICON common resource attribute permutations" {
     if (true) return error.SkipZigTest;
 
     const allocator = std.testing.allocator;
-    var buffer = std.ArrayList(u8).init(allocator);
-    defer buffer.deinit();
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -106,7 +106,11 @@ test "ICON common resource attribute permutations" {
             std.debug.print("{}\n", .{perm_i});
             const source = source_buffer.items;
 
-            try utils.expectSameResOutput(allocator, source, &buffer, tmp.dir, tmp_path);
+            try utils.expectSameResOutput(allocator, source, .{
+                .cwd = tmp.dir,
+                .cwd_path = tmp_path,
+                .run_preprocessor = false,
+            });
 
             source_buffer.shrinkRetainingCapacity(0);
         }

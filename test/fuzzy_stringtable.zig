@@ -17,9 +17,6 @@ test "fuzz" {
     var source_buffer = std.ArrayList(u8).init(allocator);
     defer source_buffer.deinit();
 
-    var buffer = std.ArrayList(u8).init(allocator);
-    defer buffer.deinit();
-
     var i: u64 = 0;
     while (iterations == 0 or i < iterations) : (i += 1) {
         source_buffer.shrinkRetainingCapacity(0);
@@ -35,6 +32,10 @@ test "fuzz" {
         // write out the source file to disk for debugging
         try std.fs.cwd().writeFile("zig-cache/tmp/fuzzy_stringtable_strings.rc", source);
 
-        try utils.expectSameResOutput(allocator, source, &buffer, tmp.dir, tmp_path);
+        try utils.expectSameResOutput(allocator, source, .{
+            .cwd = tmp.dir,
+            .cwd_path = tmp_path,
+            .run_preprocessor = false,
+        });
     }
 }

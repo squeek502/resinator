@@ -2,63 +2,308 @@ const std = @import("std");
 const resinator = @import("resinator");
 const Allocator = std.mem.Allocator;
 
-pub fn expectSameResOutput(allocator: Allocator, source: []const u8, buffer: *std.ArrayList(u8), cwd: std.fs.Dir, cwd_path: []const u8) !void {
-    const expected_res: ?[]const u8 = resinator.compile.getExpectedFromWindowsRCWithDir(allocator, source, cwd, cwd_path) catch |err| switch (err) {
-        error.ExitCodeFailure, error.ProcessTerminated => null,
-        else => |e| return e,
-    };
-    defer if (expected_res != null) allocator.free(expected_res.?);
+pub fn expectSameResOutput(allocator: Allocator, source: []const u8, options: GetResultOptions) !void {
+    const input_filepath = "test.rc";
+    try options.cwd.writeFile(input_filepath, source);
 
-    var diagnostics = resinator.errors.Diagnostics.init(allocator);
-    defer diagnostics.deinit();
+    var resinator_result = try getResinatorResultFromFile(allocator, input_filepath, options);
+    defer resinator_result.deinit(allocator);
 
-    buffer.shrinkRetainingCapacity(0);
-    resinator.compile.compile(allocator, source, buffer.writer(), .{ .cwd = cwd, .diagnostics = &diagnostics }) catch |err| switch (err) {
-        error.ParseError, error.CompileError => {
-            diagnostics.renderToStdErr(cwd, source, null);
-            // Allow certain errors from resinator if RC succeeds
-            const first_err = diagnostics.errors.items[0];
-            switch (first_err.err) {
-                .illegal_byte_order_mark,
-                .illegal_private_use_character,
-                => return,
-                .icon_read_error => if (first_err.extra.icon_read_error.err == .ImpossibleDataSize) {
-                    return;
-                },
-                else => {},
-            }
-            if (diagnostics.contains(.close_paren_expression)) return;
-            if (expected_res == null) {
-                return;
-            } else {
-                std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
-                return error.DidNotExpectErrorButGotOne;
-            }
-        },
-        else => return err,
-    };
-
-    if (expected_res == null) {
-        diagnostics.renderToStdErr(cwd, source, null);
-        if (diagnostics.errors.items.len > 0) {
-            const first_err = diagnostics.errors.items[0];
-            switch (first_err.err) {
-                .rc_would_error_on_bitmap_version => {
-                    return;
-                },
-                else => {},
-            }
-        }
-
-        std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
-        return error.ExpectedErrorButDidntGetOne;
+    if (resinator_result.pre != null and resinator_result.pre.?.known_preprocessor_difference) {
+        std.debug.print("known preprocessor difference, skipping\n", .{});
+        return;
     }
 
-    std.testing.expectEqualSlices(u8, expected_res.?, buffer.items) catch |err| {
-        diagnostics.renderToStdErr(cwd, source, null);
-        std.debug.print("\nSource:\n{s}\n\n--------------------------------\n\n", .{std.fmt.fmtSliceEscapeLower(source)});
+    var win32_result = try getWin32ResultFromFile(allocator, input_filepath, options);
+    defer win32_result.deinit(allocator);
+
+    try compare(&win32_result, &resinator_result);
+}
+
+pub fn compare(win32_result: *Win32Result, resinator_result: *ResinatorResult) !void {
+    // The preprocessor may reject things that the win32 compiler does not.
+    // This is not something we can do anything about unless we write our own compliant
+    // preprocessor, so instead we just treat it as okay and move on.
+    if (resinator_result.didPreproccessorError()) {
+        return;
+    }
+    // Both erroring is fine
+    if (win32_result.res == null and resinator_result.res == null) {
+        return;
+    }
+
+    const source = resinator_result.processed_rc.?;
+
+    if (win32_result.res == null and resinator_result.res != null) {
+        if (resinator_result.diagnostics.containsAny(&.{
+            .rc_would_error_on_bitmap_version,
+            .rc_would_error_on_icon_dir,
+            .rc_could_miscompile_control_params,
+        })) {
+            return;
+        }
+        std.debug.print("stdout:\n{s}\nstderr:\n{s}\n", .{ win32_result.exec.stdout, win32_result.exec.stderr });
+        return error.ExpectedErrorButDidntGetOne;
+    }
+    if (win32_result.res != null and resinator_result.res == null) {
+        if (resinator_result.diagnostics.containsAny(&.{
+            .illegal_byte_order_mark,
+            .illegal_private_use_character,
+            .illegal_byte_outside_string_literals,
+            .illegal_byte,
+            .close_paren_expression,
+            .found_c_style_escaped_quote,
+            .unary_plus_expression,
+        })) {
+            return;
+        }
+        for (resinator_result.diagnostics.errors.items) |details| {
+            if (details.err == .icon_read_error) {
+                switch (details.extra.icon_read_error.err) {
+                    .ImpossibleDataSize,
+                    .InvalidHeader,
+                    .InvalidImageType,
+                    .UnexpectedEOF,
+                    => return,
+                    else => {},
+                }
+            }
+        }
+        resinator_result.diagnostics.renderToStdErrDetectTTY(std.fs.cwd(), source, null);
+        return error.DidNotExpectErrorButGotOne;
+    }
+
+    std.testing.expectEqualSlices(u8, win32_result.res.?, resinator_result.res.?) catch |err| {
+        if (resinator_result.diagnostics.containsAny(&.{
+            .rc_would_miscompile_version_value_padding,
+            .rc_would_miscompile_version_value_byte_count,
+            .rc_would_miscompile_control_padding,
+            .rc_would_miscompile_control_class_ordinal,
+            .rc_would_miscompile_bmp_palette_padding,
+            .rc_would_miscompile_codepoint_byte_swap,
+            .rc_would_miscompile_codepoint_skip,
+            .rc_could_miscompile_control_params,
+        })) {
+            std.debug.print("intentional difference, ignoring\n", .{});
+            return;
+        }
+        resinator_result.diagnostics.renderToStdErrDetectTTY(std.fs.cwd(), source, null);
         return err;
     };
+}
+
+pub const ResinatorResult = struct {
+    res: ?[]const u8 = null,
+    diagnostics: resinator.errors.Diagnostics,
+    /// Only populated if the preprocessor is not run
+    rc_data: ?[]u8 = null,
+    /// This is a slice of either pre.preprocessor.stdout or rc_data
+    /// so it doesn't need to be freed separately
+    processed_rc: ?[]const u8 = null,
+    pre: ?PreprocessResult = null,
+
+    pub const PreprocessResult = struct {
+        preprocessor: std.ChildProcess.ExecResult = undefined,
+        known_preprocessor_difference: bool = false,
+    };
+
+    pub fn deinit(self: *ResinatorResult, allocator: Allocator) void {
+        self.diagnostics.deinit();
+        if (self.res) |res| {
+            allocator.free(res);
+        }
+        if (self.pre) |pre| {
+            if (!pre.known_preprocessor_difference) {
+                allocator.free(pre.preprocessor.stdout);
+                allocator.free(pre.preprocessor.stderr);
+            }
+        }
+        if (self.rc_data) |rc_data| {
+            allocator.free(rc_data);
+        }
+    }
+
+    pub fn didPreproccessorError(self: *const ResinatorResult) bool {
+        if (self.pre) |pre| {
+            return pre.preprocessor.term != .Exited or pre.preprocessor.term.Exited != 0;
+        }
+        return false;
+    }
+};
+
+fn inputContainsKnownPreprocessorDifference(data: []const u8) bool {
+    // Look for \r without any newlines before/after
+    for (data, 0..) |c, i| {
+        if (c == '\r') {
+            const newline_before = i > 0 and data[i - 1] == '\n';
+            const newline_after = i < data.len - 1 and data[i + 1] == '\n';
+            if (!newline_before and !newline_after) return true;
+        }
+    }
+    return false;
+}
+
+pub const GetResultOptions = struct {
+    cwd: std.fs.Dir,
+    cwd_path: []const u8,
+    run_preprocessor: bool,
+    /// Only used in the Win32 version
+    output_path: ?[]const u8 = null,
+};
+
+pub fn getResinatorResult(allocator: Allocator, source: []const u8, options: GetResultOptions) !ResinatorResult {
+    // TODO: Bypass the intermediate file if options.run_preprocessor is false
+    try options.cwd.writeFile("test.rc", source);
+    return getResinatorResultFromFile(allocator, "test.rc", options);
+}
+
+pub fn getResinatorResultFromFile(allocator: Allocator, input_filepath: []const u8, options: GetResultOptions) !ResinatorResult {
+    var result = ResinatorResult{
+        .diagnostics = resinator.errors.Diagnostics.init(allocator),
+    };
+    errdefer result.deinit(allocator);
+
+    result.pre = try runPreprocessor(allocator, input_filepath, options);
+    if (result.pre) |pre| {
+        if (pre.preprocessor.term != .Exited or pre.preprocessor.term.Exited != 0) {
+            return result;
+        }
+    }
+
+    // Use the preprocessor result if it exists, otherwise we need to read the file and use its contents
+    // directly.
+    if (!options.run_preprocessor) {
+        result.rc_data = try options.cwd.readFileAlloc(allocator, input_filepath, std.math.maxInt(usize));
+    }
+    var data = result.rc_data orelse result.pre.?.preprocessor.stdout;
+
+    var mapping_results = try resinator.source_mapping.parseAndRemoveLineCommands(
+        allocator,
+        data,
+        data,
+        .{ .initial_filename = input_filepath },
+    );
+    defer mapping_results.mappings.deinit(allocator);
+
+    var final_input = resinator.comments.removeComments(mapping_results.result, mapping_results.result, &mapping_results.mappings);
+    result.processed_rc = final_input;
+
+    // TODO: Somehow make this re-usable between calls
+    var output_buf = std.ArrayList(u8).init(allocator);
+    defer output_buf.deinit();
+
+    const compile_options = resinator.compile.CompileOptions{
+        .cwd = options.cwd,
+        .diagnostics = &result.diagnostics,
+        .source_mappings = &mapping_results.mappings,
+        // TODO: Make this configurable
+        .ignore_include_env_var = true,
+    };
+
+    var did_error = false;
+    resinator.compile.compile(allocator, final_input, output_buf.writer(), compile_options) catch |err| switch (err) {
+        error.ParseError, error.CompileError => {
+            did_error = true;
+        },
+        else => |e| return e,
+    };
+
+    if (!did_error) {
+        result.res = try output_buf.toOwnedSlice();
+    }
+    return result;
+}
+
+pub fn runPreprocessor(allocator: Allocator, input_filepath: []const u8, options: GetResultOptions) !?ResinatorResult.PreprocessResult {
+    if (!options.run_preprocessor) return null;
+
+    var result = ResinatorResult.PreprocessResult{};
+
+    var data = try options.cwd.readFileAlloc(allocator, input_filepath, std.math.maxInt(usize));
+    defer allocator.free(data);
+
+    if (inputContainsKnownPreprocessorDifference(data)) {
+        result.known_preprocessor_difference = true;
+        return result;
+    }
+
+    var argv = std.ArrayList([]const u8).init(allocator);
+    defer argv.deinit();
+
+    try argv.appendSlice(&[_][]const u8{
+        "clang",
+        "-E", // preprocessor only
+        "--comments",
+        "-fuse-line-directives", // #line <num> instead of # <num>
+        // TODO: could use --trace-includes to give info about what's included from where
+        "-xc", // output c
+        // TODO: Turn this off, check the warnings, and convert the spaces back to NUL
+        "-Werror=null-character", // error on null characters instead of converting them to spaces
+        // TODO: could remove -Werror=null-character and instead parse warnings looking for 'warning: null character ignored'
+        //       since the only real problem is when clang doesn't preserve null characters
+        //"-Werror=invalid-pp-token", // will error on unfinished string literals
+        // TODO: could use -Werror instead
+        // https://learn.microsoft.com/en-us/windows/win32/menurc/predefined-macros
+        "-DRC_INVOKED",
+    });
+    try argv.append(input_filepath);
+
+    result.preprocessor = try std.ChildProcess.exec(.{
+        .allocator = allocator,
+        .argv = argv.items,
+        .max_output_bytes = std.math.maxInt(u32),
+        .cwd = options.cwd_path,
+    });
+    errdefer allocator.free(result.preprocessor.stdout);
+    errdefer allocator.free(result.preprocessor.stderr);
+
+    return result;
+}
+
+pub const Win32Result = struct {
+    res: ?[]const u8 = null,
+    exec: std.ChildProcess.ExecResult,
+
+    pub fn deinit(self: *Win32Result, allocator: Allocator) void {
+        if (self.res) |res| {
+            allocator.free(res);
+        }
+        allocator.free(self.exec.stdout);
+        allocator.free(self.exec.stderr);
+    }
+};
+
+pub fn getWin32Result(allocator: Allocator, source: []const u8, options: GetResultOptions) !Win32Result {
+    try options.cwd.writeFile("test.rc", source);
+    return getWin32ResultFromFile(allocator, "test.rc", options);
+}
+
+pub fn getWin32ResultFromFile(allocator: Allocator, input_path: []const u8, options: GetResultOptions) !Win32Result {
+    const output_path = options.output_path orelse "test_win32.res";
+    var exec_result = try std.ChildProcess.exec(.{
+        .allocator = allocator,
+        .argv = &[_][]const u8{
+            // Note: This relies on `rc.exe` being in the PATH
+            "rc.exe",
+            // TODO: Make this configurable
+            "/x", // ignore INCLUDE env var
+            "/fo",
+            output_path,
+            input_path,
+        },
+        .cwd = options.cwd_path,
+    });
+    errdefer allocator.free(exec_result.stdout);
+    errdefer allocator.free(exec_result.stderr);
+
+    var result = Win32Result{ .exec = exec_result };
+    if (exec_result.term == .Exited and exec_result.term.Exited == 0) {
+        result.res = options.cwd.readFileAlloc(allocator, output_path, std.math.maxInt(usize)) catch |err| blk: {
+            std.debug.print("expected file at {s} but got: {}", .{ output_path, err });
+            break :blk null;
+        };
+    }
+    return result;
 }
 
 pub fn randomNumberLiteral(allocator: Allocator, rand: std.rand.Random, comptime include_superscripts: bool) ![]const u8 {

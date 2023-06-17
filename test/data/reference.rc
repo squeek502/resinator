@@ -1,0 +1,729 @@
+// ACCELERATORS
+// ------------
+65537 ACCELERATORS
+  // Common Resource Attributes must come before optional-statements
+  // No commas allowed anywhere between common resource attributes
+  PRELOAD LOADONCALL FIXED MOVEABLE DISCARDABLE PURE IMPURE SHARED NONSHARED
+  // optional-statements
+  // DWORD, L suffix is optional
+  CHARACTERISTICS (65537)
+  // WORD, WORD; L suffix anywhere in either param is an error in the Win32 implementation
+  LANGUAGE (65537), (65538)
+  // DWORD, L suffix is optional, VERSION 65537 produces the same result
+  VERSION (65537L)
+  // Duplicate optional-statements are allowed, last takes precedence
+  CHARACTERISTICS (65538)
+BEGIN
+  // If the `event` is a number, either ASCII or VIRTKEY is required (but both is not an error)
+  (65537), (65537), ASCII, VIRTKEY
+  // Order of ASCII, VIRTKEY doesn't matter, this is equivalent to the above line (VIRTKEY is set)
+  (65537), (65537), VIRTKEY, ASCII
+  // This includes all possible types and options
+  "a", (3), ASCII, VIRTKEY, NOINVERT, ALT, SHIFT, CONTROL
+  // These next three lines all produce the same result
+  "^c", (4)
+  "^C", (4)
+  3, (4), ASCII
+  // Generates the warning: ASCII character not equivalent to virtual key code
+  "^c", (4), VIRTKEY
+  // This seems to be a special case to allow for the literal ^ character
+  "^^", (5)
+END
+
+// BITMAP
+// ------
+bmpv2 BITMAP
+  // Common Resource Attributes
+  // No commas allowed anywhere between common resource attributes
+  PRELOAD LOADONCALL FIXED MOVEABLE DISCARDABLE PURE IMPURE SHARED NONSHARED
+"pal8v2.bmp"
+
+bmpv4 BITMAP
+  // Common Resource Attributes
+  // No commas allowed anywhere between common resource attributes
+  PRELOAD LOADONCALL FIXED MOVEABLE DISCARDABLE PURE IMPURE SHARED NONSHARED
+"pal8v4.bmp"
+
+bmpv5 BITMAP
+  // Common Resource Attributes
+  // No commas allowed anywhere between common resource attributes
+  PRELOAD LOADONCALL FIXED MOVEABLE DISCARDABLE PURE IMPURE SHARED NONSHARED
+"pal8v5.bmp"
+
+bmp_extra BITMAP
+  // Common Resource Attributes
+  // No commas allowed anywhere between common resource attributes
+  PRELOAD LOADONCALL FIXED MOVEABLE DISCARDABLE PURE IMPURE SHARED NONSHARED
+"1x1_extra_palette_bytes.bmp"
+
+// CURSOR
+// ------
+cur1 CURSOR
+  // Common Resource Attributes
+  // No commas allowed anywhere between common resource attributes
+  PRELOAD LOADONCALL FIXED MOVEABLE DISCARDABLE PURE IMPURE SHARED NONSHARED
+"1x1.cur"
+
+// RIFF animated cursor
+anicur1 CURSOR
+  // Common Resource Attributes
+  // No commas allowed anywhere between common resource attributes
+  PRELOAD LOADONCALL FIXED MOVEABLE DISCARDABLE PURE IMPURE SHARED NONSHARED
+"test.ani"
+
+// DIALOG
+// ------
+dialog1 DIALOG
+  // Common Resource Attributes must come before the parameters
+  // No commas allowed anywhere between common resource attributes
+  PRELOAD LOADONCALL FIXED MOVEABLE DISCARDABLE PURE IMPURE SHARED NONSHARED
+  // parameters (all 4 are required)
+  (65537L)/*,*/ (65538L)/*,*/ (65539L)/*,*/ (65540L)
+  // x             y           width         height
+  //      (L suffix is allowed on all of them)
+  // optional-statements
+  // Quoted string literal only
+  CAPTION "text"
+  // DWORD, L suffix is optional
+  CHARACTERISTICS (65537)
+  // Can be a number expression (u16, but L suffix is allowed) or a string literal.
+  // If there are multiple CLASS statements, the last one takes precedence.
+  // If the penultimate CLASS is a number, it forces the final result to be
+  // a number (the string is parsed and then converted into a number).
+  CLASS (65537L)
+  CLASS "forced ordinal"
+  // Can contain NOT expressions
+  EXSTYLE NOT 1 | 3
+  // pointsize (u16, but L suffix is allowed), typeface (must be string literal)
+  FONT (65537L),, "something"
+  // WORD, WORD; L suffix anywhere in either param is an error in the Win32 implementation
+  LANGUAGE (65537), (65538)
+  // MENU param works like a resource ID, where it's only a number if the first
+  // character is a number. For example, (65537L) is actually the 'name' (65537L)
+  // since it does not get interpreted as a number.
+  // If there are multiple MENU statements, the last one takes precedence.
+  // If the penultimate MENU is a number, it forces the final result to be
+  // a number (the string is parsed and then converted into a number).
+  MENU 1
+  MENU (65537L)
+  // Can contain NOT expressions, this one evaluates to 2
+  STYLE 3 | NOT 1L
+  // DWORD, L suffix is optional, VERSION 65537 produces the same result
+  VERSION (65537L)
+BEGIN
+  //             text     id                      style-v~~~~~~~~~
+  AUTO3STATE,, "mytext",, 900,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L
+  //                            x      y      w      h              ^~~~~~~~~~exstyle
+
+  //               text     id                     style-v~~~~~~~~~
+  AUTOCHECKBOX,, "mytext",, 901, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L
+  //                             x      y      w      h              ^~~~~~~~~~exstyle
+
+  //                  text     id                     style-v~~~~~~~~~
+  AUTORADIOBUTTON,, "mytext",, 902, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L
+  //                                x      y      w      h              ^~~~~~~~~~exstyle
+
+  //           text     id                     style-v~~~~~~~~~
+  CHECKBOX,, "mytext",, 903, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L
+  //                         x      y      w      h              ^~~~~~~~~~exstyle
+
+  // no `text` parameter
+  //         id                      style-v~~~~~~~~~
+  COMBOBOX,, 904,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L
+  //               x      y      w      h              ^~~~~~~~~~exstyle
+
+  // `class` can be specified as a quoted string or an unquoted literal
+  //        text       id       class
+  CONTROL,, "mytext",, 905,, "\x42UTTON",, 3 | NOT 1L,, 1/*,*/ 2/*,*/ 3/*,*/ 4, NOT 1 | 3L
+  //                                  style^~~~~~~~~~   x      y      w      h  ^~~~~~~~~~exstyle
+
+  // `text` can be a number literal, but not a number expression
+  // `class` can be a number expression, but it will always be miscompiled by the Win32 implementation
+  //      text-v   id      class
+  // CONTROL,, 1,, 9051,, (0x80+1L),, 3 | NOT 1L,, 1/*,*/ 2/*,*/ 3/*,*/ 4, NOT 1 | 3L
+  //                             style^~~~~~~~~~   x      y      w      h  ^~~~~~~~~~exstyle
+
+  // only exstyle can be omitted for CONTROL controls
+  //   text-v   id      class
+  CONTROL,, 1,, 9052,, BUTTON,, 3 | NOT 1L,, 1/*,*/ 2/*,*/ 3/*,*/ 4
+  //                       style^~~~~~~~~~   x      y      w      h
+
+  // All possible recognized CONTROL classes
+  CONTROL,, "text",, 9053,, BUTTON,, 3 | NOT 1L,, 1/*,*/ 2/*,*/ 3/*,*/ 4
+  CONTROL,, "text",, 9054,, EDIT,, 3 | NOT 1L,, 1/*,*/ 2/*,*/ 3/*,*/ 4
+  CONTROL,, "text",, 9055,, STATIC,, 3 | NOT 1L,, 1/*,*/ 2/*,*/ 3/*,*/ 4
+  CONTROL,, "text",, 9056,, LISTBOX,, 3 | NOT 1L,, 1/*,*/ 2/*,*/ 3/*,*/ 4
+  CONTROL,, "text",, 9057,, SCROLLBAR,, 3 | NOT 1L,, 1/*,*/ 2/*,*/ 3/*,*/ 4
+  CONTROL,, "text",, 9058,, COMBOBOX,, 3 | NOT 1L,, 1/*,*/ 2/*,*/ 3/*,*/ 4
+
+  //        text     id                      style-v~~~~~~~~~
+  CTEXT,, "mytext",, 906,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L
+  //                       x      y      w      h              ^~~~~~~~~~exstyle
+
+  // style and exstyle can be omitted for non-CONTROL controls
+  //        text     id
+  CTEXT,, "mytext",, 9061,, 1/*,*/ 2/*,*/ 3/*,*/ 4
+  //                        x      y      w      h
+
+  //                text     id                      style-v~~~~~~~~~
+  DEFPUSHBUTTON,, "mytext",, 907,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L
+  //                               x      y      w      h              ^~~~~~~~~~exstyle
+
+  // no `text` parameter
+  //         id                      style-v~~~~~~~~~
+  EDITTEXT,, 908,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L
+  //               x      y      w      h              ^~~~~~~~~~exstyle
+
+  // BEDIT is mentioned here, but is not actually recognized by rc.exe:
+  // https://learn.microsoft.com/en-us/windows/win32/menurc/dialogex-resource#edit-control-statements
+
+  // undocumented outside of
+  // https://learn.microsoft.com/en-us/windows/win32/menurc/dialogex-resource#edit-control-statements
+  //      id                       style-v~~~~~~~~~
+  HEDIT,, 9082,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L
+  //             x      y      w      h              ^~~~~~~~~~exstyle
+
+  // undocumented outside of
+  // https://learn.microsoft.com/en-us/windows/win32/menurc/dialogex-resource#edit-control-statements
+  //      id                       style-v~~~~~~~~~
+  IEDIT,, 9083,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L
+  //             x      y      w      h              ^~~~~~~~~~exstyle
+
+  // The docs say that GROUPBOX is DIALOGEX-only, but it is not an error in DIALOG resources
+  // https://learn.microsoft.com/en-us/windows/win32/menurc/groupbox-control
+  //           text     id                      style-v~~~~~~~~~
+  GROUPBOX,, "mytext",, 909,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L
+  //                          x      y      w      h              ^~~~~~~~~~exstyle
+
+  //       text     id                      style-v~~~~~~~~~
+  ICON,, "mytext",, 910,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L
+  //                      x      y      w      h              ^~~~~~~~~~exstyle
+
+  // no `text` parameter
+  //        id                      style-v~~~~~~~~~
+  LISTBOX,, 911,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L
+  //              x      y      w      h              ^~~~~~~~~~exstyle
+
+  //        text     id                      style-v~~~~~~~~~
+  LTEXT,, "mytext",, 912,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L
+  //                       x      y      w      h              ^~~~~~~~~~exstyle
+
+  //          text     id                      style-v~~~~~~~~~
+  PUSHBOX,, "mytext",, 913,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L
+  //                         x      y      w      h              ^~~~~~~~~~exstyle
+
+  //             text     id                      style-v~~~~~~~~~
+  PUSHBUTTON,, "mytext",, 914,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L
+  //                            x      y      w      h              ^~~~~~~~~~exstyle
+
+  //              text     id                      style-v~~~~~~~~~
+  RADIOBUTTON,, "mytext",, 915,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L
+  //                             x      y      w      h              ^~~~~~~~~~exstyle
+
+  //        text     id                      style-v~~~~~~~~~
+  RTEXT,, "mytext",, 916,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L
+  //                       x      y      w      h              ^~~~~~~~~~exstyle
+
+  // no `text` parameter
+  //          id                      style-v~~~~~~~~~
+  SCROLLBAR,, 917,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L
+  //                x      y      w      h              ^~~~~~~~~~exstyle
+
+  //         text     id                      style-v~~~~~~~~~
+  STATE3,, "mytext",, 918,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L
+  //                        x      y      w      h              ^~~~~~~~~~exstyle
+
+  // undocumented outside of
+  // https://learn.microsoft.com/en-us/windows/win32/menurc/dialogex-resource#button-control-statements
+  //             text    id                     style-v~~~~~~~~~
+  USERBUTTON,, "mytext",, 919,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L
+  //                          x      y      w      h              ^~~~~~~~~~exstyle
+END
+
+// DIALOGEX
+// --------
+dialogex1 DIALOGEX
+  // Common Resource Attributes must come before the parameters
+  // No commas allowed anywhere between common resource attributes
+  PRELOAD LOADONCALL FIXED MOVEABLE DISCARDABLE PURE IMPURE SHARED NONSHARED
+  // parameters (first 4 are required)
+  (65537L)/*,*/ (65538L)/*,*/ (65539L)/*,*/ (65540L), (65541L)
+  // x             y           width         height    helpid
+  //      (L suffix is allowed on all of them)
+  // optional-statements
+  // Quoted string literal only
+  CAPTION "text"
+  // DWORD, L suffix is optional
+  CHARACTERISTICS (65537)
+  // Can be a number expression (u16, but L suffix is allowed) or a string literal.
+  // If there are multiple CLASS statements, the last one takes precedence.
+  // If the penultimate CLASS is a number, it forces the final result to be
+  // a number (the string is parsed and then converted into a number).
+  CLASS (65537L)
+  CLASS "forced ordinal"
+  // Can contain NOT expressions
+  EXSTYLE NOT 1 | 3
+  // pointsize (u16, but L suffix is allowed), typeface (must be string literal),
+  // weight (u16, but L suffix is allowed, default = 0), italic (u16 interpreted as bool, default = 0),
+  // charset (u8, but L suffix is allowed, default = 1)
+  FONT (65537L),, "something", (65538L), (65539L), (65540L)
+  // weight, italic, and charset are optional
+  FONT (65537L),, "something"
+  // only weight and charset can be empty, italic must have a value
+  // Duplicate optional-statements are allowed, last takes precedence
+  FONT (65537L),, "something", /*weight*/, 1, /*charset*/
+  // WORD, WORD; L suffix anywhere in either param is an error in the Win32 implementation
+  LANGUAGE (65537), (65538)
+  // MENU param works like a resource ID, where it's only a number if the first
+  // character is a number. For example, (65537L) is actually the 'name' (65537L)
+  // since it does not get interpreted as a number.
+  // If there are multiple MENU statements, the last one takes precedence.
+  // If the penultimate MENU is a number, it forces the final result to be
+  // a number (the string is parsed and then converted into a number).
+  MENU 1
+  MENU (65537L)
+  // Can contain NOT expressions, this one evaluates to 2
+  STYLE 3 | NOT 1L
+  // DWORD, L suffix is optional, VERSION 65537 produces the same result
+  VERSION (65537L)
+BEGIN
+  // Note: The 'extra data' for controls has some major issues:
+  //        1. The docs say that the data is passed 'through the lParam of the WM_CREATE
+  //           message for that control', but there is no WM_CREATE message for controls
+  //           within a DIALOG so it doesn't seem possible to actually get the data at all.
+  //        2. The Win32 resource compiler miscompiles the padding of the control if the end of
+  //           the extra data ends on an odd offset in the .res file (it adds extra bytes of padding).
+  //       The examples here all intentionally avoid any miscompilations.
+
+  //             text     id                      style-v~~~~~~~~~               helpid
+  AUTO3STATE,, "mytext",, 900,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L, (65537L) { "abcd" }
+  //                            x      y      w      h              ^~~~~~~~~~exstyle    extra data
+
+  //               text     id                      style-v~~~~~~~~~               helpid
+  AUTOCHECKBOX,, "mytext",, 901,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L, (65537L) { "abcd" }
+  //                              x      y      w      h              ^~~~~~~~~~exstyle    extra data
+
+  //                  text     id                      style-v~~~~~~~~~               helpid
+  AUTORADIOBUTTON,, "mytext",, 902,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L, (65537L) { "abcd" }
+  //                                 x      y      w      h              ^~~~~~~~~~exstyle    extra data
+
+  //           text     id                      style-v~~~~~~~~~               helpid
+  CHECKBOX,, "mytext",, 903,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L, (65537L) { "abcd" }
+  //                          x      y      w      h              ^~~~~~~~~~exstyle    extra data
+
+  // no `text` parameter
+  //         id                      style-v~~~~~~~~~               helpid
+  COMBOBOX,, 904,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L, (65537L) { "abcd" }
+  //               x      y      w      h              ^~~~~~~~~~exstyle    extra data
+
+  // `class` can be specified as a quoted string or an unquoted literal
+  //        text       id       class                                                        helpid
+  CONTROL,, "mytext",, 905,, "\x42UTTON",, 3 | NOT 1L,, 1/*,*/ 2/*,*/ 3/*,*/ 4, NOT 1 | 3L, (65537L) { "abcd" }
+  //                                  style^~~~~~~~~~   x      y      w      h  ^~~~~~~~~~exstyle    extra data
+
+  // `text` can be a number literal, but not a number expression
+  // `class` can be a number expression, but it will always be miscompiled by the Win32 implementation
+  //      text-v   id      class                                                        helpid
+  // CONTROL,, 1,, 9051,, (0x80+1L),, 3 | NOT 1L,, 1/*,*/ 2/*,*/ 3/*,*/ 4, NOT 1 | 3L, (65537L) { "abcd" }
+  //                             style^~~~~~~~~~   x      y      w      h  ^~~~~~~~~~exstyle    extra data
+
+  // exstyle and helpid can be omitted for CONTROL controls; extra data can still be specified
+  //   text-v   id      class
+  CONTROL,, 1,, 9052,, BUTTON,, 3 | NOT 1L,, 1/*,*/ 2/*,*/ 3/*,*/ 4 { "abcd" }
+  //                       style^~~~~~~~~~   x      y      w      h extra data
+
+  // All possible recognized CONTROL classes
+  CONTROL,, "text",, 9053,, BUTTON,, 3 | NOT 1L,, 1/*,*/ 2/*,*/ 3/*,*/ 4
+  CONTROL,, "text",, 9054,, EDIT,, 3 | NOT 1L,, 1/*,*/ 2/*,*/ 3/*,*/ 4
+  CONTROL,, "text",, 9055,, STATIC,, 3 | NOT 1L,, 1/*,*/ 2/*,*/ 3/*,*/ 4
+  CONTROL,, "text",, 9056,, LISTBOX,, 3 | NOT 1L,, 1/*,*/ 2/*,*/ 3/*,*/ 4
+  CONTROL,, "text",, 9057,, SCROLLBAR,, 3 | NOT 1L,, 1/*,*/ 2/*,*/ 3/*,*/ 4
+  CONTROL,, "text",, 9058,, COMBOBOX,, 3 | NOT 1L,, 1/*,*/ 2/*,*/ 3/*,*/ 4
+
+  //        text     id                      style-v~~~~~~~~~               helpid
+  CTEXT,, "mytext",, 906,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L, (65537L) { "abcd" }
+  //                       x      y      w      h              ^~~~~~~~~~exstyle    extra data
+
+  // style, exstyle, and helpid can be omitted for non-CONTROL controls; extra data can still be specified
+  //        text     id
+  CTEXT,, "mytext",, 9061,, 1/*,*/ 2/*,*/ 3/*,*/ 4 { "abcd" }
+  //                        x      y      w      h extra data
+
+  //                text     id                      style-v~~~~~~~~~               helpid
+  DEFPUSHBUTTON,, "mytext",, 907,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L, (65537L) { "abcd" }
+  //                               x      y      w      h              ^~~~~~~~~~exstyle    extra data
+
+  // no `text` parameter
+  //         id                      style-v~~~~~~~~~               helpid
+  EDITTEXT,, 908,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L, (65537L) { "abcd" }
+  //               x      y      w      h              ^~~~~~~~~~exstyle    extra data
+
+  // BEDIT is mentioned here, but is not actually recognized by rc.exe:
+  // https://learn.microsoft.com/en-us/windows/win32/menurc/dialogex-resource#edit-control-statements
+
+  // undocumented outside of
+  // https://learn.microsoft.com/en-us/windows/win32/menurc/dialogex-resource#edit-control-statements
+  //      id                       style-v~~~~~~~~~               helpid
+  HEDIT,, 9082,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L, (65537L) { "abcd" }
+  //             x      y      w      h              ^~~~~~~~~~exstyle    extra data
+
+  // undocumented outside of
+  // https://learn.microsoft.com/en-us/windows/win32/menurc/dialogex-resource#edit-control-statements
+  //      id                       style-v~~~~~~~~~               helpid
+  IEDIT,, 9083,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L, (65537L) { "abcd" }
+  //             x      y      w      h              ^~~~~~~~~~exstyle    extra data
+
+  //           text     id                      style-v~~~~~~~~~               helpid
+  GROUPBOX,, "mytext",, 909,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L, (65537L) { "abcd" }
+  //                          x      y      w      h              ^~~~~~~~~~exstyle    extra data
+
+  //       text     id                      style-v~~~~~~~~~               helpid
+  ICON,, "mytext",, 910,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L, (65537L) { "abcd" }
+  //                      x      y      w      h              ^~~~~~~~~~exstyle    extra data
+
+  // no `text` parameter
+  //        id                      style-v~~~~~~~~~               helpid
+  LISTBOX,, 911,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L, (65537L) { "abcd" }
+  //              x      y      w      h              ^~~~~~~~~~exstyle    extra data
+
+  //        text     id                      style-v~~~~~~~~~               helpid
+  LTEXT,, "mytext",, 912,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L, (65537L) { "abcd" }
+  //                       x      y      w      h              ^~~~~~~~~~exstyle    extra data
+
+  //          text     id                      style-v~~~~~~~~~               helpid
+  PUSHBOX,, "mytext",, 913,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L, (65537L) { "abcd" }
+  //                         x      y      w      h              ^~~~~~~~~~exstyle    extra data
+
+  //             text     id                      style-v~~~~~~~~~               helpid
+  PUSHBUTTON,, "mytext",, 914,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L, (65537L) { "abcd" }
+  //                            x      y      w      h              ^~~~~~~~~~exstyle    extra data
+
+  //              text     id                      style-v~~~~~~~~~               helpid
+  RADIOBUTTON,, "mytext",, 915,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L, (65537L) { "abcd" }
+  //                             x      y      w      h              ^~~~~~~~~~exstyle    extra data
+
+  //        text     id                      style-v~~~~~~~~~               helpid
+  RTEXT,, "mytext",, 916,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L, (65537L) { "abcd" }
+  //                       x      y      w      h              ^~~~~~~~~~exstyle    extra data
+
+  // no `text` parameter
+  //          id                      style-v~~~~~~~~~               helpid
+  SCROLLBAR,, 917,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L, (65537L) { "abcd" }
+  //                x      y      w      h              ^~~~~~~~~~exstyle    extra data
+
+  //         text     id                      style-v~~~~~~~~~               helpid
+  STATE3,, "mytext",, 918,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L, (65537L) { "abcd" }
+  //                        x      y      w      h              ^~~~~~~~~~exstyle    extra data
+
+  // undocumented outside of
+  // https://learn.microsoft.com/en-us/windows/win32/menurc/dialogex-resource#button-control-statements
+  //             text     id                      style-v~~~~~~~~~               helpid
+  USERBUTTON,, "mytext",, 919,, 1/*,*/ 2/*,*/ 3/*,*/ 4, 3 | NOT 1L, NOT 1 | 3L, (65537L) { "abcd" }
+  //                            x      y      w      h              ^~~~~~~~~~exstyle    extra data
+END
+
+// FONT
+// ----
+// id *must* be ordinal, following the same rules as name or ordinal to determine whether or not it is an ordinal
+0x10 FONT
+  // Common Resource Attributes
+  // No commas allowed anywhere between common resource attributes
+  PRELOAD LOADONCALL FIXED MOVEABLE DISCARDABLE PURE IMPURE SHARED NONSHARED
+"SAMPLE.FNT"
+
+// subsequent duplicate font ids are skipped; rc.exe emits an error but does not fail the compilation
+16 FONT
+  // Common Resource Attributes
+  // No commas allowed anywhere between common resource attributes
+  PRELOAD LOADONCALL FIXED MOVEABLE DISCARDABLE PURE IMPURE SHARED NONSHARED
+"SAMPLE.FNT"
+
+// HTML
+// ----
+html1 HTML
+  // Common Resource Attributes
+  // No commas allowed anywhere between common resource attributes
+  PRELOAD LOADONCALL FIXED MOVEABLE DISCARDABLE PURE IMPURE SHARED NONSHARED
+"test.html"
+
+// HTML can use a raw data block even though it is undocumented
+html2 HTML
+  // Common Resource Attributes
+  // No commas allowed anywhere between common resource attributes
+  PRELOAD LOADONCALL FIXED MOVEABLE DISCARDABLE PURE IMPURE SHARED NONSHARED
+BEGIN
+  "<div>hello</div>"
+END
+
+// ICON
+// ----
+ico1 ICON
+  // Common Resource Attributes
+  // No commas allowed anywhere between common resource attributes
+  PRELOAD LOADONCALL FIXED MOVEABLE DISCARDABLE PURE IMPURE SHARED NONSHARED
+"1x1_custom.ico"
+// RIFF animated cursor
+aniico1 ICON
+  // Common Resource Attributes
+  // No commas allowed anywhere between common resource attributes
+  PRELOAD LOADONCALL FIXED MOVEABLE DISCARDABLE PURE IMPURE SHARED NONSHARED
+"test.ani"
+
+// MENU
+// ----
+menu1 MENU
+  // Common Resource Attributes must come before optional-statements
+  // No commas allowed anywhere between common resource attributes
+  PRELOAD LOADONCALL FIXED MOVEABLE DISCARDABLE PURE IMPURE SHARED NONSHARED
+  // optional-statements
+  // DWORD, L suffix is optional
+  CHARACTERISTICS (65537)
+  // WORD, WORD; L suffix anywhere in either param is an error in the Win32 implementation
+  LANGUAGE (65537), (65538)
+  // DWORD, L suffix is optional, VERSION 65537 produces the same result
+  VERSION (65537L)
+  // Duplicate optional-statements are allowed, last takes precedence
+  CHARACTERISTICS (65538)
+BEGIN
+  // MENU-specific SEPARATOR syntax (does not work in MENUEX)
+  MENUITEM SEPARATOR,,
+
+  // text (string literal only), optionlist
+  // docs say GRAYED and INACTIVE cannot be used together, but there is no error/warning
+  POPUP "hello",, CHECKED,, GRAYED,, HELP,, INACTIVE,, MENUBARBREAK,, MENUBREAK,,
+  BEGIN
+    MENUITEM SEPARATOR,,
+  END
+  // Any empty menus are an error, including submenus:
+  // POPUP "hello" {}
+
+  // text (string literal only), result (u16, L suffix allowed), optionlist
+  // docs say GRAYED and INACTIVE cannot be used together, but there is no error/warning
+  MENUITEM "hello",, (65537L)/*,*/ CHECKED,, GRAYED,, HELP,, INACTIVE,, MENUBARBREAK,, MENUBREAK,,
+END
+
+// MENU
+// ----
+menuex1 MENUEX
+  // Common Resource Attributes must come before optional-statements
+  // No commas allowed anywhere between common resource attributes
+  PRELOAD LOADONCALL FIXED MOVEABLE DISCARDABLE PURE IMPURE SHARED NONSHARED
+  // optional-statements
+  // DWORD, L suffix is optional
+  CHARACTERISTICS (65537)
+  // WORD, WORD; L suffix anywhere in either param is an error in the Win32 implementation
+  LANGUAGE (65537), (65538)
+  // DWORD, L suffix is optional, VERSION 65537 produces the same result
+  VERSION (65537L)
+  // Duplicate optional-statements are allowed, last takes precedence
+  CHARACTERISTICS (65538)
+BEGIN
+  // itemText (must be string literal), id (u32), type (u32), state (u32)
+  MENUITEM "hello", -1, -2, -3,
+  // id, type, and state are optional
+  MENUITEM ""
+  // id, type, and state can be empty
+  MENUITEM "hello", /*id*/, /*type*/, /*state*/,
+
+  // itemText (must be string literal), id (u32), type (u32), state (u32), helpID (u32)
+  // id, type, state, and helpID can be empty
+  POPUP "hello", /*id*/, /*type*/, /*state*/, /*helpID*/,
+  BEGIN
+    MENUITEM ""
+  END
+  // Any empty menus are an error, including submenus:
+  // POPUP "hello" {}
+END
+
+// MESSAGETABLE
+// ------------
+msgtbl1 MESSAGETABLE
+  // Common Resource Attributes
+  // No commas allowed anywhere between common resource attributes
+  PRELOAD LOADONCALL FIXED MOVEABLE DISCARDABLE PURE IMPURE SHARED NONSHARED
+"file.bin"
+
+// PLUGPLAY
+// --------
+// Obsolete but still recognized by the Win32 implementation,
+// behaves as if it were RCDATA
+plugplay1 PLUGPLAY
+  // Common Resource Attributes
+  // No commas allowed anywhere between common resource attributes
+  PRELOAD LOADONCALL FIXED MOVEABLE DISCARDABLE PURE IMPURE SHARED NONSHARED
+BEGIN
+  "abc"
+END
+
+plugplay2 PLUGPLAY
+  // Common Resource Attributes
+  // No commas allowed anywhere between common resource attributes
+  PRELOAD LOADONCALL FIXED MOVEABLE DISCARDABLE PURE IMPURE SHARED NONSHARED
+"file.bin"
+
+// RCDATA
+// ------
+rcdata1 RCDATA
+  // Common Resource Attributes
+  // No commas allowed anywhere between common resource attributes
+  PRELOAD LOADONCALL FIXED MOVEABLE DISCARDABLE PURE IMPURE SHARED NONSHARED
+  // The docs say that RCDATA can have optional-statements (CHARACTERISTICS, LANGUAGE, VERSION)
+  // but the Win32 implementation errors if they exist.
+BEGIN
+  // String literals or number expressions
+  // Numbers are u16 by default, or u32 if the L suffix is used
+  "abc",, L"abc",, 65537,, 65537L,, (65537-2),,
+END
+
+rcdata2 RCDATA
+  // Common Resource Attributes
+  // No commas allowed anywhere between common resource attributes
+  PRELOAD LOADONCALL FIXED MOVEABLE DISCARDABLE PURE IMPURE SHARED NONSHARED
+"file.bin"
+
+// STRINGTABLE
+// -----------
+
+STRINGTABLE
+  // Common Resource Attributes
+  // No commas allowed anywhere between common resource attributes
+  PRELOAD LOADONCALL FIXED MOVEABLE DISCARDABLE PURE IMPURE SHARED NONSHARED
+  // optional-statements
+  // DWORD, L suffix is optional
+  CHARACTERISTICS (65537)
+  // WORD, WORD; L suffix anywhere in either param is an error in the Win32 implementation
+  LANGUAGE (65537), (65538)
+  // DWORD, L suffix is optional, VERSION 65537 produces the same result
+  VERSION (65537L)
+  // Duplicate optional-statements are allowed, last takes precedence
+  CHARACTERISTICS (65538)
+BEGIN
+  // <id> (must be a number literal or number expression) <string> (must be a string literal)
+  // It is an error if <id> is duplicated across any STRINGTABLE with the same language
+  (1+0) "test"
+  2 L"blah"
+  // L is allowed on the ID
+  65535L "blah2"
+  // ID uses wrapping overflow; this evaluates to 3
+  65539 "blah3"
+END
+
+// STRINGTABLEs with different languages can have duplicate IDs
+STRINGTABLE
+  LANGUAGE (65537), (1)
+BEGIN
+  1 "test"
+  2 L"blah"
+END
+
+// TEXTINCLUDE
+// -----------
+// TEXTINCLUDE is a Visual Studio-specific thing that is usually
+// within a #ifdef APSTUDIO_INVOKED block. It *can* be processed
+// by rc.exe without error, although the result is a user-defined
+// resource with the name `TEXTINCLUDE`.
+textinclude1 TEXTINCLUDE 
+BEGIN
+    "resource.h\0"
+END
+
+// TYPELIB
+// -------
+// TYPELIB is also handled as a user-defined resource but is
+// more often in either a #ifndef APSTUDIO_INVOKED block or
+// does not have any #ifdef guards at all, so it's more likely
+// to be processed in real .rc files.
+typelib1 TYPELIB "test.tlb"
+
+// User-defined
+// ------------
+// All lowercase ASCII in user-defined resource type names are converted to uppercase, e.g.
+// this will be THISCOULDBEANYTHING in the .RES file.
+userdefined1 ThisCouldBeAnything
+  // Common Resource Attributes
+  // No commas allowed anywhere between common resource attributes
+  PRELOAD LOADONCALL FIXED MOVEABLE DISCARDABLE PURE IMPURE SHARED NONSHARED
+  // No optional-statements allowed (CHARACTERISTICS, LANGUAGE, VERSION)
+BEGIN
+  // String literals or number expressions
+  // Numbers are u16 by default, or u32 if the L suffix is used
+  "abc",, L"abc",, 65537,, 65537L,, (65537-2),,
+END
+
+// VERSIONINFO
+// -----------
+versioninfo1 VERSIONINFO
+  // Common Resource Attributes
+  // No commas allowed anywhere between common resource attributes
+  PRELOAD LOADONCALL FIXED MOVEABLE DISCARDABLE PURE IMPURE SHARED NONSHARED
+  // fixed-info
+  // Between 1 and 4 u16 number expressions separated by commas.
+  // L suffixes on any of the FILEVERSION number literals is an error.
+  FILEVERSION (65537), 2, 3, 4
+  // Same as FILEVERSION
+  PRODUCTVERSION 65537, (3-1), 3, 4
+  // Duplicate PRODUCTVERSION/FILEVERSION statements are allowed, last takes precedence
+  PRODUCTVERSION 65538
+  // DWORD, L suffix is optional
+  FILEFLAGSMASK (65537)
+  // DWORD, L suffix is optional
+  FILEFLAGS (1|2)
+  // DWORD, L suffix is optional
+  FILEOS 2
+  // DWORD, L suffix is optional
+  FILETYPE 3
+  // DWORD, L suffix is optional
+  FILESUBTYPE 4
+BEGIN
+  // VALUE <name>, [<value>[, ...]]
+  // name must be a string literal, value can be a number expression or quoted string
+  VALUE "name",, (65537L),, (65537),,
+  VALUE "name",, "hello",, L"world",,
+
+  // Any comma after <name> is optional, but the Win32 implementation will miscompile
+  // the padding to get to DWORD-alignment if a value is present and all commas between
+  // <name> and the first <value> are omitted.
+  //VALUE "name" "value"
+
+  // But if there is no value, then omitting all commas after <name> doesn't cause a miscompilation
+  VALUE "name"
+
+  // Mixing string literals and number values within a <value> list causes miscompilations
+  // in the Win32 implementation (specifically, the byte count of the value in the .RES
+  // will use a combination of bytes and UTF-16 code units which are incompatible and
+  // lead to bogus results)
+  //VALUE "name", 1, "hello"
+
+  // The existence of commas between string values determine whether or not the values are
+  // NUL-terminated
+  VALUE "key", "a" "b" "c"
+  VALUE "key", "a", "b", "c"
+
+  // BLOCK <lang-charset> (must be a quoted string, L prefix is allowed)
+  BLOCK L"something",,
+  BEGIN
+    // empty blocks are allowed
+  END
+
+  // BLOCK can contain VALUE and BLOCK statements
+  BLOCK "",,
+  BEGIN
+    VALUE "name",,
+    BLOCK "nested",,
+    BEGIN
+      VALUE "nested",,
+    END
+  END
+END
+
+// VXD
+// ---
+// Obsolete but still recognized by the Win32 implementation,
+// behaves as if it were RCDATA
+vxd1 VXD
+  // Common Resource Attributes
+  // No commas allowed anywhere between common resource attributes
+  PRELOAD LOADONCALL FIXED MOVEABLE DISCARDABLE PURE IMPURE SHARED NONSHARED
+BEGIN
+  "abc"
+END

@@ -18,8 +18,6 @@ test "literal in raw data block" {
 
 fn testAllBytes(source: []u8) !void {
     const allocator = std.testing.allocator;
-    var buffer = std.ArrayList(u8).init(allocator);
-    defer buffer.deinit();
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -40,9 +38,15 @@ fn testAllBytes(source: []u8) !void {
         if (byte == '\xb2' or byte == '\xb3' or byte == '\xb9') continue;
 
         source[byte_index] = byte;
-        std.debug.print("byte: 0x{X}\n", .{byte});
 
-        try utils.expectSameResOutput(allocator, source, &buffer, tmp.dir, tmp_path);
+        utils.expectSameResOutput(allocator, source, .{
+            .cwd = tmp.dir,
+            .cwd_path = tmp_path,
+            .run_preprocessor = false,
+        }) catch |err| {
+            std.debug.print("\nfailing byte: 0x{X}\n", .{byte});
+            return err;
+        };
 
         if (byte == 255) break;
     }

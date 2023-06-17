@@ -11,6 +11,10 @@ pub fn build(b: *std.build.Builder) void {
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     const mode = b.standardOptimizeOption(.{});
 
+    const resinator = b.addModule("resinator", .{
+        .source_file = .{ .path = "src/resinator.zig" },
+    });
+
     const exe = b.addExecutable(.{
         .name = "resinator",
         .root_source_file = .{ .path = "src/main.zig" },
@@ -26,9 +30,23 @@ pub fn build(b: *std.build.Builder) void {
         .optimize = mode,
         .filter = test_filter,
     });
+    const run_exe_tests = b.addRunArtifact(exe_tests);
 
+    const reference_tests = b.addTest(.{
+        .root_source_file = .{ .path = "test/reference.zig" },
+        .target = target,
+        .optimize = mode,
+        .filter = test_filter,
+    });
+    reference_tests.addModule("resinator", resinator);
+    const run_reference_tests = b.addRunArtifact(reference_tests);
+
+    const test_step = b.step("test", "Run library tests");
+    test_step.dependOn(&run_exe_tests.step);
+    test_step.dependOn(&run_reference_tests.step);
+
+    // TODO: coverage across all test steps?
     const coverage = b.option(bool, "test-coverage", "Generate test coverage") orelse false;
-
     if (coverage) {
         // with kcov
         exe_tests.setExecCmd(&[_]?[]const u8{
@@ -40,11 +58,6 @@ pub fn build(b: *std.build.Builder) void {
         });
     }
 
-    const run_tests = b.addRunArtifact(exe_tests);
-
-    const test_step = b.step("test", "Run library tests");
-    test_step.dependOn(&run_tests.step);
-
     const try_all_rcs_exe = b.addExecutable(.{
         .name = "try_all_rcs",
         .root_source_file = .{ .path = "test/try_all_rcs.zig" },
@@ -54,10 +67,6 @@ pub fn build(b: *std.build.Builder) void {
     const try_all_rcs_compile = b.step("try_all_rcs", "Build/install try_all_rcs exe");
     const install_try_all_rcs_exe = b.addInstallArtifact(try_all_rcs_exe);
     try_all_rcs_compile.dependOn(&install_try_all_rcs_exe.step);
-
-    const resinator = b.addModule("resinator", .{
-        .source_file = .{ .path = "src/resinator.zig" },
-    });
 
     const fuzzy_max_iterations = b.option(u64, "fuzzy-iterations", "The max iterations for fuzzy tests (default: 1000)") orelse 1000;
 
