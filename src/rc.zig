@@ -73,7 +73,7 @@ pub const Resource = enum {
         const maybe_ordinal = res.NameOrOrdinal.maybeOrdinalFromString(bytes);
         if (maybe_ordinal) |ordinal| {
             if (ordinal.ordinal >= 256) return .user_defined;
-            const rt = @intToEnum(res.RT, ordinal.ordinal);
+            const rt = @enumFromInt(res.RT, ordinal.ordinal);
             return fromRT(rt);
         }
         return map.get(bytes.slice) orelse .user_defined;
@@ -131,13 +131,13 @@ pub const Resource = enum {
             .toolbar, .versioninfo, .vxd => @tagName(resource),
             // zig fmt: on
             .user_defined => "user-defined",
-            .cursor_num => std.fmt.comptimePrint("{d} (cursor)", .{@enumToInt(res.RT.CURSOR)}),
-            .icon_num => std.fmt.comptimePrint("{d} (icon)", .{@enumToInt(res.RT.ICON)}),
-            .string_num => std.fmt.comptimePrint("{d} (string)", .{@enumToInt(res.RT.STRING)}),
-            .anicursor_num => std.fmt.comptimePrint("{d} (anicursor)", .{@enumToInt(res.RT.ANICURSOR)}),
-            .aniicon_num => std.fmt.comptimePrint("{d} (aniicon)", .{@enumToInt(res.RT.ANIICON)}),
-            .fontdir_num => std.fmt.comptimePrint("{d} (fontdir)", .{@enumToInt(res.RT.FONTDIR)}),
-            .manifest_num => std.fmt.comptimePrint("{d} (manifest)", .{@enumToInt(res.RT.MANIFEST)}),
+            .cursor_num => std.fmt.comptimePrint("{d} (cursor)", .{@intFromEnum(res.RT.CURSOR)}),
+            .icon_num => std.fmt.comptimePrint("{d} (icon)", .{@intFromEnum(res.RT.ICON)}),
+            .string_num => std.fmt.comptimePrint("{d} (string)", .{@intFromEnum(res.RT.STRING)}),
+            .anicursor_num => std.fmt.comptimePrint("{d} (anicursor)", .{@intFromEnum(res.RT.ANICURSOR)}),
+            .aniicon_num => std.fmt.comptimePrint("{d} (aniicon)", .{@intFromEnum(res.RT.ANIICON)}),
+            .fontdir_num => std.fmt.comptimePrint("{d} (fontdir)", .{@intFromEnum(res.RT.FONTDIR)}),
+            .manifest_num => std.fmt.comptimePrint("{d} (manifest)", .{@intFromEnum(res.RT.MANIFEST)}),
         };
     }
 };

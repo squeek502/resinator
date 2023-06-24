@@ -351,7 +351,7 @@ pub const NameOrOrdinal = union(enum) {
         switch (self) {
             .ordinal => |ordinal| {
                 if (ordinal >= 256) return null;
-                switch (@intToEnum(RT, ordinal)) {
+                switch (@enumFromInt(RT, ordinal)) {
                     .ACCELERATOR,
                     .ANICURSOR,
                     .ANIICON,

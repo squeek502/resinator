@@ -272,7 +272,7 @@ pub const Options = struct {
         try writer.print("Default language: {s} (id=0x{x})\n", .{ language_name, language_id });
 
         const code_page = self.default_code_page orelse .windows1252;
-        try writer.print("Default codepage: {s} (id={})\n", .{ @tagName(code_page), @enumToInt(code_page) });
+        try writer.print("Default codepage: {s} (id={})\n", .{ @tagName(code_page), @intFromEnum(code_page) });
     }
 };
 
@@ -333,7 +333,7 @@ pub const Arg = struct {
             const prefix_len = arg.prefixSlice().len;
             switch (self.index_increment) {
                 1 => return .{
-                    .value_offset = @ptrToInt(self.slice.ptr) - @ptrToInt(arg.full.ptr),
+                    .value_offset = @intFromPtr(self.slice.ptr) - @intFromPtr(arg.full.ptr),
                     .prefix_len = prefix_len,
                     .name_offset = arg.name_offset,
                 },
@@ -548,8 +548,8 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                     arg_i += value.index_increment;
                     continue :next_arg;
                 }
-                const percent_float = @intToFloat(f32, percent) / 100;
-                options.max_string_literal_codepoints = @floatToInt(u15, percent_float * max_string_literal_length_100_percent);
+                const percent_float = @floatFromInt(f32, percent) / 100;
+                options.max_string_literal_codepoints = @intFromFloat(u15, percent_float * max_string_literal_length_100_percent);
                 arg_i += value.index_increment;
                 continue :next_arg;
             } else if (std.ascii.startsWithIgnoreCase(arg_name, "ln")) {

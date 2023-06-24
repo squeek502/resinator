@@ -444,7 +444,7 @@ pub const Compiler = struct {
                             .GROUP_CURSOR => .ANICURSOR,
                             else => unreachable,
                         };
-                        header.type_value.ordinal = @enumToInt(new_predefined_type);
+                        header.type_value.ordinal = @intFromEnum(new_predefined_type);
                         header.memory_flags = MemoryFlags.defaults(new_predefined_type);
                         header.applyMemoryFlags(node.common_resource_attributes, self.source);
                         header.data_size = @intCast(u32, try file.getEndPos());
@@ -501,7 +501,7 @@ pub const Compiler = struct {
                     applyToGroupMemoryFlags(&header.memory_flags, node.common_resource_attributes, self.source);
 
                     const first_icon_id = self.state.icon_id;
-                    const entry_type = if (predefined_type == .GROUP_ICON) @enumToInt(res.RT.ICON) else @enumToInt(res.RT.CURSOR);
+                    const entry_type = if (predefined_type == .GROUP_ICON) @intFromEnum(res.RT.ICON) else @intFromEnum(res.RT.CURSOR);
                     for (icon_dir.entries, 0..) |*entry, entry_i_usize| {
                         // We know that the entry index must fit within a u16, so
                         // cast it here to simplify usage sites.
@@ -1672,7 +1672,7 @@ pub const Compiler = struct {
         }
 
         if (res.ControlClass.fromControl(control_type)) |control_class| {
-            const ordinal = NameOrOrdinal{ .ordinal = @enumToInt(control_class) };
+            const ordinal = NameOrOrdinal{ .ordinal = @intFromEnum(control_class) };
             try ordinal.write(data_writer);
         } else {
             const class_node = control.class.?;
@@ -1707,7 +1707,7 @@ pub const Compiler = struct {
                 const parsed = try self.parseQuotedStringAsWideString(literal_node.token);
                 defer self.allocator.free(parsed);
                 if (rc.ControlClass.fromWideString(parsed)) |control_class| {
-                    const ordinal = NameOrOrdinal{ .ordinal = @enumToInt(control_class) };
+                    const ordinal = NameOrOrdinal{ .ordinal = @intFromEnum(control_class) };
                     try ordinal.write(data_writer);
                 } else {
                     // NUL acts as a terminator
@@ -1722,7 +1722,7 @@ pub const Compiler = struct {
                 const literal_slice = literal_node.token.slice(self.source);
                 // This succeeding is guaranteed by the parser
                 const control_class = rc.ControlClass.map.get(literal_slice) orelse unreachable;
-                const ordinal = NameOrOrdinal{ .ordinal = @enumToInt(control_class) };
+                const ordinal = NameOrOrdinal{ .ordinal = @intFromEnum(control_class) };
                 try ordinal.write(data_writer);
             }
         }
@@ -1853,7 +1853,7 @@ pub const Compiler = struct {
         }
 
         if (resource == .dialogex) {
-            try writer.writeIntLittle(u8, @boolToInt(values.italic));
+            try writer.writeIntLittle(u8, @intFromBool(values.italic));
         }
 
         if (node.char_set) |char_set| {
@@ -2370,7 +2370,7 @@ pub const Compiler = struct {
             const type_value = type: {
                 const resource_type = Resource.fromString(type_bytes);
                 if (res.RT.fromResource(resource_type)) |rt_constant| {
-                    break :type NameOrOrdinal{ .ordinal = @enumToInt(rt_constant) };
+                    break :type NameOrOrdinal{ .ordinal = @intFromEnum(rt_constant) };
                 } else {
                     break :type try NameOrOrdinal.fromString(allocator, type_bytes);
                 }
@@ -2654,7 +2654,7 @@ pub const FontDir = struct {
 
         var header = Compiler.ResourceHeader{
             .name_value = try NameOrOrdinal.nameFromString(compiler.allocator, .{ .slice = "FONTDIR", .code_page = .windows1252 }),
-            .type_value = NameOrOrdinal{ .ordinal = @enumToInt(res.RT.FONTDIR) },
+            .type_value = NameOrOrdinal{ .ordinal = @intFromEnum(res.RT.FONTDIR) },
             .memory_flags = res.MemoryFlags.defaults(res.RT.FONTDIR),
             .language = compiler.state.language,
             .version = compiler.state.version,
@@ -2911,7 +2911,7 @@ pub const StringTable = struct {
 
             const header = Compiler.ResourceHeader{
                 .name_value = .{ .ordinal = block_id },
-                .type_value = .{ .ordinal = @enumToInt(res.RT.STRING) },
+                .type_value = .{ .ordinal = @intFromEnum(res.RT.STRING) },
                 .memory_flags = self.memory_flags,
                 .language = language,
                 .version = self.version,

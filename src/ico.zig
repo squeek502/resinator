@@ -133,7 +133,7 @@ pub const IconDir = struct {
 
     pub fn writeResData(self: IconDir, writer: anytype, first_image_id: u16) !void {
         try writer.writeIntLittle(u16, 0);
-        try writer.writeIntLittle(u16, @enumToInt(self.image_type));
+        try writer.writeIntLittle(u16, @intFromEnum(self.image_type));
         // We know that entries.len must fit into a u16
         try writer.writeIntLittle(u16, @intCast(u16, self.entries.len));
 

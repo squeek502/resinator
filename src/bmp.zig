@@ -108,7 +108,7 @@ pub fn read(reader: anytype, max_size: u64) ReadError!BitmapInfo {
 
             bitmap_info.colors_in_palette = try dib_header.numColorsInTable();
             bitmap_info.bytes_per_color_palette_element = 4;
-            bitmap_info.compression = @intToEnum(Compression, dib_header.biCompression);
+            bitmap_info.compression = @enumFromInt(Compression, dib_header.biCompression);
 
             if (bitmap_info.getByteLenBetweenHeadersAndPixels() < bitmap_info.getBitmasksByteLen()) {
                 return error.MissingBitfieldMasks;
