@@ -38,7 +38,7 @@ test "BITMAP fuzz" {
 
         const reported_data_size = if (rand.boolean())
             // essentially `real_data_size -| rand.int(i8)`
-            @intCast(u32, @max(0, @intCast(i33, real_data_size) - rand.int(i8)))
+            @as(u32, @intCast(@max(0, @as(i33, @intCast(real_data_size)) - rand.int(i8))))
         else
             real_data_size;
 

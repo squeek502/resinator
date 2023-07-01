@@ -462,7 +462,7 @@ pub fn randomAlphanumExtendedBytes(allocator: Allocator, rand: std.rand.Random) 
     const extended = extended: {
         var buf: [128]u8 = undefined;
         for (&buf, 0..) |*c, i| {
-            c.* = @intCast(u8, i) + 128;
+            c.* = @as(u8, @intCast(i)) + 128;
         }
         break :extended buf;
     };

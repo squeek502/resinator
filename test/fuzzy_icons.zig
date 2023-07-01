@@ -54,7 +54,7 @@ test "ICON fuzz" {
         // dodge a Win32 RC bug that can cause infinite `.res` filesizes when the
         // reported data size is large enough that it gets interpreted as negative.
         const reported_data_size = if (rand.boolean())
-            @intCast(u32, @max(0, @intCast(i33, real_data_size) - rand.int(i8)))
+            @as(u32, @intCast(@max(0, @as(i33, @intCast(real_data_size)) - rand.int(i8))))
         else
             real_data_size;
         try icon_writer.writeIntLittle(u32, reported_data_size);

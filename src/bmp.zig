@@ -103,12 +103,12 @@ pub fn read(reader: anytype, max_size: u64) ReadError!BitmapInfo {
             var dib_header_buf: [@sizeOf(BITMAPINFOHEADER)]u8 align(@alignOf(BITMAPINFOHEADER)) = undefined;
             std.mem.writeIntLittle(u32, dib_header_buf[0..4], bitmap_info.dib_header_size);
             reader.readNoEof(dib_header_buf[4..]) catch return error.UnexpectedEOF;
-            var dib_header = @ptrCast(*BITMAPINFOHEADER, &dib_header_buf);
+            var dib_header: *BITMAPINFOHEADER = @ptrCast(&dib_header_buf);
             structFieldsLittleToNative(BITMAPINFOHEADER, dib_header);
 
             bitmap_info.colors_in_palette = try dib_header.numColorsInTable();
             bitmap_info.bytes_per_color_palette_element = 4;
-            bitmap_info.compression = @enumFromInt(Compression, dib_header.biCompression);
+            bitmap_info.compression = @enumFromInt(dib_header.biCompression);
 
             if (bitmap_info.getByteLenBetweenHeadersAndPixels() < bitmap_info.getBitmasksByteLen()) {
                 return error.MissingBitfieldMasks;
@@ -118,7 +118,7 @@ pub fn read(reader: anytype, max_size: u64) ReadError!BitmapInfo {
             var dib_header_buf: [@sizeOf(BITMAPCOREHEADER)]u8 align(@alignOf(BITMAPCOREHEADER)) = undefined;
             std.mem.writeIntLittle(u32, dib_header_buf[0..4], bitmap_info.dib_header_size);
             reader.readNoEof(dib_header_buf[4..]) catch return error.UnexpectedEOF;
-            var dib_header = @ptrCast(*BITMAPCOREHEADER, &dib_header_buf);
+            var dib_header: *BITMAPCOREHEADER = @ptrCast(&dib_header_buf);
             structFieldsLittleToNative(BITMAPCOREHEADER, dib_header);
 
             // > The size of the color palette is calculated from the BitsPerPixel value.

@@ -193,7 +193,7 @@ pub const IterativeStringParser = struct {
                             self.seen_tab = true;
                         }
                         const cols = columnsUntilTabStop(self.column, 8);
-                        self.num_pending_spaces = @intCast(u8, cols - 1);
+                        self.num_pending_spaces = @intCast(cols - 1);
                         self.index += codepoint.byte_len;
                         return .{ .codepoint = ' ' };
                     },
@@ -225,7 +225,7 @@ pub const IterativeStringParser = struct {
                     '\r' => state = .escaped_cr,
                     '\n' => state = .escaped_newlines,
                     '0'...'7' => {
-                        string_escape_n = std.fmt.charToDigit(@intCast(u8, c), 8) catch unreachable;
+                        string_escape_n = std.fmt.charToDigit(@intCast(c), 8) catch unreachable;
                         string_escape_i = 1;
                         state = .escaped_octal;
                     },
@@ -294,11 +294,11 @@ pub const IterativeStringParser = struct {
                 .escaped_octal => switch (c) {
                     '0'...'7' => {
                         string_escape_n *%= 8;
-                        string_escape_n +%= std.fmt.charToDigit(@intCast(u8, c), 8) catch unreachable;
+                        string_escape_n +%= std.fmt.charToDigit(@intCast(c), 8) catch unreachable;
                         string_escape_i += 1;
                         if (string_escape_i == max_octal_escape_digits) {
                             const escaped_value = switch (self.declared_string_type) {
-                                .ascii => @truncate(u8, string_escape_n),
+                                .ascii => @as(u8, @truncate(string_escape_n)),
                                 .wide => string_escape_n,
                             };
                             self.index += codepoint.byte_len;
@@ -310,7 +310,7 @@ pub const IterativeStringParser = struct {
                         backtrack = true;
                         // write out whatever byte we have parsed so far
                         const escaped_value = switch (self.declared_string_type) {
-                            .ascii => @truncate(u8, string_escape_n),
+                            .ascii => @as(u8, @truncate(string_escape_n)),
                             .wide => string_escape_n,
                         };
                         self.index += codepoint.byte_len;
@@ -320,11 +320,11 @@ pub const IterativeStringParser = struct {
                 .escaped_hex => switch (c) {
                     '0'...'9', 'a'...'f', 'A'...'F' => {
                         string_escape_n *= 16;
-                        string_escape_n += std.fmt.charToDigit(@intCast(u8, c), 16) catch unreachable;
+                        string_escape_n += std.fmt.charToDigit(@intCast(c), 16) catch unreachable;
                         string_escape_i += 1;
                         if (string_escape_i == max_hex_escape_digits) {
                             const escaped_value = switch (self.declared_string_type) {
-                                .ascii => @truncate(u8, string_escape_n),
+                                .ascii => @as(u8, @truncate(string_escape_n)),
                                 .wide => string_escape_n,
                             };
                             self.index += codepoint.byte_len;
@@ -337,7 +337,7 @@ pub const IterativeStringParser = struct {
                         // write out whatever byte we have parsed so far
                         // (even with 0 actual digits, \x alone parses to 0)
                         const escaped_value = switch (self.declared_string_type) {
-                            .ascii => @truncate(u8, string_escape_n),
+                            .ascii => @as(u8, @truncate(string_escape_n)),
                             .wide => string_escape_n,
                         };
                         self.index += codepoint.byte_len;
@@ -357,7 +357,7 @@ pub const IterativeStringParser = struct {
             .escaped, .escaped_cr => return .{ .codepoint = '\\' },
             .escaped_octal, .escaped_hex => {
                 const escaped_value = switch (self.declared_string_type) {
-                    .ascii => @truncate(u8, string_escape_n),
+                    .ascii => @as(u8, @truncate(string_escape_n)),
                     .wide => string_escape_n,
                 };
                 return .{ .codepoint = escaped_value, .from_escaped_integer = true };
@@ -395,7 +395,7 @@ pub fn parseQuotedString(
     while (try iterative_parser.next()) |parsed| {
         const c = parsed.codepoint;
         if (parsed.from_escaped_integer) {
-            try buf.append(@intCast(T, c));
+            try buf.append(@intCast(c));
         } else {
             switch (literal_type) {
                 .ascii => switch (options.output_code_page) {
@@ -423,12 +423,12 @@ pub fn parseQuotedString(
                     if (c == code_pages.Codepoint.invalid) {
                         try buf.append(std.mem.nativeToLittle(u16, '�'));
                     } else if (c < 0x10000) {
-                        const short = @intCast(u16, c);
+                        const short: u16 = @intCast(c);
                         try buf.append(std.mem.nativeToLittle(u16, short));
                     } else {
-                        const high = @intCast(u16, (c - 0x10000) >> 10) + 0xD800;
+                        const high = @as(u16, @intCast((c - 0x10000) >> 10)) + 0xD800;
                         try buf.append(std.mem.nativeToLittle(u16, high));
-                        const low = @intCast(u16, c & 0x3FF) + 0xDC00;
+                        const low = @as(u16, @intCast(c & 0x3FF)) + 0xDC00;
                         try buf.append(std.mem.nativeToLittle(u16, low));
                     }
                 },
@@ -780,7 +780,7 @@ pub const Number = struct {
     is_long: bool = false,
 
     pub fn asWord(self: Number) u16 {
-        return @truncate(u16, self.value);
+        return @truncate(self.value);
     }
 
     pub fn evaluateOperator(lhs: Number, operator_char: u8, rhs: Number) Number {
@@ -852,7 +852,7 @@ pub fn parseNumberLiteral(bytes: SourceBytes) Number {
             // treats ¹, ², and ³ characters as valid digits when the radix is 10
             '¹', '²', '³' => if (radix != 10) break else c - 0x30,
             // On invalid digit for the radix, just stop parsing but don't fail
-            0x00...0x7F => std.fmt.charToDigit(@intCast(u8, c), radix) catch break,
+            0x00...0x7F => std.fmt.charToDigit(@intCast(c), radix) catch break,
             else => break,
         };
 

@@ -109,7 +109,7 @@ pub fn readAnyError(allocator: std.mem.Allocator, reader: anytype, max_size: u64
 fn readName(allocator: std.mem.Allocator, reader: anytype, offset: u64, max_size: u64) ![]const u8 {
     // TODO: Use file cursor moving instead of skipBytes here
     try reader.skipBytes(offset, .{});
-    return reader.readUntilDelimiterAlloc(allocator, 0, @truncate(usize, max_size));
+    return reader.readUntilDelimiterAlloc(allocator, 0, @truncate(max_size));
 }
 
 pub const Font = struct {

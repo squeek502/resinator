@@ -87,7 +87,7 @@ pub fn bestFitFromCodepoint(codepoint: u21) ?u8 {
         0x90,
         0x9D,
         0xA0...0xFF,
-        => @intCast(u8, codepoint),
+        => @intCast(codepoint),
         0x0100 => 0x41, // Latin Capital Letter A With Macron
         0x0101 => 0x61, // Latin Small Letter A With Macron
         0x0102 => 0x41, // Latin Capital Letter A With Breve

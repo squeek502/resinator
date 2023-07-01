@@ -333,13 +333,13 @@ fn parseFilename(allocator: Allocator, str: []const u8) error{ OutOfMemory, Inva
             .escape_hex => switch (c) {
                 '0'...'9', 'a'...'f', 'A'...'F' => {
                     const digit = std.fmt.charToDigit(c, 16) catch unreachable;
-                    if (escape_val != 0) escape_val = std.math.mul(u8, @intCast(u8, escape_val), 16) catch return error.InvalidString;
-                    escape_val = std.math.add(u8, @intCast(u8, escape_val), digit) catch return error.InvalidString;
+                    if (escape_val != 0) escape_val = std.math.mul(u8, @as(u8, @intCast(escape_val)), 16) catch return error.InvalidString;
+                    escape_val = std.math.add(u8, @as(u8, @intCast(escape_val)), digit) catch return error.InvalidString;
                     escape_len += 1;
                 },
                 else => {
                     if (escape_len == 0) return error.InvalidString;
-                    filename.appendAssumeCapacity(@intCast(u8, escape_val));
+                    filename.appendAssumeCapacity(@intCast(escape_val));
                     state = .string;
                     index -= 1; // reconsume
                 },
@@ -347,17 +347,17 @@ fn parseFilename(allocator: Allocator, str: []const u8) error{ OutOfMemory, Inva
             .escape_octal => switch (c) {
                 '0'...'7' => {
                     const digit = std.fmt.charToDigit(c, 8) catch unreachable;
-                    if (escape_val != 0) escape_val = std.math.mul(u8, @intCast(u8, escape_val), 8) catch return error.InvalidString;
-                    escape_val = std.math.add(u8, @intCast(u8, escape_val), digit) catch return error.InvalidString;
+                    if (escape_val != 0) escape_val = std.math.mul(u8, @as(u8, @intCast(escape_val)), 8) catch return error.InvalidString;
+                    escape_val = std.math.add(u8, @as(u8, @intCast(escape_val)), digit) catch return error.InvalidString;
                     escape_len += 1;
                     if (escape_len == 3) {
-                        filename.appendAssumeCapacity(@intCast(u8, escape_val));
+                        filename.appendAssumeCapacity(@intCast(escape_val));
                         state = .string;
                     }
                 },
                 else => {
                     if (escape_len == 0) return error.InvalidString;
-                    filename.appendAssumeCapacity(@intCast(u8, escape_val));
+                    filename.appendAssumeCapacity(@intCast(escape_val));
                     state = .string;
                     index -= 1; // reconsume
                 },
@@ -365,12 +365,12 @@ fn parseFilename(allocator: Allocator, str: []const u8) error{ OutOfMemory, Inva
             .escape_u => switch (c) {
                 '0'...'9', 'a'...'f', 'A'...'F' => {
                     const digit = std.fmt.charToDigit(c, 16) catch unreachable;
-                    if (escape_val != 0) escape_val = std.math.mul(u21, @intCast(u21, escape_val), 16) catch return error.InvalidString;
-                    escape_val = std.math.add(u21, @intCast(u21, escape_val), digit) catch return error.InvalidString;
+                    if (escape_val != 0) escape_val = std.math.mul(u21, @as(u21, @intCast(escape_val)), 16) catch return error.InvalidString;
+                    escape_val = std.math.add(u21, @as(u21, @intCast(escape_val)), digit) catch return error.InvalidString;
                     escape_len += 1;
                     if (escape_len == escape_expected_len) {
                         var buf: [4]u8 = undefined;
-                        const utf8_len = std.unicode.utf8Encode(@intCast(u21, escape_val), &buf) catch return error.InvalidString;
+                        const utf8_len = std.unicode.utf8Encode(@intCast(escape_val), &buf) catch return error.InvalidString;
                         filename.appendSliceAssumeCapacity(buf[0..utf8_len]);
                         state = .string;
                     }
@@ -385,10 +385,10 @@ fn parseFilename(allocator: Allocator, str: []const u8) error{ OutOfMemory, Inva
             .escape, .escape_u => return error.InvalidString,
             .escape_hex => {
                 if (escape_len == 0) return error.InvalidString;
-                filename.appendAssumeCapacity(@intCast(u8, escape_val));
+                filename.appendAssumeCapacity(@intCast(escape_val));
             },
             .escape_octal => {
-                filename.appendAssumeCapacity(@intCast(u8, escape_val));
+                filename.appendAssumeCapacity(@intCast(escape_val));
             },
         }
     }
@@ -528,7 +528,7 @@ pub const StringTable = struct {
         }
 
         try self.data.ensureUnusedCapacity(allocator, value.len + 1);
-        const offset = @intCast(u32, self.data.items.len);
+        const offset: u32 = @intCast(self.data.items.len);
 
         self.data.appendSliceAssumeCapacity(value);
         self.data.appendAssumeCapacity(0);
@@ -540,7 +540,7 @@ pub const StringTable = struct {
 
     pub fn get(self: StringTable, offset: u32) []const u8 {
         std.debug.assert(offset < self.data.items.len);
-        return std.mem.sliceTo(@ptrCast([*:0]const u8, self.data.items.ptr + offset), 0);
+        return std.mem.sliceTo(@as([*:0]const u8, @ptrCast(self.data.items.ptr + offset)), 0);
     }
 
     pub fn getOffset(self: *StringTable, value: []const u8) ?u32 {

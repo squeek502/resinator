@@ -949,7 +949,7 @@ pub const Lexer = struct {
                 return error.CodePagePragmaInvalidCodePage;
             }
 
-            break :code_page code_pages.CodePage.getByIdentifierEnsureSupported(@intCast(u16, num)) catch |err| switch (err) {
+            break :code_page code_pages.CodePage.getByIdentifierEnsureSupported(@intCast(num)) catch |err| switch (err) {
                 error.InvalidCodePage => {
                     self.error_context_token = token;
                     return error.CodePagePragmaInvalidCodePage;

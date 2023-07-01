@@ -73,8 +73,7 @@ pub const Resource = enum {
         const maybe_ordinal = res.NameOrOrdinal.maybeOrdinalFromString(bytes);
         if (maybe_ordinal) |ordinal| {
             if (ordinal.ordinal >= 256) return .user_defined;
-            const rt = @enumFromInt(res.RT, ordinal.ordinal);
-            return fromRT(rt);
+            return fromRT(@enumFromInt(ordinal.ordinal));
         }
         return map.get(bytes.slice) orelse .user_defined;
     }

@@ -548,8 +548,8 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                     arg_i += value.index_increment;
                     continue :next_arg;
                 }
-                const percent_float = @floatFromInt(f32, percent) / 100;
-                options.max_string_literal_codepoints = @intFromFloat(u15, percent_float * max_string_literal_length_100_percent);
+                const percent_float = @as(f32, @floatFromInt(percent)) / 100;
+                options.max_string_literal_codepoints = @intFromFloat(percent_float * max_string_literal_length_100_percent);
                 arg_i += value.index_increment;
                 continue :next_arg;
             } else if (std.ascii.startsWithIgnoreCase(arg_name, "ln")) {

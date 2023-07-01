@@ -59,11 +59,11 @@ pub const ascii = struct {
     /// Compares ASCII values case-insensitively, non-ASCII values are compared directly
     pub fn eqlIgnoreCaseW(a: []const u16, b: []const u16) bool {
         if (a.len != b.len) return false;
-        for (a, 0..) |a_c, i| {
+        for (a, b) |a_c, b_c| {
             if (a_c < 128) {
-                if (std.ascii.toLower(@intCast(u8, a_c)) != std.ascii.toLower(@intCast(u8, b[i]))) return false;
+                if (std.ascii.toLower(@intCast(a_c)) != std.ascii.toLower(@intCast(b_c))) return false;
             } else {
-                if (a_c != b[i]) return false;
+                if (a_c != b_c) return false;
             }
         }
         return true;

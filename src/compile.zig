@@ -365,7 +365,7 @@ pub const Compiler = struct {
             defer self.allocator.free(parsed_filename);
 
             header.applyMemoryFlags(node.common_resource_attributes, self.source);
-            header.data_size = @intCast(u32, parsed_filename.len + 1);
+            header.data_size = @intCast(parsed_filename.len + 1);
             try header.write(writer, .{ .diagnostics = self.diagnostics, .token = node.id });
             try writer.writeAll(parsed_filename);
             try writer.writeByte(0);
@@ -447,7 +447,7 @@ pub const Compiler = struct {
                         header.type_value.ordinal = @intFromEnum(new_predefined_type);
                         header.memory_flags = MemoryFlags.defaults(new_predefined_type);
                         header.applyMemoryFlags(node.common_resource_attributes, self.source);
-                        header.data_size = @intCast(u32, try file.getEndPos());
+                        header.data_size = @intCast(try file.getEndPos());
 
                         try header.write(writer, .{ .diagnostics = self.diagnostics, .token = node.id });
                         try file.seekTo(0);
@@ -505,7 +505,7 @@ pub const Compiler = struct {
                     for (icon_dir.entries, 0..) |*entry, entry_i_usize| {
                         // We know that the entry index must fit within a u16, so
                         // cast it here to simplify usage sites.
-                        const entry_i = @intCast(u16, entry_i_usize);
+                        const entry_i: u16 = @intCast(entry_i_usize);
                         var full_data_size = entry.data_size_in_bytes;
                         if (icon_dir.image_type == .cursor) {
                             full_data_size = std.math.add(u32, full_data_size, 4) catch {
@@ -613,7 +613,7 @@ pub const Compiler = struct {
                                 },
                             },
                             .dib => {
-                                const bitmap_header = @ptrCast(*const ico.BitmapHeader, @alignCast(@alignOf(ico.BitmapHeader), &header_bytes));
+                                const bitmap_header: *const ico.BitmapHeader = @ptrCast(@alignCast(&header_bytes));
                                 const bitmap_version = ico.BitmapHeader.Version.get(std.mem.littleToNative(u32, bitmap_header.bcSize));
 
                                 // The Win32 RC compiler only allows headers with
@@ -655,8 +655,8 @@ pub const Compiler = struct {
                                     },
                                     .cursor => {
                                         // Only cursors get the width/height from BITMAPINFOHEADER (icons don't)
-                                        entry.width = @intCast(u16, bitmap_header.bcWidth);
-                                        entry.height = @intCast(u16, bitmap_header.bcHeight);
+                                        entry.width = @intCast(bitmap_header.bcWidth);
+                                        entry.height = @intCast(bitmap_header.bcHeight);
                                         entry.type_specific_data.cursor.hotspot_x = std.mem.littleToNative(u16, bitmap_header.bcPlanes);
                                         entry.type_specific_data.cursor.hotspot_y = std.mem.littleToNative(u16, bitmap_header.bcBitCount);
                                     },
@@ -780,7 +780,7 @@ pub const Compiler = struct {
                     //       could underflow if the underlying file is modified while reading
                     //       it, but need to think about it more to determine if that's a
                     //       real possibility
-                    const bmp_bytes_to_write = @intCast(u32, bitmap_info.getExpectedByteLen(file_size));
+                    const bmp_bytes_to_write: u32 = @intCast(bitmap_info.getExpectedByteLen(file_size));
 
                     header.data_size = bmp_bytes_to_write;
                     try header.write(writer, .{ .diagnostics = self.diagnostics, .token = node.id });
@@ -791,14 +791,14 @@ pub const Compiler = struct {
                         try writeResourceDataNoPadding(writer, file_reader, bitmap_info.getBitmasksByteLen());
                     }
                     if (bitmap_info.getExpectedPaletteByteLen() > 0) {
-                        try writeResourceDataNoPadding(writer, file_reader, @intCast(u32, bitmap_info.getActualPaletteByteLen()));
+                        try writeResourceDataNoPadding(writer, file_reader, @intCast(bitmap_info.getActualPaletteByteLen()));
                         const padding_bytes = bitmap_info.getMissingPaletteByteLen();
                         if (padding_bytes > 0) {
                             try writer.writeByteNTimes(0, padding_bytes);
                         }
                     }
                     try file.seekTo(bitmap_info.pixel_data_offset);
-                    const pixel_bytes = @intCast(u32, file_size - bitmap_info.pixel_data_offset);
+                    const pixel_bytes: u32 = @intCast(file_size - bitmap_info.pixel_data_offset);
                     try writeResourceDataNoPadding(writer, file_reader, pixel_bytes);
                     try writeDataPadding(writer, bmp_bytes_to_write);
                     return;
@@ -832,7 +832,7 @@ pub const Compiler = struct {
                     }
 
                     // We now know that the data size will fit in a u32
-                    header.data_size = @intCast(u32, file_size);
+                    header.data_size = @intCast(file_size);
                     try header.write(writer, .{ .diagnostics = self.diagnostics, .token = node.id });
 
                     var header_slurping_reader = utils.headerSlurpingReader(148, file.reader());
@@ -873,7 +873,7 @@ pub const Compiler = struct {
             });
         }
         // We now know that the data size will fit in a u32
-        header.data_size = @intCast(u32, data_size);
+        header.data_size = @intCast(data_size);
         try header.write(writer, .{ .diagnostics = self.diagnostics, .token = node.id });
         try writeResourceData(writer, file.reader(), header.data_size);
     }
@@ -1125,7 +1125,7 @@ pub const Compiler = struct {
 
         // This intCast can't fail because the limitedWriter above guarantees that
         // we will never write more than maxInt(u32) bytes.
-        const data_len = @intCast(u32, data_buffer.items.len);
+        const data_len: u32 = @intCast(data_buffer.items.len);
         try self.writeResourceHeader(writer, node.id, node.type, data_len, node.common_resource_attributes, self.state.language);
 
         var data_fbs = std.io.fixedBufferStream(data_buffer.items);
@@ -1176,7 +1176,7 @@ pub const Compiler = struct {
 
     pub fn numPaddingBytesNeeded(data_size: u32) u2 {
         // Result is guaranteed to be between 0 and 3.
-        return @intCast(u2, (4 -% data_size) % 4);
+        return @intCast((4 -% data_size) % 4);
     }
 
     pub fn evaluateAcceleratorKeyExpression(self: *Compiler, node: *Node, is_virt: bool) !u16 {
@@ -1218,7 +1218,7 @@ pub const Compiler = struct {
 
         // This intCast can't fail because the limitedWriter above guarantees that
         // we will never write more than maxInt(u32) bytes.
-        const data_size = @intCast(u32, data_buffer.items.len);
+        const data_size: u32 = @intCast(data_buffer.items.len);
         const id_bytes = SourceBytes{
             .slice = node.id.slice(self.source),
             .code_page = self.input_code_pages.getForToken(node.id),
@@ -1450,7 +1450,7 @@ pub const Compiler = struct {
 
         var controls_by_id = std.AutoHashMap(u32, *const Node.ControlStatement).init(self.allocator);
         // Number of controls are guaranteed by the parser to be within maxInt(u16).
-        try controls_by_id.ensureTotalCapacity(@intCast(u16, node.controls.len));
+        try controls_by_id.ensureTotalCapacity(@as(u16, @intCast(node.controls.len)));
         defer controls_by_id.deinit();
 
         for (node.controls) |control_node| {
@@ -1461,7 +1461,7 @@ pub const Compiler = struct {
                 data_writer,
                 resource,
                 // We know the data_buffer len is limited to u32 max.
-                @intCast(u32, data_buffer.items.len),
+                @intCast(data_buffer.items.len),
                 &controls_by_id,
             ) catch |err| switch (err) {
                 error.NoSpaceLeft => {
@@ -1479,7 +1479,7 @@ pub const Compiler = struct {
             };
         }
 
-        const data_size = @intCast(u32, data_buffer.items.len);
+        const data_size: u32 = @intCast(data_buffer.items.len);
         const id_bytes = SourceBytes{
             .slice = node.id.slice(self.source),
             .code_page = self.input_code_pages.getForToken(node.id),
@@ -1536,7 +1536,7 @@ pub const Compiler = struct {
         }
         // This limit is enforced by the parser, so we know the number of controls
         // is within the range of a u16.
-        try data_writer.writeIntLittle(u16, @intCast(u16, node.controls.len));
+        try data_writer.writeIntLittle(u16, @as(u16, @intCast(node.controls.len)));
         try data_writer.writeIntLittle(u16, x.asWord());
         try data_writer.writeIntLittle(u16, y.asWord());
         try data_writer.writeIntLittle(u16, width.asWord());
@@ -1772,7 +1772,7 @@ pub const Compiler = struct {
             };
         }
         // We know the extra_data_buf size fits within a u16.
-        const extra_data_size = @intCast(u16, extra_data_buf.items.len);
+        const extra_data_size: u16 = @intCast(extra_data_buf.items.len);
         try data_writer.writeIntLittle(u16, extra_data_size);
         try data_writer.writeAll(extra_data_buf.items);
     }
@@ -1790,7 +1790,7 @@ pub const Compiler = struct {
         try data_writer.writeIntLittle(u16, 1);
         try data_writer.writeIntLittle(u16, button_width.asWord());
         try data_writer.writeIntLittle(u16, button_height.asWord());
-        try data_writer.writeIntLittle(u16, @intCast(u16, node.buttons.len));
+        try data_writer.writeIntLittle(u16, @as(u16, @intCast(node.buttons.len)));
 
         for (node.buttons) |button_or_sep| {
             switch (button_or_sep.id) {
@@ -1807,7 +1807,7 @@ pub const Compiler = struct {
             }
         }
 
-        const data_size = @intCast(u32, data_buffer.items.len);
+        const data_size: u32 = @intCast(data_buffer.items.len);
         const id_bytes = SourceBytes{
             .slice = node.id.slice(self.source),
             .code_page = self.input_code_pages.getForToken(node.id),
@@ -1858,7 +1858,7 @@ pub const Compiler = struct {
 
         if (node.char_set) |char_set| {
             const value = evaluateNumberExpression(char_set, self.source, self.input_code_pages);
-            try writer.writeIntLittle(u8, @truncate(u8, value.value));
+            try writer.writeIntLittle(u8, @as(u8, @truncate(value.value)));
         } else if (resource == .dialogex) {
             try writer.writeIntLittle(u8, 1); // DEFAULT_CHARSET
         }
@@ -1895,7 +1895,7 @@ pub const Compiler = struct {
 
         // This intCast can't fail because the limitedWriter above guarantees that
         // we will never write more than maxInt(u32) bytes.
-        const data_size = @intCast(u32, data_buffer.items.len);
+        const data_size: u32 = @intCast(data_buffer.items.len);
         const id_bytes = SourceBytes{
             .slice = node.id.slice(self.source),
             .code_page = self.input_code_pages.getForToken(node.id),
@@ -2026,7 +2026,7 @@ pub const Compiler = struct {
                 }
 
                 var flags: u16 = 0;
-                if (is_last_of_parent) flags |= comptime @intCast(u16, res.MF.END);
+                if (is_last_of_parent) flags |= comptime @as(u16, @intCast(res.MF.END));
                 // This constant doesn't seem to have a named #define, it's different than MF_POPUP
                 if (node_type == .popup_ex) flags |= 0x01;
                 try writer.writeIntLittle(u16, flags);
@@ -2039,7 +2039,7 @@ pub const Compiler = struct {
                 // non-DWORD alignment, so we can just use the byte length of those
                 // two values to realign to DWORD alignment.
                 const relevant_bytes = 2 + (text.len + 1) * 2;
-                try writeDataPadding(writer, @intCast(u32, relevant_bytes));
+                try writeDataPadding(writer, @intCast(relevant_bytes));
 
                 if (node_type == .popup_ex) {
                     if (menu_item.help_id) |help_id_node| {
@@ -2168,7 +2168,7 @@ pub const Compiler = struct {
 
         // We know that data_buffer.items.len is within the limits of a u16, since we
         // limited the writer to maxInt(u16)
-        const data_size = @intCast(u16, data_buffer.items.len);
+        const data_size: u16 = @intCast(data_buffer.items.len);
         // And now that we know the full size of this node (including its children), set its size
         std.mem.writeIntLittle(u16, data_buffer.items[0..2], data_size);
 
@@ -2198,7 +2198,7 @@ pub const Compiler = struct {
     /// will never be able to exceed maxInt(u16).
     pub fn writeVersionNode(self: *Compiler, node: *Node, writer: anytype, buf: *std.ArrayList(u8)) !void {
         // We can assume that buf.items.len will never be able to exceed the limits of a u16
-        try writeDataPadding(writer, @intCast(u16, buf.items.len));
+        try writeDataPadding(writer, @as(u16, @intCast(buf.items.len)));
 
         const node_and_children_size_offset = buf.items.len;
         try writer.writeIntLittle(u16, 0); // placeholder for size
@@ -2234,7 +2234,7 @@ pub const Compiler = struct {
                 // during parsing, so we can just do the correct thing here.
                 var values_size: usize = 0;
 
-                try writeDataPadding(writer, @intCast(u32, buf.items.len));
+                try writeDataPadding(writer, @intCast(buf.items.len));
 
                 for (block_or_value.values, 0..) |value_value_node_uncasted, i| {
                     const value_value_node = value_value_node_uncasted.cast(.block_value_value).?;
@@ -2274,7 +2274,7 @@ pub const Compiler = struct {
                     }
                 }
                 var data_size_slice = buf.items[data_size_offset..];
-                std.mem.writeIntLittle(u16, data_size_slice[0..@sizeOf(u16)], @intCast(u16, values_size));
+                std.mem.writeIntLittle(u16, data_size_slice[0..@sizeOf(u16)], @as(u16, @intCast(values_size)));
 
                 if (has_number_value) {
                     const data_type_slice = buf.items[data_type_offset..];
@@ -2293,7 +2293,7 @@ pub const Compiler = struct {
 
         const node_and_children_size = buf.items.len - node_and_children_size_offset;
         const node_and_children_size_slice = buf.items[node_and_children_size_offset..];
-        std.mem.writeIntLittle(u16, node_and_children_size_slice[0..@sizeOf(u16)], @intCast(u16, node_and_children_size));
+        std.mem.writeIntLittle(u16, node_and_children_size_slice[0..@sizeOf(u16)], @as(u16, @intCast(node_and_children_size)));
     }
 
     pub fn writeStringTable(self: *Compiler, node: *Node.StringTable) !void {
@@ -2342,8 +2342,8 @@ pub const Compiler = struct {
     pub fn writeLanguageStatement(self: *Compiler, node: *Node.LanguageStatement) void {
         const primary = Compiler.evaluateNumberExpression(node.primary_language_id, self.source, self.input_code_pages);
         const sublanguage = Compiler.evaluateNumberExpression(node.sublanguage_id, self.source, self.input_code_pages);
-        self.state.language.primary_language_id = @truncate(u10, primary.value);
-        self.state.language.sublanguage_id = @truncate(u6, sublanguage.value);
+        self.state.language.primary_language_id = @truncate(primary.value);
+        self.state.language.sublanguage_id = @truncate(sublanguage.value);
     }
 
     /// Expects this to be a top-level VERSION or CHARACTERISTICS statement
@@ -2546,8 +2546,8 @@ pub const Compiler = struct {
         const primary = Compiler.evaluateNumberExpression(language_statement.primary_language_id, source, code_page_lookup);
         const sublanguage = Compiler.evaluateNumberExpression(language_statement.sublanguage_id, source, code_page_lookup);
         return .{
-            .primary_language_id = @truncate(u10, primary.value),
-            .sublanguage_id = @truncate(u6, sublanguage.value),
+            .primary_language_id = @truncate(primary.value),
+            .sublanguage_id = @truncate(sublanguage.value),
         };
     }
 
@@ -2646,7 +2646,7 @@ pub const FontDir = struct {
         // We know the number of fonts is limited to maxInt(u16) because fonts
         // must have a valid and unique u16 ordinal ID (trying to specify a FONT
         // with e.g. id 65536 will give a compile error).
-        const num_fonts = @intCast(u16, self.fonts.items.len);
+        const num_fonts: u16 = @intCast(self.fonts.items.len);
 
         // u16 count + [(u16 id + 150 bytes) for each font]
         // Note: This works out to a maximum data_size of 9,961,322.
@@ -2796,7 +2796,7 @@ pub const StringTable = struct {
             const first_set = self.set_indexes.findFirstSet() orelse unreachable;
             if (first_set == string_index) return 0;
             const last_set = 15 - @clz(self.set_indexes.mask);
-            if (last_set == string_index) return @intCast(u8, count - 1);
+            if (last_set == string_index) return @intCast(count - 1);
 
             if (first_set == last_set) return null;
 
@@ -2880,7 +2880,7 @@ pub const StringTable = struct {
                 // strings are limited to maxInt(u15) * 2 = 65,534 code units (since 2 is the
                 // maximum number of UTF-16 code units per codepoint).
                 // This leaves room for exactly one NUL terminator.
-                var string_len_in_utf16_code_units = @intCast(u16, trimmed_string.len);
+                var string_len_in_utf16_code_units: u16 = @intCast(trimmed_string.len);
                 // If the option is set, then a NUL terminator is added unconditionally.
                 // We already trimmed any trailing NULs, so we know it will be a new addition to the string.
                 if (compiler.null_terminate_string_table_strings) string_len_in_utf16_code_units += 1;
@@ -2907,7 +2907,7 @@ pub const StringTable = struct {
             //   16 * (131,070 + 2) = 2,097,152 which is well within the u32 max.
             //
             // Note: The string literal maximum length is enforced by the lexer.
-            const data_size = @intCast(u32, data_buffer.items.len);
+            const data_size: u32 = @intCast(data_buffer.items.len);
 
             const header = Compiler.ResourceHeader{
                 .name_value = .{ .ordinal = block_id },
@@ -2949,7 +2949,7 @@ pub const StringTable = struct {
         characteristics: u32,
     ) SetError!void {
         const block_id = (id / 16) + 1;
-        const string_index: u8 = @intCast(u8, id & 0xF);
+        const string_index: u8 = @intCast(id & 0xF);
 
         var get_or_put_result = try self.blocks.getOrPut(allocator, block_id);
         if (!get_or_put_result.found_existing) {
@@ -2972,7 +2972,7 @@ pub const StringTable = struct {
 
     pub fn get(self: *StringTable, id: u16) ?Token {
         const block_id = (id / 16) + 1;
-        const string_index = @intCast(u8, id & 0xF);
+        const string_index: u8 = @intCast(id & 0xF);
 
         const block = self.blocks.getPtr(block_id) orelse return null;
         const token_index = block.getTokenIndex(string_index) orelse return null;

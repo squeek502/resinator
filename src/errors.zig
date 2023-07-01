@@ -53,7 +53,7 @@ pub const Diagnostics = struct {
         const dupe = try self.allocator.dupe(u8, str);
         const index = self.strings.items.len;
         try self.strings.append(self.allocator, dupe);
-        return @intCast(SmallestStringIndexType, index);
+        return @intCast(index);
     }
 
     pub fn renderToStdErr(self: *Diagnostics, cwd: std.fs.Dir, source: []const u8, tty_config: std.io.tty.Config, source_mappings: ?SourceMappings) void {
@@ -250,7 +250,7 @@ pub const ErrorDetails = struct {
             const num_real_fields = struct_info.fields.len - 1;
             const num_padding_bits = @bitSizeOf(ExpectedTypes) - num_real_fields;
             const mask = std.math.maxInt(struct_info.backing_integer.?) >> num_padding_bits;
-            const relevant_bits_only = @bitCast(struct_info.backing_integer.?, self) & mask;
+            const relevant_bits_only = @as(struct_info.backing_integer.?, @bitCast(self)) & mask;
             const num_set_bits = @popCount(relevant_bits_only);
 
             var i: usize = 0;
@@ -670,8 +670,8 @@ pub const ErrorDetails = struct {
             },
             .invalid_filename => {
                 const disallowed_codepoint = self.extra.number;
-                if (disallowed_codepoint < 128 and std.ascii.isPrint(@intCast(u8, disallowed_codepoint))) {
-                    try writer.print("evaluated filename contains a disallowed character: '{c}'", .{@intCast(u8, disallowed_codepoint)});
+                if (disallowed_codepoint < 128 and std.ascii.isPrint(@intCast(disallowed_codepoint))) {
+                    try writer.print("evaluated filename contains a disallowed character: '{c}'", .{@as(u8, @intCast(disallowed_codepoint))});
                 } else {
                     try writer.print("evaluated filename contains a disallowed codepoint: <U+{X:0>4}>", .{disallowed_codepoint});
                 }

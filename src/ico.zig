@@ -128,14 +128,15 @@ pub const IconDir = struct {
 
     pub fn getResDataSize(self: IconDir) u32 {
         // maxInt(u16) * Entry.res_byte_len = 917,490 which is well within the u32 range.
-        return IconDir.res_header_byte_len + @intCast(u16, self.entries.len) * Entry.res_byte_len;
+        // Note: self.entries.len is limited to maxInt(u16)
+        return @intCast(IconDir.res_header_byte_len + self.entries.len * Entry.res_byte_len);
     }
 
     pub fn writeResData(self: IconDir, writer: anytype, first_image_id: u16) !void {
         try writer.writeIntLittle(u16, 0);
         try writer.writeIntLittle(u16, @intFromEnum(self.image_type));
         // We know that entries.len must fit into a u16
-        try writer.writeIntLittle(u16, @intCast(u16, self.entries.len));
+        try writer.writeIntLittle(u16, @as(u16, @intCast(self.entries.len)));
 
         var image_id = first_image_id;
         for (self.entries) |entry| {
@@ -172,8 +173,8 @@ pub const Entry = struct {
     pub fn writeResData(self: Entry, writer: anytype, id: u16) !void {
         switch (self.type_specific_data) {
             .icon => |icon_data| {
-                try writer.writeIntLittle(u8, @truncate(u8, self.width));
-                try writer.writeIntLittle(u8, @truncate(u8, self.height));
+                try writer.writeIntLittle(u8, @as(u8, @truncate(self.width)));
+                try writer.writeIntLittle(u8, @as(u8, @truncate(self.height)));
                 try writer.writeIntLittle(u8, self.num_colors);
                 try writer.writeIntLittle(u8, self.reserved);
                 try writer.writeIntLittle(u16, icon_data.color_planes);

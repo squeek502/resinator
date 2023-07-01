@@ -155,11 +155,11 @@ pub const Language = packed struct(u16) {
     pub const default: u16 = (Language{}).asInt();
 
     pub fn fromInt(int: u16) Language {
-        return @bitCast(Language, int);
+        return @bitCast(int);
     }
 
     pub fn asInt(self: Language) u16 {
-        return @bitCast(u16, self);
+        return @bitCast(self);
     }
 };
 
@@ -280,19 +280,19 @@ pub const NameOrOrdinal = union(enum) {
                 try buf.append(std.mem.nativeToLittle(u16, '�'));
             } else if (c < 0x7F) {
                 // ASCII chars in names are always converted to uppercase
-                try buf.append(std.ascii.toUpper(@intCast(u8, c)));
+                try buf.append(std.ascii.toUpper(@intCast(c)));
             } else if (c < 0x10000) {
-                const short = @intCast(u16, c);
+                const short: u16 = @intCast(c);
                 try buf.append(std.mem.nativeToLittle(u16, short));
             } else {
-                const high = @intCast(u16, (c - 0x10000) >> 10) + 0xD800;
+                const high = @as(u16, @intCast((c - 0x10000) >> 10)) + 0xD800;
                 try buf.append(std.mem.nativeToLittle(u16, high));
 
                 // Note: This can cut-off in the middle of a UTF-16 surrogate pair,
                 //       i.e. it can make the string end with an unpaired high surrogate
                 if (buf.items.len == 256) break;
 
-                const low = @intCast(u16, c & 0x3FF) + 0xDC00;
+                const low = @as(u16, @intCast(c & 0x3FF)) + 0xDC00;
                 try buf.append(std.mem.nativeToLittle(u16, low));
             }
         }
@@ -321,11 +321,11 @@ pub const NameOrOrdinal = union(enum) {
         var result: u16 = 0;
         while (bytes.code_page.codepointAt(i, buf)) |codepoint| : (i += codepoint.byte_len) {
             const c = codepoint.value;
-            const digit = switch (c) {
+            const digit: u8 = switch (c) {
                 // I have no idea why this is the case, but the Windows RC compiler
                 // treats ¹, ², and ³ characters as valid digits when the radix is 10
-                '¹', '²', '³' => if (radix != 10) break else @intCast(u8, c) - 0x30,
-                0x00...0x7F => std.fmt.charToDigit(@intCast(u8, c), radix) catch switch (radix) {
+                '¹', '²', '³' => if (radix != 10) break else @intCast(c - 0x30),
+                0x00...0x7F => std.fmt.charToDigit(@intCast(c), radix) catch switch (radix) {
                     10 => return null,
                     // non-hex-digits are treated as a terminator rather than invalidating
                     // the number (note: if there are no valid hex digits then the result
@@ -351,7 +351,7 @@ pub const NameOrOrdinal = union(enum) {
         switch (self) {
             .ordinal => |ordinal| {
                 if (ordinal >= 256) return null;
-                switch (@enumFromInt(RT, ordinal)) {
+                switch (@as(RT, @enumFromInt(ordinal))) {
                     .ACCELERATOR,
                     .ANICURSOR,
                     .ANIICON,
@@ -452,7 +452,7 @@ test "NameOrOrdinal" {
     );
     // overflow wraps
     try expectNameOrOrdinal(
-        NameOrOrdinal{ .ordinal = @truncate(u16, 65635) },
+        NameOrOrdinal{ .ordinal = @truncate(65635) },
         try NameOrOrdinal.fromString(allocator, .{ .slice = "65635", .code_page = .windows1252 }),
     );
     // non-hex-digits in a hex literal are treated as a terminator
@@ -567,7 +567,7 @@ const AcceleratorKeyCodepointTranslator = struct {
         const parsed = maybe_parsed orelse return null;
         if (parsed.codepoint == Codepoint.invalid) return 0xFFFD;
         if (parsed.from_escaped_integer and self.string_type == .ascii) {
-            return windows1252.toCodepoint(@intCast(u8, parsed.codepoint));
+            return windows1252.toCodepoint(@intCast(parsed.codepoint));
         }
         return parsed.codepoint;
     }
@@ -604,7 +604,7 @@ pub fn parseAcceleratorKeyString(bytes: SourceBytes, is_virt: bool, options: lit
         const c = translator.translate(try parser.next()) orelse return error.InvalidControlCharacter;
         switch (c) {
             '^' => return '^', // special case
-            'a'...'z', 'A'...'Z' => return std.ascii.toUpper(@intCast(u8, c)) - 0x40,
+            'a'...'z', 'A'...'Z' => return std.ascii.toUpper(@intCast(c)) - 0x40,
             // Note: The Windows RC compiler allows more than just A-Z, but what it allows
             //       seems to be tied to some sort of Unicode-aware 'is character' function or something.
             //       The full list of codepoints that trigger an out-of-range error can be found here:
@@ -626,7 +626,7 @@ pub fn parseAcceleratorKeyString(bytes: SourceBytes, is_virt: bool, options: lit
             if (second_codepoint != null and second_codepoint.? != 0) return error.AcceleratorTooLong;
             // No idea why it works this way, but this seems to match the Windows RC
             // behavior for codepoints >= 0x10000
-            const low = @intCast(u16, first_codepoint & 0x3FF) + 0xDC00;
+            const low = @as(u16, @intCast(first_codepoint & 0x3FF)) + 0xDC00;
             const extra = (first_codepoint - 0x10000) / 0x400;
             break :initial_value low + extra * 0x100;
         }
@@ -634,7 +634,7 @@ pub fn parseAcceleratorKeyString(bytes: SourceBytes, is_virt: bool, options: lit
     };
 
     // 0 is treated as a terminator
-    if (second_codepoint != null and second_codepoint.? == 0) return @truncate(u16, result);
+    if (second_codepoint != null and second_codepoint.? == 0) return @truncate(result);
 
     const third_codepoint = translator.translate(try parser.next());
     // 0 is treated as a terminator, so a 0 in the third position is fine but
@@ -651,7 +651,7 @@ pub fn parseAcceleratorKeyString(bytes: SourceBytes, is_virt: bool, options: lit
             else => {},
         }
     }
-    return @truncate(u16, result);
+    return @truncate(result);
 }
 
 test "accelerator keys" {
@@ -844,11 +844,11 @@ pub const ForcedOrdinal = struct {
                 // broken up into their UTF-16 code units and each code unit
                 // is interpreted as a digit.
                 0x10000...0x10FFFF => {
-                    const high = @intCast(u16, (codepoint.value - 0x10000) >> 10) + 0xD800;
+                    const high = @as(u16, @intCast((codepoint.value - 0x10000) >> 10)) + 0xD800;
                     if (result != 0) result *%= 10;
                     result +%= high -% '0';
 
-                    const low = @intCast(u16, codepoint.value & 0x3FF) + 0xDC00;
+                    const low = @as(u16, @intCast(codepoint.value & 0x3FF)) + 0xDC00;
                     if (result != 0) result *%= 10;
                     result +%= low -% '0';
                     continue;
@@ -859,7 +859,7 @@ pub const ForcedOrdinal = struct {
             if (result != 0) result *%= 10;
             result +%= c -% '0';
         }
-        return @truncate(u16, result);
+        return @truncate(result);
     }
 
     pub fn fromUtf16Le(utf16: [:0]const u16) u16 {
@@ -963,7 +963,7 @@ pub const MenuItemFlags = struct {
     }
 
     fn optionValue(option: rc.MenuItem.Option) u16 {
-        return @intCast(u16, switch (option) {
+        return @intCast(switch (option) {
             .checked => MF.CHECKED,
             .grayed => MF.GRAYED,
             .help => MF.HELP,
@@ -974,7 +974,7 @@ pub const MenuItemFlags = struct {
     }
 
     pub fn markLast(self: *MenuItemFlags) void {
-        self.value |= @intCast(u16, MF.END);
+        self.value |= @intCast(MF.END);
     }
 };
 
