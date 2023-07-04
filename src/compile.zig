@@ -33,6 +33,11 @@ pub const CompileOptions = struct {
     cwd: std.fs.Dir,
     diagnostics: *Diagnostics,
     source_mappings: ?*SourceMappings = null,
+    /// List of paths (absolute or relative to `cwd`) for every file that the resources within the .rc file depend on.
+    /// Items within the list will be allocated using the allocator of the ArrayList and must be
+    /// freed by the caller.
+    /// TODO: Maybe a dedicated struct for this purpose so that it's a bit nicer to work with.
+    dependencies_list: ?*std.ArrayList([]const u8) = null,
     default_code_page: CodePage = .windows1252,
     ignore_include_env_var: bool = false,
     extra_include_paths: []const []const u8 = &.{},
@@ -69,6 +74,7 @@ pub fn compile(allocator: Allocator, source: []const u8, writer: anytype, option
         .allocator = allocator,
         .cwd = options.cwd,
         .diagnostics = options.diagnostics,
+        .dependencies_list = options.dependencies_list,
         .input_code_pages = &tree.input_code_pages,
         .output_code_pages = &tree.output_code_pages,
         .ignore_include_env_var = options.ignore_include_env_var,
@@ -90,6 +96,7 @@ pub const Compiler = struct {
     cwd: std.fs.Dir,
     state: State = .{},
     diagnostics: *Diagnostics,
+    dependencies_list: ?*std.ArrayList([]const u8),
     input_code_pages: *const CodePageLookup,
     output_code_pages: *const CodePageLookup,
     extra_include_paths: []const []const u8,
@@ -287,10 +294,18 @@ pub const Compiler = struct {
             defer buf.deinit();
 
             for (self.extra_include_paths) |extra_include_path| {
-                return openFileFromSearchPath(self.cwd, &buf, extra_include_path, path) catch |err| switch (err) {
+                const extra_include_file = openFileFromSearchPath(self.cwd, &buf, extra_include_path, path) catch |err| switch (err) {
                     error.OutOfMemory => return error.OutOfMemory,
                     else => continue,
                 };
+                if (self.dependencies_list) |dependencies_list| {
+                    const extra_include_file_path = try std.fs.path.join(dependencies_list.allocator, &.{
+                        extra_include_path, path,
+                    });
+                    errdefer dependencies_list.allocator.free(extra_include_file_path);
+                    try dependencies_list.append(extra_include_file_path);
+                }
+                return extra_include_file;
             }
 
             if (self.ignore_include_env_var) {
@@ -302,14 +317,27 @@ pub const Compiler = struct {
 
             var it = std.mem.tokenize(u8, INCLUDE, ";");
             while (it.next()) |search_path| {
-                return openFileFromSearchPath(self.cwd, &buf, search_path, path) catch |err| switch (err) {
+                const search_path_file = openFileFromSearchPath(self.cwd, &buf, search_path, path) catch |err| switch (err) {
                     error.OutOfMemory => return error.OutOfMemory,
                     else => continue,
                 };
+                if (self.dependencies_list) |dependencies_list| {
+                    const search_path_file_path = try std.fs.path.join(dependencies_list.allocator, &.{
+                        search_path, path,
+                    });
+                    errdefer dependencies_list.allocator.free(search_path_file_path);
+                    try dependencies_list.append(search_path_file_path);
+                }
+                return search_path_file;
             }
 
             return first_err;
         };
+        if (self.dependencies_list) |dependencies_list| {
+            const path_dupe = try dependencies_list.allocator.dupe(u8, path);
+            errdefer dependencies_list.allocator.free(path_dupe);
+            try dependencies_list.append(path_dupe);
+        }
         return file;
     }
 

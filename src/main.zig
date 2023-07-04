@@ -166,6 +166,14 @@ pub fn main() !void {
     var diagnostics = Diagnostics.init(allocator);
     defer diagnostics.deinit();
 
+    var dependencies_list = std.ArrayList([]const u8).init(allocator);
+    defer {
+        for (dependencies_list.items) |item| {
+            allocator.free(item);
+        }
+        dependencies_list.deinit();
+    }
+
     if (options.debug) {
         std.debug.print("after preprocessor:\n------------------\n{s}\n------------------\n", .{final_input});
         std.debug.print("\nmappings:\n", .{});
@@ -199,6 +207,7 @@ pub fn main() !void {
         .cwd = std.fs.cwd(),
         .diagnostics = &diagnostics,
         .source_mappings = &mapping_results.mappings,
+        .dependencies_list = if (options.debug) &dependencies_list else null,
         .ignore_include_env_var = options.ignore_include_env_var,
         .extra_include_paths = options.extra_include_paths.items,
         .default_language_id = options.default_language_id,
@@ -222,6 +231,14 @@ pub fn main() !void {
     };
 
     try output_buffered_stream.flush();
+
+    if (options.debug) {
+        std.debug.print("dependencies list:\n", .{});
+        for (dependencies_list.items) |path| {
+            std.debug.print(" {s}\n", .{path});
+        }
+        std.debug.print("\n", .{});
+    }
 
     // print any warnings/notes
     diagnostics.renderToStdErr(std.fs.cwd(), final_input, stderr_config, mapping_results.mappings);
