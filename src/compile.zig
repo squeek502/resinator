@@ -2393,6 +2393,7 @@ pub const Compiler = struct {
         data_size: DWORD,
         version: DWORD,
         characteristics: DWORD,
+        data_version: DWORD = 0,
 
         pub fn init(allocator: Allocator, id_bytes: SourceBytes, type_bytes: SourceBytes, data_size: DWORD, language: res.Language, version: DWORD, characteristics: DWORD) !ResourceHeader {
             const type_value = type: {
@@ -2471,7 +2472,7 @@ pub const Compiler = struct {
             try self.name_value.write(writer); // NAME
             try writer.writeByteNTimes(0, size_info.padding_after_name);
 
-            try writer.writeIntLittle(DWORD, 0); // DataVersion
+            try writer.writeIntLittle(DWORD, self.data_version); // DataVersion
             try writer.writeIntLittle(WORD, self.memory_flags.value); // MemoryFlags
             try writer.writeIntLittle(WORD, self.language.asInt()); // LanguageId
             try writer.writeIntLittle(DWORD, self.version); // Version
