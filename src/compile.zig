@@ -2673,7 +2673,8 @@ pub const FontDir = struct {
 
         // We know the number of fonts is limited to maxInt(u16) because fonts
         // must have a valid and unique u16 ordinal ID (trying to specify a FONT
-        // with e.g. id 65536 will give a compile error).
+        // with e.g. id 65537 will wrap around to 1 and be ignored if there's already
+        // a font with that ID in the file).
         const num_fonts: u16 = @intCast(self.fonts.items.len);
 
         // u16 count + [(u16 id + 150 bytes) for each font]
