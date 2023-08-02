@@ -1355,6 +1355,10 @@ pub const Compiler = struct {
         defer skipped_menu_or_classes.deinit();
         var last_menu: *Node.SimpleStatement = undefined;
         var last_class: *Node.SimpleStatement = undefined;
+        var last_menu_would_be_forced_ordinal = false;
+        var last_menu_has_digit_as_first_char = false;
+        var last_menu_did_uppercase = false;
+        var last_class_would_be_forced_ordinal = false;
 
         for (node.optional_statements) |optional_statement| {
             switch (optional_statement.id) {
@@ -1382,6 +1386,12 @@ pub const Compiler = struct {
                                 try skipped_menu_or_classes.append(last_class);
                             }
                             const forced_ordinal = is_duplicate and optional_statement_values.class.? == .ordinal;
+                            // In the Win32 RC compiler, if any CLASS values that are interpreted as
+                            // an ordinal exist, it affects all future CLASS statements and forces
+                            // them to be treated as an ordinal no matter what.
+                            if (forced_ordinal) {
+                                last_class_would_be_forced_ordinal = true;
+                            }
                             // clear out the old one if it exists
                             if (optional_statement_values.class) |prev| {
                                 prev.deinit(self.allocator);
@@ -1395,31 +1405,6 @@ pub const Compiler = struct {
                                 std.debug.assert(simple_statement.value.isStringLiteral());
                                 const literal_node = @fieldParentPtr(Node.Literal, "base", simple_statement.value);
                                 const parsed = try self.parseQuotedStringAsWideString(literal_node.token);
-                                if (forced_ordinal) {
-                                    const ordinal_value = res.ForcedOrdinal.fromUtf16Le(parsed);
-
-                                    try self.addErrorDetails(.{
-                                        .err = .rc_would_miscompile_dialog_class,
-                                        .type = .warning,
-                                        .token = literal_node.token,
-                                        .extra = .{ .number = ordinal_value },
-                                    });
-                                    try self.addErrorDetails(.{
-                                        .err = .rc_would_miscompile_dialog_class,
-                                        .type = .note,
-                                        .print_source_line = false,
-                                        .token = literal_node.token,
-                                        .extra = .{ .number = ordinal_value },
-                                    });
-                                    try self.addErrorDetails(.{
-                                        .err = .rc_would_miscompile_dialog_menu_or_class_id_forced_ordinal,
-                                        .type = .note,
-                                        .print_source_line = false,
-                                        .token = literal_node.token,
-                                        .extra = .{ .menu_or_class = .class },
-                                    });
-                                }
-
                                 optional_statement_values.class = NameOrOrdinal{ .name = parsed };
                             }
 
@@ -1431,6 +1416,12 @@ pub const Compiler = struct {
                                 try skipped_menu_or_classes.append(last_menu);
                             }
                             const forced_ordinal = is_duplicate and optional_statement_values.menu.? == .ordinal;
+                            // In the Win32 RC compiler, if any MENU values that are interpreted as
+                            // an ordinal exist, it affects all future MENU statements and forces
+                            // them to be treated as an ordinal no matter what.
+                            if (forced_ordinal) {
+                                last_menu_would_be_forced_ordinal = true;
+                            }
                             // clear out the old one if it exists
                             if (optional_statement_values.menu) |prev| {
                                 prev.deinit(self.allocator);
@@ -1447,14 +1438,10 @@ pub const Compiler = struct {
                             };
                             optional_statement_values.menu = try NameOrOrdinal.fromString(self.allocator, bytes);
 
-                            // The above uses the exact same logic as the MENU/MENUEX resource id parsing, which means
-                            // that it will convert ASCII characters to uppercase during the 'name' parsing.
-                            // This turns out not to matter (`LoadMenu` does a case-insensitive lookup anyway),
-                            // but it still makes sense to share the uppercasing logic since the MENU parameter
-                            // here is just a reference to a MENU/MENUEX id within the .exe.
-                            // So, because this is an intentional but inconsequential-to-the-user difference
-                            // between resinator and the Win32 RC compiler, we only emit a hint instead of
-                            // a warning.
+                            // Need to keep track of some properties of the value
+                            // in order to emit the appropriate warning(s) later on.
+                            // See where the warning are emitted below (outside this loop)
+                            // for the full explanation.
                             var did_uppercase = false;
                             var codepoint_i: usize = 0;
                             while (bytes.code_page.codepointAt(codepoint_i, bytes.slice)) |codepoint| : (codepoint_i += codepoint.byte_len) {
@@ -1467,53 +1454,8 @@ pub const Compiler = struct {
                                     else => {},
                                 }
                             }
-                            if (did_uppercase) {
-                                try self.addErrorDetails(.{
-                                    .err = .dialog_menu_id_was_uppercased,
-                                    .type = .hint,
-                                    .token = literal_node.token,
-                                });
-                            }
-
-                            // The Win32 RC compiler miscompiles the id in two different scenarios:
-                            // 1. The first character of the ID is a digit, in which case it is always treated as a number
-                            //    no matter what (and therefore does not match how the MENU/MENUEX id is parsed)
-                            // 2. Multiple MENU parameters are specified and any of them are treated as a number, then
-                            //    the last MENU is always treated as a number no matter what
-                            const would_be_treated_as_number = optional_statement_values.menu.? == .name and (forced_ordinal or std.ascii.isDigit(token_slice[0]));
-                            if (would_be_treated_as_number) {
-                                const ordinal_value = res.ForcedOrdinal.fromBytes(bytes);
-                                try self.addErrorDetails(.{
-                                    .err = .rc_would_miscompile_dialog_menu_id,
-                                    .type = .warning,
-                                    .token = literal_node.token,
-                                    .extra = .{ .number = ordinal_value },
-                                });
-                                try self.addErrorDetails(.{
-                                    .err = .rc_would_miscompile_dialog_menu_id,
-                                    .type = .note,
-                                    .print_source_line = false,
-                                    .token = literal_node.token,
-                                    .extra = .{ .number = ordinal_value },
-                                });
-                                if (forced_ordinal) {
-                                    try self.addErrorDetails(.{
-                                        .err = .rc_would_miscompile_dialog_menu_or_class_id_forced_ordinal,
-                                        .type = .note,
-                                        .print_source_line = false,
-                                        .token = literal_node.token,
-                                        .extra = .{ .menu_or_class = .menu },
-                                    });
-                                } else {
-                                    try self.addErrorDetails(.{
-                                        .err = .rc_would_miscompile_dialog_menu_id_starts_with_digit,
-                                        .type = .note,
-                                        .print_source_line = false,
-                                        .token = literal_node.token,
-                                    });
-                                }
-                            }
-
+                            last_menu_did_uppercase = did_uppercase;
+                            last_menu_has_digit_as_first_char = std.ascii.isDigit(token_slice[0]);
                             last_menu = simple_statement;
                         },
                         else => {},
@@ -1553,6 +1495,94 @@ pub const Compiler = struct {
                     .class => .class,
                     else => unreachable,
                 } },
+            });
+        }
+        // The Win32 RC compiler miscompiles the value in the following scenario:
+        // Multiple CLASS parameters are specified and any of them are treated as a number, then
+        // the last CLASS is always treated as a number no matter what
+        if (last_class_would_be_forced_ordinal and optional_statement_values.class.? == .name) {
+            const literal_node = @fieldParentPtr(Node.Literal, "base", last_class.value);
+            const ordinal_value = res.ForcedOrdinal.fromUtf16Le(optional_statement_values.class.?.name);
+
+            try self.addErrorDetails(.{
+                .err = .rc_would_miscompile_dialog_class,
+                .type = .warning,
+                .token = literal_node.token,
+                .extra = .{ .number = ordinal_value },
+            });
+            try self.addErrorDetails(.{
+                .err = .rc_would_miscompile_dialog_class,
+                .type = .note,
+                .print_source_line = false,
+                .token = literal_node.token,
+                .extra = .{ .number = ordinal_value },
+            });
+            try self.addErrorDetails(.{
+                .err = .rc_would_miscompile_dialog_menu_or_class_id_forced_ordinal,
+                .type = .note,
+                .print_source_line = false,
+                .token = literal_node.token,
+                .extra = .{ .menu_or_class = .class },
+            });
+        }
+        // The Win32 RC compiler miscompiles the id in two different scenarios:
+        // 1. The first character of the ID is a digit, in which case it is always treated as a number
+        //    no matter what (and therefore does not match how the MENU/MENUEX id is parsed)
+        // 2. Multiple MENU parameters are specified and any of them are treated as a number, then
+        //    the last MENU is always treated as a number no matter what
+        if ((last_menu_would_be_forced_ordinal or last_menu_has_digit_as_first_char) and optional_statement_values.menu.? == .name) {
+            const literal_node = @fieldParentPtr(Node.Literal, "base", last_menu.value);
+            const token_slice = literal_node.token.slice(self.source);
+            const bytes = SourceBytes{
+                .slice = token_slice,
+                .code_page = self.input_code_pages.getForToken(literal_node.token),
+            };
+            const ordinal_value = res.ForcedOrdinal.fromBytes(bytes);
+
+            try self.addErrorDetails(.{
+                .err = .rc_would_miscompile_dialog_menu_id,
+                .type = .warning,
+                .token = literal_node.token,
+                .extra = .{ .number = ordinal_value },
+            });
+            try self.addErrorDetails(.{
+                .err = .rc_would_miscompile_dialog_menu_id,
+                .type = .note,
+                .print_source_line = false,
+                .token = literal_node.token,
+                .extra = .{ .number = ordinal_value },
+            });
+            if (last_menu_would_be_forced_ordinal) {
+                try self.addErrorDetails(.{
+                    .err = .rc_would_miscompile_dialog_menu_or_class_id_forced_ordinal,
+                    .type = .note,
+                    .print_source_line = false,
+                    .token = literal_node.token,
+                    .extra = .{ .menu_or_class = .menu },
+                });
+            } else {
+                try self.addErrorDetails(.{
+                    .err = .rc_would_miscompile_dialog_menu_id_starts_with_digit,
+                    .type = .note,
+                    .print_source_line = false,
+                    .token = literal_node.token,
+                });
+            }
+        }
+        // The MENU id parsing uses the exact same logic as the MENU/MENUEX resource id parsing,
+        // which means that it will convert ASCII characters to uppercase during the 'name' parsing.
+        // This turns out not to matter (`LoadMenu` does a case-insensitive lookup anyway),
+        // but it still makes sense to share the uppercasing logic since the MENU parameter
+        // here is just a reference to a MENU/MENUEX id within the .exe.
+        // So, because this is an intentional but inconsequential-to-the-user difference
+        // between resinator and the Win32 RC compiler, we only emit a hint instead of
+        // a warning.
+        if (last_menu_did_uppercase) {
+            const literal_node = @fieldParentPtr(Node.Literal, "base", last_menu.value);
+            try self.addErrorDetails(.{
+                .err = .dialog_menu_id_was_uppercased,
+                .type = .hint,
+                .token = literal_node.token,
             });
         }
 
@@ -3975,13 +4005,15 @@ test "dialog, dialogex resource" {
     );
     try testCompileErrorDetailsWithDir(
         &.{
+            .{ .type = .warning, .str = "this class was ignored; when multiple class statements are specified, only the last takes precedence" },
+            .{ .type = .warning, .str = "this class was ignored; when multiple class statements are specified, only the last takes precedence" },
             .{ .type = .warning, .str = "this class would be miscompiled by the Win32 RC compiler" },
             .{ .type = .note, .str = "the Win32 RC compiler would evaluate it as the ordinal/number value 62790" },
             .{ .type = .note, .str = "to avoid the potential miscompilation, only specify one class per dialog resource" },
-            .{ .type = .warning, .str = "this class was ignored; when multiple class statements are specified, only the last takes precedence" },
         },
         \\1 DIALOGEX 1, 2, 3, 4
         \\CLASS 5+5
+        \\CLASS "intermediate string is ignored and doesn't negate the forced ordianl"
         \\CLASS "forced ordinal"
         \\{}
     ,
