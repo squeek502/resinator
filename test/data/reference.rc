@@ -88,10 +88,13 @@ dialog1 DIALOG
   CHARACTERISTICS (65537)
   // Can be a number expression (u16, but L suffix is allowed) or a string literal.
   // If there are multiple CLASS statements, the last one takes precedence.
-  // If the penultimate CLASS is a number, it forces the final result to be
-  // a number (the string is parsed and then converted into a number).
+  // If any CLASS is a number, it forces the final result to be a number
+  // (if the last CLASS is a string, it is parsed and then converted
+  // into a number).
   CLASS (65537L)
-  CLASS "forced ordinal"
+  // If the next line was uncommented, it would be miscompiled and converted
+  // into a ordinal/number value by the Win32 RC compiler.
+  //CLASS "forced ordinal"
   // Can contain NOT expressions
   EXSTYLE NOT 1 | 3
   // pointsize (u16, but L suffix is allowed), typeface (must be string literal)
@@ -102,10 +105,17 @@ dialog1 DIALOG
   // character is a number. For example, (65537L) is actually the 'name' (65537L)
   // since it does not get interpreted as a number.
   // If there are multiple MENU statements, the last one takes precedence.
-  // If the penultimate MENU is a number, it forces the final result to be
-  // a number (the string is parsed and then converted into a number).
+  // If any MENU is a number, it forces the final result to be a number
+  // (if the last MENU is a string, it is parsed and then converted
+  // into a number).
   MENU 1
-  MENU (65537L)
+  // If the first character is a digit, then it is miscompiled by the Win32 RC compiler
+  // and treated as a number.
+  //MENU 1ABC
+  // If either of the next lines were uncommented, it would be miscompiled and converted
+  // into a ordinal/number value by the Win32 RC compiler.
+  //MENU (65537L)
+  //MENU forcedordinal
   // Can contain NOT expressions, this one evaluates to 2
   STYLE 3 | NOT 1L
   // DWORD, L suffix is optional, VERSION 65537 produces the same result
@@ -257,10 +267,13 @@ dialogex1 DIALOGEX
   CHARACTERISTICS (65537)
   // Can be a number expression (u16, but L suffix is allowed) or a string literal.
   // If there are multiple CLASS statements, the last one takes precedence.
-  // If the penultimate CLASS is a number, it forces the final result to be
-  // a number (the string is parsed and then converted into a number).
+  // If any CLASS is a number, it forces the final result to be a number
+  // (if the last CLASS is a string, it is parsed and then converted
+  // into a number).
   CLASS (65537L)
-  CLASS "forced ordinal"
+  // If the next line was uncommented, it would be miscompiled and converted
+  // into a ordinal/number value by the Win32 RC compiler.
+  //CLASS "forced ordinal"
   // Can contain NOT expressions
   EXSTYLE NOT 1 | 3
   // pointsize (u16, but L suffix is allowed), typeface (must be string literal),
@@ -278,10 +291,17 @@ dialogex1 DIALOGEX
   // character is a number. For example, (65537L) is actually the 'name' (65537L)
   // since it does not get interpreted as a number.
   // If there are multiple MENU statements, the last one takes precedence.
-  // If the penultimate MENU is a number, it forces the final result to be
-  // a number (the string is parsed and then converted into a number).
+  // If any MENU is a number, it forces the final result to be a number
+  // (if the last MENU is a string, it is parsed and then converted
+  // into a number).
   MENU 1
-  MENU (65537L)
+  // If the first character is a digit, then it is miscompiled by the Win32 RC compiler
+  // and treated as a number.
+  //MENU 1ABC
+  // If either of the next lines were uncommented, it would be miscompiled and converted
+  // into a ordinal/number value by the Win32 RC compiler.
+  //MENU (65537L)
+  //MENU forcedordinal
   // Can contain NOT expressions, this one evaluates to 2
   STYLE 3 | NOT 1L
   // DWORD, L suffix is optional, VERSION 65537 produces the same result

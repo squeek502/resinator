@@ -1351,6 +1351,11 @@ pub const Compiler = struct {
                 menu.deinit(self.allocator);
             }
         }
+        var skipped_menu_or_classes = std.ArrayList(*Node.SimpleStatement).init(self.allocator);
+        defer skipped_menu_or_classes.deinit();
+        var last_menu: *Node.SimpleStatement = undefined;
+        var last_class: *Node.SimpleStatement = undefined;
+
         for (node.optional_statements) |optional_statement| {
             switch (optional_statement.id) {
                 .simple_statement => {
@@ -1372,7 +1377,11 @@ pub const Compiler = struct {
                             optional_statement_values.caption = literal_node.token;
                         },
                         .class => {
-                            const forced_ordinal = optional_statement_values.class != null and optional_statement_values.class.? == .ordinal;
+                            const is_duplicate = optional_statement_values.class != null;
+                            if (is_duplicate) {
+                                try skipped_menu_or_classes.append(last_class);
+                            }
+                            const forced_ordinal = is_duplicate and optional_statement_values.class.? == .ordinal;
                             // clear out the old one if it exists
                             if (optional_statement_values.class) |prev| {
                                 prev.deinit(self.allocator);
@@ -1387,15 +1396,41 @@ pub const Compiler = struct {
                                 const literal_node = @fieldParentPtr(Node.Literal, "base", simple_statement.value);
                                 const parsed = try self.parseQuotedStringAsWideString(literal_node.token);
                                 if (forced_ordinal) {
-                                    defer self.allocator.free(parsed);
-                                    optional_statement_values.class = NameOrOrdinal{ .ordinal = res.ForcedOrdinal.fromUtf16Le(parsed) };
-                                } else {
-                                    optional_statement_values.class = NameOrOrdinal{ .name = parsed };
+                                    const ordinal_value = res.ForcedOrdinal.fromUtf16Le(parsed);
+
+                                    try self.addErrorDetails(.{
+                                        .err = .rc_would_miscompile_dialog_class,
+                                        .type = .warning,
+                                        .token = literal_node.token,
+                                        .extra = .{ .number = ordinal_value },
+                                    });
+                                    try self.addErrorDetails(.{
+                                        .err = .rc_would_miscompile_dialog_class,
+                                        .type = .note,
+                                        .print_source_line = false,
+                                        .token = literal_node.token,
+                                        .extra = .{ .number = ordinal_value },
+                                    });
+                                    try self.addErrorDetails(.{
+                                        .err = .rc_would_miscompile_dialog_menu_or_class_id_forced_ordinal,
+                                        .type = .note,
+                                        .print_source_line = false,
+                                        .token = literal_node.token,
+                                        .extra = .{ .menu_or_class = .class },
+                                    });
                                 }
+
+                                optional_statement_values.class = NameOrOrdinal{ .name = parsed };
                             }
+
+                            last_class = simple_statement;
                         },
                         .menu => {
-                            const forced_ordinal = optional_statement_values.menu != null and optional_statement_values.menu.? == .ordinal;
+                            const is_duplicate = optional_statement_values.menu != null;
+                            if (is_duplicate) {
+                                try skipped_menu_or_classes.append(last_menu);
+                            }
+                            const forced_ordinal = is_duplicate and optional_statement_values.menu.? == .ordinal;
                             // clear out the old one if it exists
                             if (optional_statement_values.menu) |prev| {
                                 prev.deinit(self.allocator);
@@ -1410,17 +1445,76 @@ pub const Compiler = struct {
                                 .slice = token_slice,
                                 .code_page = self.input_code_pages.getForToken(literal_node.token),
                             };
-                            if (forced_ordinal or std.ascii.isDigit(token_slice[0])) {
-                                optional_statement_values.menu = .{ .ordinal = res.ForcedOrdinal.fromBytes(bytes) };
-                            } else {
-                                // TODO: Warning if this does any uppercasing of the name, since
-                                //       the Win32 compiler doesn't do uppercase here (but it should
-                                //       since in theory it should match the behavior of resource IDs
-                                //       which are automatically uppercased).
-                                // TODO: Test if this uppercasing actually matters in terms of how MENU
-                                //       is used within a DIALOG/DIALOGEX
-                                optional_statement_values.menu = try NameOrOrdinal.nameFromString(self.allocator, bytes);
+                            optional_statement_values.menu = try NameOrOrdinal.fromString(self.allocator, bytes);
+
+                            // The above uses the exact same logic as the MENU/MENUEX resource id parsing, which means
+                            // that it will convert ASCII characters to uppercase during the 'name' parsing.
+                            // This turns out not to matter (`LoadMenu` does a case-insensitive lookup anyway),
+                            // but it still makes sense to share the uppercasing logic since the MENU parameter
+                            // here is just a reference to a MENU/MENUEX id within the .exe.
+                            // So, because this is an intentional but inconsequential-to-the-user difference
+                            // between resinator and the Win32 RC compiler, we only emit a hint instead of
+                            // a warning.
+                            var did_uppercase = false;
+                            var codepoint_i: usize = 0;
+                            while (bytes.code_page.codepointAt(codepoint_i, bytes.slice)) |codepoint| : (codepoint_i += codepoint.byte_len) {
+                                const c = codepoint.value;
+                                switch (c) {
+                                    'a'...'z' => {
+                                        did_uppercase = true;
+                                        break;
+                                    },
+                                    else => {},
+                                }
                             }
+                            if (did_uppercase) {
+                                try self.addErrorDetails(.{
+                                    .err = .dialog_menu_id_was_uppercased,
+                                    .type = .hint,
+                                    .token = literal_node.token,
+                                });
+                            }
+
+                            // The Win32 RC compiler miscompiles the id in two different scenarios:
+                            // 1. The first character of the ID is a digit, in which case it is always treated as a number
+                            //    no matter what (and therefore does not match how the MENU/MENUEX id is parsed)
+                            // 2. Multiple MENU parameters are specified and any of them are treated as a number, then
+                            //    the last MENU is always treated as a number no matter what
+                            const would_be_treated_as_number = optional_statement_values.menu.? == .name and (forced_ordinal or std.ascii.isDigit(token_slice[0]));
+                            if (would_be_treated_as_number) {
+                                const ordinal_value = res.ForcedOrdinal.fromBytes(bytes);
+                                try self.addErrorDetails(.{
+                                    .err = .rc_would_miscompile_dialog_menu_id,
+                                    .type = .warning,
+                                    .token = literal_node.token,
+                                    .extra = .{ .number = ordinal_value },
+                                });
+                                try self.addErrorDetails(.{
+                                    .err = .rc_would_miscompile_dialog_menu_id,
+                                    .type = .note,
+                                    .print_source_line = false,
+                                    .token = literal_node.token,
+                                    .extra = .{ .number = ordinal_value },
+                                });
+                                if (forced_ordinal) {
+                                    try self.addErrorDetails(.{
+                                        .err = .rc_would_miscompile_dialog_menu_or_class_id_forced_ordinal,
+                                        .type = .note,
+                                        .print_source_line = false,
+                                        .token = literal_node.token,
+                                        .extra = .{ .menu_or_class = .menu },
+                                    });
+                                } else {
+                                    try self.addErrorDetails(.{
+                                        .err = .rc_would_miscompile_dialog_menu_id_starts_with_digit,
+                                        .type = .note,
+                                        .print_source_line = false,
+                                        .token = literal_node.token,
+                                    });
+                                }
+                            }
+
+                            last_menu = simple_statement;
                         },
                         else => {},
                     }
@@ -1444,6 +1538,24 @@ pub const Compiler = struct {
                 else => {},
             }
         }
+
+        for (skipped_menu_or_classes.items) |simple_statement| {
+            const statement_identifier = simple_statement.identifier;
+            const statement_type = rc.OptionalStatements.dialog_map.get(statement_identifier.slice(self.source)) orelse continue;
+            try self.addErrorDetails(.{
+                .err = .duplicate_menu_or_class_skipped,
+                .type = .warning,
+                .token = simple_statement.identifier,
+                .token_span_start = simple_statement.base.getFirstToken(),
+                .token_span_end = simple_statement.base.getFirstToken(),
+                .extra = .{ .menu_or_class = switch (statement_type) {
+                    .menu => .menu,
+                    .class => .class,
+                    else => unreachable,
+                } },
+            });
+        }
+
         const x = evaluateNumberExpression(node.x, self.source, self.input_code_pages);
         const y = evaluateNumberExpression(node.y, self.source, self.input_code_pages);
         const width = evaluateNumberExpression(node.width, self.source, self.input_code_pages);
@@ -3847,22 +3959,33 @@ test "dialog, dialogex resource" {
         "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00H\x00\x00\x00 \x00\x00\x00\xff\xff\x05\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\xff\xff\x00\x00\x00\x00\x01\x00\x00\x00@\x00\xc0\x80\x00\x00\x01\x00\x02\x00\x03\x00\x04\x00\"\x001\x00\"\x00\x00\x00\xff\xff\x02\x00E\x00r\x00r\x00o\x00r\x00!\x00\x00\x00\n\x00\x00\x00\x01\x01s\x00e\x00c\x00o\x00n\x00d\x00\x00\x00",
         std.fs.cwd(),
     );
-    try testCompileWithOutput(
+    try testCompileErrorDetailsWithDir(
+        &.{
+            .{ .type = .warning, .str = "the id of this menu would be miscompiled by the Win32 RC compiler" },
+            .{ .type = .note, .str = "the Win32 RC compiler would evaluate the id as the ordinal/number value 455" },
+            .{ .type = .note, .str = "to avoid the potential miscompilation, the first character of the id should not be a digit" },
+        },
         \\1 DIALOGEX 1, 2, 3, 4
         \\MENU 5+5
         \\CLASS 5+5
         \\{}
     ,
-        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00$\x00\x00\x00 \x00\x00\x00\xff\xff\x05\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x88\x80\x00\x00\x01\x00\x02\x00\x03\x00\x04\x00\xff\xff\xc7\x01\xff\xff\n\x00\x00\x00",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00(\x00\x00\x00 \x00\x00\x00\xff\xff\x05\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x88\x80\x00\x00\x01\x00\x02\x00\x03\x00\x04\x005\x00+\x005\x00\x00\x00\xff\xff\n\x00\x00\x00",
         std.fs.cwd(),
     );
-    try testCompileWithOutput(
+    try testCompileErrorDetailsWithDir(
+        &.{
+            .{ .type = .warning, .str = "this class would be miscompiled by the Win32 RC compiler" },
+            .{ .type = .note, .str = "the Win32 RC compiler would evaluate it as the ordinal/number value 62790" },
+            .{ .type = .note, .str = "to avoid the potential miscompilation, only specify one class per dialog resource" },
+            .{ .type = .warning, .str = "this class was ignored; when multiple class statements are specified, only the last takes precedence" },
+        },
         \\1 DIALOGEX 1, 2, 3, 4
         \\CLASS 5+5
         \\CLASS "forced ordinal"
         \\{}
     ,
-        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\"\x00\x00\x00 \x00\x00\x00\xff\xff\x05\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x88\x80\x00\x00\x01\x00\x02\x00\x03\x00\x04\x00\x00\x00\xff\xffF\xf5\x00\x00\x00\x00",
+        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00<\x00\x00\x00 \x00\x00\x00\xff\xff\x05\x00\xff\xff\x01\x00\x00\x00\x00\x000\x10\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x88\x80\x00\x00\x01\x00\x02\x00\x03\x00\x04\x00\x00\x00f\x00o\x00r\x00c\x00e\x00d\x00 \x00o\x00r\x00d\x00i\x00n\x00a\x00l\x00\x00\x00\x00\x00",
         std.fs.cwd(),
     );
     try testCompileWithOutput(

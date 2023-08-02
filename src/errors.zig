@@ -115,6 +115,7 @@ pub const ErrorDetails = struct {
         bmp_read_error: BitmapReadError,
         accelerator_error: AcceleratorError,
         statement_with_u16_param: StatementWithU16Param,
+        menu_or_class: enum { class, menu },
     } = .{ .none = {} },
 
     pub const Type = enum {
@@ -370,6 +371,16 @@ pub const ErrorDetails = struct {
         /// `statement_with_u16_param` is populated
         rc_would_error_u16_with_l_suffix,
         result_contains_fontdir,
+        /// `number` is populated and contains the ordinal value that the id would be miscompiled to
+        rc_would_miscompile_dialog_menu_id,
+        /// `number` is populated and contains the ordinal value that the value would be miscompiled to
+        rc_would_miscompile_dialog_class,
+        /// `menu_or_class` is populated and contains the type of the parameter statement
+        rc_would_miscompile_dialog_menu_or_class_id_forced_ordinal,
+        rc_would_miscompile_dialog_menu_id_starts_with_digit,
+        dialog_menu_id_was_uppercased,
+        /// `menu_or_class` is populated and contains the type of the parameter statement
+        duplicate_menu_or_class_skipped,
 
         // Literals
         /// `number` is populated
@@ -682,6 +693,33 @@ pub const ErrorDetails = struct {
                 .hint => return,
             },
             .result_contains_fontdir => return,
+            .rc_would_miscompile_dialog_menu_id => switch (self.type) {
+                .err, .warning => return writer.print("the id of this menu would be miscompiled by the Win32 RC compiler", .{}),
+                .note => return writer.print("the Win32 RC compiler would evaluate the id as the ordinal/number value {d}", .{self.extra.number}),
+                .hint => return,
+            },
+            .rc_would_miscompile_dialog_class => switch (self.type) {
+                .err, .warning => return writer.print("this class would be miscompiled by the Win32 RC compiler", .{}),
+                .note => return writer.print("the Win32 RC compiler would evaluate it as the ordinal/number value {d}", .{self.extra.number}),
+                .hint => return,
+            },
+            .rc_would_miscompile_dialog_menu_or_class_id_forced_ordinal => switch (self.type) {
+                .err, .warning => return,
+                .note => return writer.print("to avoid the potential miscompilation, only specify one {s} per dialog resource", .{@tagName(self.extra.menu_or_class)}),
+                .hint => return,
+            },
+            .rc_would_miscompile_dialog_menu_id_starts_with_digit => switch (self.type) {
+                .err, .warning => return,
+                .note => return writer.writeAll("to avoid the potential miscompilation, the first character of the id should not be a digit"),
+                .hint => return,
+            },
+            .dialog_menu_id_was_uppercased => return,
+            .duplicate_menu_or_class_skipped => {
+                return writer.print("this {s} was ignored; when multiple {s} statements are specified, only the last takes precedence", .{
+                    @tagName(self.extra.menu_or_class),
+                    @tagName(self.extra.menu_or_class),
+                });
+            },
             .rc_would_miscompile_codepoint_byte_swap => switch (self.type) {
                 .err, .warning => return writer.print("codepoint U+{X} within a string literal would be miscompiled by the Win32 RC compiler (the bytes of the UTF-16 code unit would be swapped)", .{self.extra.number}),
                 .note => return writer.print("to avoid the potential miscompilation, an integer escape sequence in a wide string literal could be used instead: L\"\\x{X}\"", .{self.extra.number}),
