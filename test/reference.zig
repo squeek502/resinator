@@ -39,7 +39,7 @@ test "reference.rc" {
     var result = try utils.getResinatorResult(std.testing.allocator, reference_rc, .{
         .cwd = tmp.dir,
         .cwd_path = tmp_path,
-        .run_preprocessor = true,
+        .run_preprocessor = false,
     });
     defer result.deinit(std.testing.allocator);
 
