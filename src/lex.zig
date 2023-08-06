@@ -10,6 +10,7 @@ const columnsUntilTabStop = @import("literals.zig").columnsUntilTabStop;
 const code_pages = @import("code_pages.zig");
 const CodePage = code_pages.CodePage;
 const SourceMappings = @import("source_mapping.zig").SourceMappings;
+const isNonAsciiDigit = @import("utils.zig").isNonAsciiDigit;
 
 const dumpTokensDuringTests = false;
 
@@ -181,6 +182,7 @@ pub const LexError = error{
     UnfinishedStringLiteral,
     StringLiteralTooLong,
     InvalidNumberWithExponent,
+    InvalidDigitCharacterInNumberLiteral,
     IllegalByte,
     IllegalByteOutsideStringLiterals,
     IllegalCodepointOutsideStringLiterals,
@@ -489,7 +491,7 @@ pub const Lexer = struct {
                             self.at_start_of_line = false;
                         }
                     },
-                    '0'...'9', '~', '²', '³', '¹' => {
+                    '0'...'9', '~' => {
                         state = .number_literal;
                         still_could_have_exponent = true;
                         exponent_index = null;
@@ -526,6 +528,15 @@ pub const Lexer = struct {
                         break;
                     },
                     else => {
+                        if (isNonAsciiDigit(c)) {
+                            self.error_context_token = .{
+                                .id = .number,
+                                .start = result.start,
+                                .end = self.index + 1,
+                                .line_number = self.line_handler.line_number,
+                            };
+                            return error.InvalidDigitCharacterInNumberLiteral;
+                        }
                         state = .literal;
                         self.at_start_of_line = false;
                     },
@@ -581,6 +592,15 @@ pub const Lexer = struct {
                         }
                     },
                     else => {
+                        if (isNonAsciiDigit(c)) {
+                            self.error_context_token = .{
+                                .id = .number,
+                                .start = result.start,
+                                .end = self.index + 1,
+                                .line_number = self.line_handler.line_number,
+                            };
+                            return error.InvalidDigitCharacterInNumberLiteral;
+                        }
                         still_could_have_exponent = false;
                     },
                 },
@@ -998,6 +1018,7 @@ pub const Lexer = struct {
                 .extra = .{ .number = self.max_string_literal_codepoints },
             },
             error.InvalidNumberWithExponent => ErrorDetails.Error.invalid_number_with_exponent,
+            error.InvalidDigitCharacterInNumberLiteral => ErrorDetails.Error.invalid_digit_character_in_number_literal,
             error.IllegalByte => ErrorDetails.Error.illegal_byte,
             error.IllegalByteOutsideStringLiterals => ErrorDetails.Error.illegal_byte_outside_string_literals,
             error.IllegalCodepointOutsideStringLiterals => ErrorDetails.Error.illegal_codepoint_outside_string_literals,
@@ -1059,13 +1080,8 @@ test "superscript chars and code pages" {
     const utf8_source = "²";
     const windows1252_source = "\xB2";
 
-    const windows1252_encoded_as_windows1252 = try firstToken(windows1252_source, .windows1252, .normal);
-    try std.testing.expectEqual(Token{
-        .id = .number,
-        .start = 0,
-        .end = 1,
-        .line_number = 1,
-    }, windows1252_encoded_as_windows1252);
+    const windows1252_encoded_as_windows1252 = firstToken(windows1252_source, .windows1252, .normal);
+    try std.testing.expectError(error.InvalidDigitCharacterInNumberLiteral, windows1252_encoded_as_windows1252);
 
     const utf8_encoded_as_windows1252 = try firstToken(utf8_source, .windows1252, .normal);
     try std.testing.expectEqual(Token{
@@ -1075,13 +1091,8 @@ test "superscript chars and code pages" {
         .line_number = 1,
     }, utf8_encoded_as_windows1252);
 
-    const utf8_encoded_as_utf8 = try firstToken(utf8_source, .utf8, .normal);
-    try std.testing.expectEqual(Token{
-        .id = .number,
-        .start = 0,
-        .end = 2,
-        .line_number = 1,
-    }, utf8_encoded_as_utf8);
+    const utf8_encoded_as_utf8 = firstToken(utf8_source, .utf8, .normal);
+    try std.testing.expectError(error.InvalidDigitCharacterInNumberLiteral, utf8_encoded_as_utf8);
 
     const windows1252_encoded_as_utf8 = try firstToken(windows1252_source, .utf8, .normal);
     try std.testing.expectEqual(Token{

@@ -279,6 +279,7 @@ pub const ErrorDetails = struct {
         unfinished_string_literal,
         string_literal_too_long,
         invalid_number_with_exponent,
+        invalid_digit_character_in_number_literal,
         illegal_byte,
         illegal_byte_outside_string_literals,
         illegal_codepoint_outside_string_literals,
@@ -381,6 +382,7 @@ pub const ErrorDetails = struct {
         dialog_menu_id_was_uppercased,
         /// `menu_or_class` is populated and contains the type of the parameter statement
         duplicate_menu_or_class_skipped,
+        invalid_digit_character_in_ordinal,
 
         // Literals
         /// `number` is populated
@@ -388,6 +390,10 @@ pub const ErrorDetails = struct {
         /// `number` is populated
         rc_would_miscompile_codepoint_skip,
         tab_converted_to_spaces,
+
+        // General (used in various places)
+        /// `number` is populated and contains the value that the ordinal would have in the Win32 RC compiler implementation
+        win32_non_ascii_ordinal,
     };
 
     pub fn render(self: ErrorDetails, writer: anytype, source: []const u8, strings: []const []const u8) !void {
@@ -400,6 +406,11 @@ pub const ErrorDetails = struct {
             },
             .invalid_number_with_exponent => {
                 return writer.print("base 10 number literal with exponent is not allowed: {s}", .{self.token.slice(source)});
+            },
+            .invalid_digit_character_in_number_literal => switch (self.type) {
+                .err, .warning => return writer.writeAll("non-ASCII digit characters are not allowed in number literals"),
+                .note => return writer.writeAll("the Win32 RC compiler allows non-ASCII digit characters, but will miscompile them"),
+                .hint => return,
             },
             .illegal_byte => {
                 return writer.print("character '{s}' is not allowed", .{std.fmt.fmtSliceEscapeUpper(self.token.slice(source))});
@@ -720,6 +731,9 @@ pub const ErrorDetails = struct {
                     @tagName(self.extra.menu_or_class),
                 });
             },
+            .invalid_digit_character_in_ordinal => {
+                return writer.writeAll("non-ASCII digit characters are not allowed in ordinal (number) values");
+            },
             .rc_would_miscompile_codepoint_byte_swap => switch (self.type) {
                 .err, .warning => return writer.print("codepoint U+{X} within a string literal would be miscompiled by the Win32 RC compiler (the bytes of the UTF-16 code unit would be swapped)", .{self.extra.number}),
                 .note => return writer.print("to avoid the potential miscompilation, an integer escape sequence in a wide string literal could be used instead: L\"\\x{X}\"", .{self.extra.number}),
@@ -733,6 +747,11 @@ pub const ErrorDetails = struct {
             .tab_converted_to_spaces => switch (self.type) {
                 .err, .warning => return writer.writeAll("the tab character(s) in this string will be converted into a variable number of spaces (determined by the column of the tab character in the .rc file)"),
                 .note => return writer.writeAll("to include the tab character itself in a string, the escape sequence \\t should be used"),
+                .hint => return,
+            },
+            .win32_non_ascii_ordinal => switch (self.type) {
+                .err, .warning => unreachable,
+                .note => return writer.print("the Win32 RC compiler would accept this as an ordinal but its value would be {}", .{self.extra.number}),
                 .hint => return,
             },
         }

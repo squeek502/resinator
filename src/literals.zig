@@ -848,9 +848,6 @@ pub fn parseNumberLiteral(bytes: SourceBytes) Number {
             break;
         }
         const digit = switch (c) {
-            // I have no idea why this is the case, but the Windows RC compiler
-            // treats ¹, ², and ³ characters as valid digits when the radix is 10
-            '¹', '²', '³' => if (radix != 10) break else c - 0x30,
             // On invalid digit for the radix, just stop parsing but don't fail
             0x00...0x7F => std.fmt.charToDigit(@intCast(c), radix) catch break,
             else => break,
@@ -904,24 +901,4 @@ test "parse number literal" {
 
     // anything after L is ignored
     try std.testing.expectEqual(Number{ .value = 0x2A, .is_long = true }, parseNumberLiteral(.{ .slice = "0x2aL5", .code_page = .windows1252 }));
-}
-
-test "superscript characters in number literals" {
-    // In Windows-1252, ² is \xb2, ³ is \xb3, ¹ is \xb9
-    try std.testing.expectEqual(Number{ .value = 130, .is_long = false }, parseNumberLiteral(.{ .slice = "\xb2", .code_page = .windows1252 }));
-    try std.testing.expectEqual(Number{ .value = 131, .is_long = false }, parseNumberLiteral(.{ .slice = "\xb3", .code_page = .windows1252 }));
-    try std.testing.expectEqual(Number{ .value = 137, .is_long = false }, parseNumberLiteral(.{ .slice = "\xb9", .code_page = .windows1252 }));
-
-    try std.testing.expectEqual(Number{ .value = 147, .is_long = false }, parseNumberLiteral(.{ .slice = "1\xb9", .code_page = .windows1252 }));
-    try std.testing.expectEqual(Number{ .value = 157, .is_long = false }, parseNumberLiteral(.{ .slice = "2\xb9", .code_page = .windows1252 }));
-    try std.testing.expectEqual(Number{ .value = 167, .is_long = false }, parseNumberLiteral(.{ .slice = "3\xb9", .code_page = .windows1252 }));
-    try std.testing.expectEqual(Number{ .value = 227, .is_long = false }, parseNumberLiteral(.{ .slice = "9\xb9", .code_page = .windows1252 }));
-
-    try std.testing.expectEqual(Number{ .value = 237, .is_long = false }, parseNumberLiteral(.{ .slice = "10\xb9", .code_page = .windows1252 }));
-    try std.testing.expectEqual(Number{ .value = 337, .is_long = false }, parseNumberLiteral(.{ .slice = "20\xb9", .code_page = .windows1252 }));
-
-    try std.testing.expectEqual(Number{ .value = 1507, .is_long = false }, parseNumberLiteral(.{ .slice = "\xb9\xb9", .code_page = .windows1252 }));
-    try std.testing.expectEqual(Number{ .value = 15131, .is_long = false }, parseNumberLiteral(.{ .slice = "\xb9\xb2\xb3", .code_page = .windows1252 }));
-
-    try std.testing.expectEqual(Number{ .value = 15131, .is_long = false }, parseNumberLiteral(.{ .slice = "¹²³", .code_page = .utf8 }));
 }

@@ -415,11 +415,27 @@ pub const Parser = struct {
             };
             const maybe_ordinal = res.NameOrOrdinal.maybeOrdinalFromString(id_bytes);
             if (maybe_ordinal == null) {
-                return self.addErrorDetailsAndFail(ErrorDetails{
-                    .err = .id_must_be_ordinal,
-                    .token = id_token,
-                    .extra = .{ .resource = resource },
-                });
+                const would_be_win32_rc_ordinal = res.NameOrOrdinal.maybeNonAsciiOrdinalFromString(id_bytes);
+                if (would_be_win32_rc_ordinal) |win32_rc_ordinal| {
+                    try self.addErrorDetails(ErrorDetails{
+                        .err = .id_must_be_ordinal,
+                        .token = id_token,
+                        .extra = .{ .resource = resource },
+                    });
+                    return self.addErrorDetailsAndFail(ErrorDetails{
+                        .err = .win32_non_ascii_ordinal,
+                        .token = id_token,
+                        .type = .note,
+                        .print_source_line = false,
+                        .extra = .{ .number = win32_rc_ordinal.ordinal },
+                    });
+                } else {
+                    return self.addErrorDetailsAndFail(ErrorDetails{
+                        .err = .id_must_be_ordinal,
+                        .token = id_token,
+                        .extra = .{ .resource = resource },
+                    });
+                }
             }
         }
 
@@ -1782,6 +1798,16 @@ pub const Parser = struct {
                     details.type = .warning;
                     try self.addErrorDetails(details);
                     continue;
+                },
+                error.InvalidDigitCharacterInNumberLiteral => {
+                    const details = self.lexer.getErrorDetails(err);
+                    try self.addErrorDetails(details);
+                    return self.addErrorDetailsAndFail(.{
+                        .err = details.err,
+                        .type = .note,
+                        .token = details.token,
+                        .print_source_line = false,
+                    });
                 },
                 else => return self.addErrorDetailsAndFail(self.lexer.getErrorDetails(err)),
             };

@@ -364,24 +364,8 @@ pub const Compiler = struct {
     }
 
     pub fn writeResourceExternal(self: *Compiler, node: *Node.ResourceExternal, writer: anytype) !void {
-        const id_bytes = SourceBytes{
-            .slice = node.id.slice(self.source),
-            .code_page = self.input_code_pages.getForToken(node.id),
-        };
-        const type_bytes = SourceBytes{
-            .slice = node.type.slice(self.source),
-            .code_page = self.input_code_pages.getForToken(node.type),
-        };
         // Init header with data size zero for now, will need to fill it in later
-        var header = try ResourceHeader.init(
-            self.allocator,
-            id_bytes,
-            type_bytes,
-            0,
-            self.state.language,
-            self.state.version,
-            self.state.characteristics,
-        );
+        var header = try self.resourceHeader(node.id, node.type, .{});
         defer header.deinit(self.allocator);
 
         const maybe_predefined_type = header.predefinedResourceType();
@@ -1161,23 +1145,10 @@ pub const Compiler = struct {
     }
 
     pub fn writeResourceHeader(self: *Compiler, writer: anytype, id_token: Token, type_token: Token, data_size: u32, common_resource_attributes: []Token, language: res.Language) !void {
-        const id_bytes = SourceBytes{
-            .slice = id_token.slice(self.source),
-            .code_page = self.input_code_pages.getForToken(id_token),
-        };
-        const type_bytes = SourceBytes{
-            .slice = type_token.slice(self.source),
-            .code_page = self.input_code_pages.getForToken(type_token),
-        };
-        var header = try ResourceHeader.init(
-            self.allocator,
-            id_bytes,
-            type_bytes,
-            data_size,
-            language,
-            self.state.version,
-            self.state.characteristics,
-        );
+        var header = try self.resourceHeader(id_token, type_token, .{
+            .language = language,
+            .data_size = data_size,
+        });
         defer header.deinit(self.allocator);
 
         header.applyMemoryFlags(common_resource_attributes, self.source);
@@ -1247,23 +1218,9 @@ pub const Compiler = struct {
         // This intCast can't fail because the limitedWriter above guarantees that
         // we will never write more than maxInt(u32) bytes.
         const data_size: u32 = @intCast(data_buffer.items.len);
-        const id_bytes = SourceBytes{
-            .slice = node.id.slice(self.source),
-            .code_page = self.input_code_pages.getForToken(node.id),
-        };
-        const type_bytes = SourceBytes{
-            .slice = node.type.slice(self.source),
-            .code_page = self.input_code_pages.getForToken(node.type),
-        };
-        var header = try ResourceHeader.init(
-            self.allocator,
-            id_bytes,
-            type_bytes,
-            data_size,
-            self.state.language,
-            self.state.version,
-            self.state.characteristics,
-        );
+        var header = try self.resourceHeader(node.id, node.type, .{
+            .data_size = data_size,
+        });
         defer header.deinit(self.allocator);
 
         header.applyMemoryFlags(node.common_resource_attributes, self.source);
@@ -1437,6 +1394,23 @@ pub const Compiler = struct {
                                 .code_page = self.input_code_pages.getForToken(literal_node.token),
                             };
                             optional_statement_values.menu = try NameOrOrdinal.fromString(self.allocator, bytes);
+
+                            if (optional_statement_values.menu.? == .name) {
+                                if (NameOrOrdinal.maybeNonAsciiOrdinalFromString(bytes)) |win32_rc_ordinal| {
+                                    try self.addErrorDetails(.{
+                                        .err = .invalid_digit_character_in_ordinal,
+                                        .type = .err,
+                                        .token = literal_node.token,
+                                    });
+                                    return self.addErrorDetailsAndFail(.{
+                                        .err = .win32_non_ascii_ordinal,
+                                        .type = .note,
+                                        .token = literal_node.token,
+                                        .print_source_line = false,
+                                        .extra = .{ .number = win32_rc_ordinal.ordinal },
+                                    });
+                                }
+                            }
 
                             // Need to keep track of some properties of the value
                             // in order to emit the appropriate warning(s) later on.
@@ -1650,23 +1624,9 @@ pub const Compiler = struct {
         }
 
         const data_size: u32 = @intCast(data_buffer.items.len);
-        const id_bytes = SourceBytes{
-            .slice = node.id.slice(self.source),
-            .code_page = self.input_code_pages.getForToken(node.id),
-        };
-        const type_bytes = SourceBytes{
-            .slice = node.type.slice(self.source),
-            .code_page = self.input_code_pages.getForToken(node.type),
-        };
-        var header = try ResourceHeader.init(
-            self.allocator,
-            id_bytes,
-            type_bytes,
-            data_size,
-            self.state.language,
-            self.state.version,
-            self.state.characteristics,
-        );
+        var header = try self.resourceHeader(node.id, node.type, .{
+            .data_size = data_size,
+        });
         defer header.deinit(self.allocator);
 
         header.applyMemoryFlags(node.common_resource_attributes, self.source);
@@ -1978,23 +1938,9 @@ pub const Compiler = struct {
         }
 
         const data_size: u32 = @intCast(data_buffer.items.len);
-        const id_bytes = SourceBytes{
-            .slice = node.id.slice(self.source),
-            .code_page = self.input_code_pages.getForToken(node.id),
-        };
-        const type_bytes = SourceBytes{
-            .slice = node.type.slice(self.source),
-            .code_page = self.input_code_pages.getForToken(node.type),
-        };
-        var header = try ResourceHeader.init(
-            self.allocator,
-            id_bytes,
-            type_bytes,
-            data_size,
-            self.state.language,
-            self.state.version,
-            self.state.characteristics,
-        );
+        var header = try self.resourceHeader(node.id, node.type, .{
+            .data_size = data_size,
+        });
         defer header.deinit(self.allocator);
 
         header.applyMemoryFlags(node.common_resource_attributes, self.source);
@@ -2066,19 +2012,9 @@ pub const Compiler = struct {
         // This intCast can't fail because the limitedWriter above guarantees that
         // we will never write more than maxInt(u32) bytes.
         const data_size: u32 = @intCast(data_buffer.items.len);
-        const id_bytes = SourceBytes{
-            .slice = node.id.slice(self.source),
-            .code_page = self.input_code_pages.getForToken(node.id),
-        };
-        var header = try ResourceHeader.init(
-            self.allocator,
-            id_bytes,
-            type_bytes,
-            data_size,
-            self.state.language,
-            self.state.version,
-            self.state.characteristics,
-        );
+        var header = try self.resourceHeader(node.id, node.type, .{
+            .data_size = data_size,
+        });
         defer header.deinit(self.allocator);
 
         header.applyMemoryFlags(node.common_resource_attributes, self.source);
@@ -2342,17 +2278,9 @@ pub const Compiler = struct {
         // And now that we know the full size of this node (including its children), set its size
         std.mem.writeIntLittle(u16, data_buffer.items[0..2], data_size);
 
-        const type_bytes = self.sourceBytesForToken(node.versioninfo);
-        const id_bytes = self.sourceBytesForToken(node.id);
-        var header = try ResourceHeader.init(
-            self.allocator,
-            id_bytes,
-            type_bytes,
-            data_size,
-            self.state.language,
-            self.state.version,
-            self.state.characteristics,
-        );
+        var header = try self.resourceHeader(node.id, node.versioninfo, .{
+            .data_size = data_size,
+        });
         defer header.deinit(self.allocator);
 
         header.applyMemoryFlags(node.common_resource_attributes, self.source);
@@ -2527,6 +2455,57 @@ pub const Compiler = struct {
         }
     }
 
+    pub const ResourceHeaderOptions = struct {
+        language: ?res.Language = null,
+        data_size: DWORD = 0,
+    };
+
+    pub fn resourceHeader(self: *Compiler, id_token: Token, type_token: Token, options: ResourceHeaderOptions) !ResourceHeader {
+        const id_bytes = self.sourceBytesForToken(id_token);
+        const type_bytes = self.sourceBytesForToken(type_token);
+        return ResourceHeader.init(
+            self.allocator,
+            id_bytes,
+            type_bytes,
+            options.data_size,
+            options.language orelse self.state.language,
+            self.state.version,
+            self.state.characteristics,
+        ) catch |err| switch (err) {
+            error.OutOfMemory => |e| return e,
+            error.TypeNonAsciiOrdinal => {
+                const win32_rc_ordinal = NameOrOrdinal.maybeNonAsciiOrdinalFromString(type_bytes).?;
+                try self.addErrorDetails(.{
+                    .err = .invalid_digit_character_in_ordinal,
+                    .type = .err,
+                    .token = type_token,
+                });
+                return self.addErrorDetailsAndFail(.{
+                    .err = .win32_non_ascii_ordinal,
+                    .type = .note,
+                    .token = type_token,
+                    .print_source_line = false,
+                    .extra = .{ .number = win32_rc_ordinal.ordinal },
+                });
+            },
+            error.IdNonAsciiOrdinal => {
+                const win32_rc_ordinal = NameOrOrdinal.maybeNonAsciiOrdinalFromString(id_bytes).?;
+                try self.addErrorDetails(.{
+                    .err = .invalid_digit_character_in_ordinal,
+                    .type = .err,
+                    .token = id_token,
+                });
+                return self.addErrorDetailsAndFail(.{
+                    .err = .win32_non_ascii_ordinal,
+                    .type = .note,
+                    .token = id_token,
+                    .print_source_line = false,
+                    .extra = .{ .number = win32_rc_ordinal.ordinal },
+                });
+            },
+        };
+    }
+
     pub const ResourceHeader = struct {
         name_value: NameOrOrdinal,
         type_value: NameOrOrdinal,
@@ -2537,7 +2516,9 @@ pub const Compiler = struct {
         characteristics: DWORD,
         data_version: DWORD = 0,
 
-        pub fn init(allocator: Allocator, id_bytes: SourceBytes, type_bytes: SourceBytes, data_size: DWORD, language: res.Language, version: DWORD, characteristics: DWORD) !ResourceHeader {
+        pub const InitError = error{ OutOfMemory, IdNonAsciiOrdinal, TypeNonAsciiOrdinal };
+
+        pub fn init(allocator: Allocator, id_bytes: SourceBytes, type_bytes: SourceBytes, data_size: DWORD, language: res.Language, version: DWORD, characteristics: DWORD) InitError!ResourceHeader {
             const type_value = type: {
                 const resource_type = Resource.fromString(type_bytes);
                 if (res.RT.fromResource(resource_type)) |rt_constant| {
@@ -2547,9 +2528,19 @@ pub const Compiler = struct {
                 }
             };
             errdefer type_value.deinit(allocator);
+            if (type_value == .name) {
+                if (NameOrOrdinal.maybeNonAsciiOrdinalFromString(type_bytes)) |_| {
+                    return error.TypeNonAsciiOrdinal;
+                }
+            }
 
             const name_value = try NameOrOrdinal.fromString(allocator, id_bytes);
             errdefer name_value.deinit(allocator);
+            if (name_value == .name) {
+                if (NameOrOrdinal.maybeNonAsciiOrdinalFromString(id_bytes)) |_| {
+                    return error.IdNonAsciiOrdinal;
+                }
+            }
 
             const predefined_resource_type = type_value.predefinedResourceType();
 
@@ -4461,10 +4452,10 @@ test "filename evaluation" {
         null,
         tmp_dir.dir,
     );
-    // Same with number literals (0xB2 is ² in Windows-1252)
+    // Number literals are accepted
     try testCompileErrorDetailsWithDir(
-        &.{.{ .type = .err, .str = "unable to open file '-1²': FileNotFound" }},
-        "#pragma code_page(1252)\n1 RCDATA -1\xB2",
+        &.{.{ .type = .err, .str = "unable to open file '-12': FileNotFound" }},
+        "#pragma code_page(1252)\n1 RCDATA -12",
         null,
         tmp_dir.dir,
     );

@@ -9,6 +9,7 @@ const literals = @import("literals.zig");
 const SourceBytes = literals.SourceBytes;
 const Codepoint = @import("code_pages.zig").Codepoint;
 const lang = @import("lang.zig");
+const isNonAsciiDigit = @import("utils.zig").isNonAsciiDigit;
 
 /// https://learn.microsoft.com/en-us/windows/win32/menurc/resource-types
 pub const RT = enum(u8) {
@@ -300,6 +301,9 @@ pub const NameOrOrdinal = union(enum) {
         return NameOrOrdinal{ .name = try buf.toOwnedSliceSentinel(0) };
     }
 
+    /// Returns `null` if the bytes do not form a valid number.
+    /// Does not allow non-ASCII digits (which the Win32 RC compiler does allow
+    /// in base 10 numbers, see `maybeNonAsciiOrdinalFromString`).
     pub fn maybeOrdinalFromString(bytes: SourceBytes) ?NameOrOrdinal {
         var buf = bytes.slice;
         var radix: u8 = 10;
@@ -322,9 +326,6 @@ pub const NameOrOrdinal = union(enum) {
         while (bytes.code_page.codepointAt(i, buf)) |codepoint| : (i += codepoint.byte_len) {
             const c = codepoint.value;
             const digit: u8 = switch (c) {
-                // I have no idea why this is the case, but the Windows RC compiler
-                // treats ¹, ², and ³ characters as valid digits when the radix is 10
-                '¹', '²', '³' => if (radix != 10) break else @intCast(c - 0x30),
                 0x00...0x7F => std.fmt.charToDigit(@intCast(c), radix) catch switch (radix) {
                     10 => return null,
                     // non-hex-digits are treated as a terminator rather than invalidating
@@ -334,6 +335,47 @@ pub const NameOrOrdinal = union(enum) {
                     else => unreachable,
                 },
                 else => if (radix == 10) return null else break,
+            };
+
+            if (result != 0) {
+                result *%= radix;
+            }
+            result +%= digit;
+        }
+
+        // Anything that resolves to zero is not interpretted as a number
+        if (result == 0) return null;
+        return NameOrOrdinal{ .ordinal = result };
+    }
+
+    /// The Win32 RC compiler uses `iswdigit` for digit detection for base 10
+    /// numbers, which means that non-ASCII digits are 'accepted' but handled
+    /// in a totally unintuitive manner, leading to arbitrary results.
+    ///
+    /// This function will return the value that such an ordinal 'would' have
+    /// if it was run through the Win32 RC compiler. This allows us to disallow
+    /// non-ASCII digits in number literals but still detect when the Win32
+    /// RC compiler would have allowed them, so that a proper warning/error
+    /// can be emitted.
+    pub fn maybeNonAsciiOrdinalFromString(bytes: SourceBytes) ?NameOrOrdinal {
+        var buf = bytes.slice;
+        const radix = 10;
+        if (buf.len > 2 and buf[0] == '0') {
+            switch (buf[1]) {
+                // We only care about base 10 numbers here
+                'x', 'X' => return null,
+                else => {},
+            }
+        }
+
+        var i: usize = 0;
+        var result: u16 = 0;
+        while (bytes.code_page.codepointAt(i, buf)) |codepoint| : (i += codepoint.byte_len) {
+            const c = codepoint.value;
+            const digit: u16 = digit: {
+                const is_digit = (c >= '0' and c <= '9') or isNonAsciiDigit(c);
+                if (!is_digit) return null;
+                break :digit @intCast(c - '0');
             };
 
             if (result != 0) {

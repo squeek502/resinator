@@ -140,6 +140,8 @@ The plan is to use fuzz testing with the `rc` tool as an oracle to ensure that `
   + The Win32 RC compiler will not error and instead the number of controls will overflow and wrap back around to 0. This leads to an incorrect dialog resource.
 - `resinator` will error if a control within a `DIALOG`/`DIALOGEX` resource contains more extra data than the max of a `u16`, since the dialog needs to be able to specify the number of extra data bytes of each control as a `u16`.
   + The Win32 RC compiler will not error and instead the extra data length of the control will overflow and wrap back around to 0. This leads to an incorrect dialog resource.
+- `resinator` will error if non-ASCII digit characters are used in a number literal or resource id/type ordinal
+  + The Win32 RC compiler allows non-ASCII digit characters in base 10 number literals and subtracts the value of the ASCII `'0'` character from their codepoint value to get their 'digit' value, which leads to totally arbitrary results (e.g. the character `²` has a codepoint of `178`, and `178 - '0' = 130`, so a number literal like `1²3` would end up as the number value `1403` when evaluated). This is the case for any UTF-16 code unit for which the Windows implementation of `iswdigit` returns true.
 
 ### Unavoidable divergences from the MSVC++ `rc` tool
 
