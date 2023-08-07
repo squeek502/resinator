@@ -65,7 +65,7 @@ pub fn build(b: *std.build.Builder) void {
         .optimize = mode,
     });
     const try_all_rcs_compile = b.step("try_all_rcs", "Build/install try_all_rcs exe");
-    const install_try_all_rcs_exe = b.addInstallArtifact(try_all_rcs_exe);
+    const install_try_all_rcs_exe = b.addInstallArtifact(try_all_rcs_exe, .{});
     try_all_rcs_compile.dependOn(&install_try_all_rcs_exe.step);
 
     const fuzzy_max_iterations = b.option(u64, "fuzzy-iterations", "The max iterations for fuzzy tests (default: 1000)") orelse 1000;
@@ -97,7 +97,7 @@ pub fn build(b: *std.build.Builder) void {
     });
     fuzz_winafl_exe.addModule("resinator", resinator);
     const fuzz_winafl_compile = b.step("fuzz_winafl", "Build/install fuzz_winafl exe");
-    const install_fuzz_winafl = b.addInstallArtifact(fuzz_winafl_exe);
+    const install_fuzz_winafl = b.addInstallArtifact(fuzz_winafl_exe, .{});
     fuzz_winafl_compile.dependOn(&install_fuzz_winafl.step);
 }
 
@@ -177,7 +177,7 @@ fn addFuzzer(
     fuzz_debug_exe.addModule("resinator", resinator);
 
     // Only install fuzz-debug when the fuzz step is run
-    const install_fuzz_debug_exe = b.addInstallArtifact(fuzz_debug_exe);
+    const install_fuzz_debug_exe = b.addInstallArtifact(fuzz_debug_exe, .{});
     fuzz_compile_run.dependOn(&install_fuzz_debug_exe.step);
 
     return FuzzerSteps{
