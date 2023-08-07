@@ -54,6 +54,8 @@ pub fn compare(win32_result: *Win32Result, resinator_result: *ResinatorResult) !
             .close_paren_expression,
             .found_c_style_escaped_quote,
             .unary_plus_expression,
+            .invalid_digit_character_in_number_literal,
+            .invalid_digit_character_in_ordinal,
         })) {
             return;
         }
