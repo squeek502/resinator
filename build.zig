@@ -58,16 +58,6 @@ pub fn build(b: *std.build.Builder) void {
         });
     }
 
-    const try_all_rcs_exe = b.addExecutable(.{
-        .name = "try_all_rcs",
-        .root_source_file = .{ .path = "test/try_all_rcs.zig" },
-        .target = target,
-        .optimize = mode,
-    });
-    const try_all_rcs_compile = b.step("try_all_rcs", "Build/install try_all_rcs exe");
-    const install_try_all_rcs_exe = b.addInstallArtifact(try_all_rcs_exe, .{});
-    try_all_rcs_compile.dependOn(&install_try_all_rcs_exe.step);
-
     const fuzzy_max_iterations = b.option(u64, "fuzzy-iterations", "The max iterations for fuzzy tests (default: 1000)") orelse 1000;
 
     const test_options = b.addOptions();
