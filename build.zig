@@ -33,6 +33,7 @@ pub fn build(b: *std.build.Builder) void {
     const run_exe_tests = b.addRunArtifact(exe_tests);
 
     const reference_tests = b.addTest(.{
+        .name = "reference",
         .root_source_file = .{ .path = "test/reference.zig" },
         .target = target,
         .optimize = mode,
@@ -41,9 +42,31 @@ pub fn build(b: *std.build.Builder) void {
     reference_tests.addModule("resinator", resinator);
     const run_reference_tests = b.addRunArtifact(reference_tests);
 
+    const parser_tests = b.addTest(.{
+        .name = "parse",
+        .root_source_file = .{ .path = "test/parse.zig" },
+        .target = target,
+        .optimize = mode,
+        .filter = test_filter,
+    });
+    parser_tests.addModule("resinator", resinator);
+    const run_parser_tests = b.addRunArtifact(parser_tests);
+
+    const compiler_tests = b.addTest(.{
+        .name = "compile",
+        .root_source_file = .{ .path = "test/compile.zig" },
+        .target = target,
+        .optimize = mode,
+        .filter = test_filter,
+    });
+    compiler_tests.addModule("resinator", resinator);
+    const run_compiler_tests = b.addRunArtifact(compiler_tests);
+
     const test_step = b.step("test", "Run library tests");
     test_step.dependOn(&run_exe_tests.step);
     test_step.dependOn(&run_reference_tests.step);
+    test_step.dependOn(&run_parser_tests.step);
+    test_step.dependOn(&run_compiler_tests.step);
 
     // TODO: coverage across all test steps?
     const coverage = b.option(bool, "test-coverage", "Generate test coverage") orelse false;
