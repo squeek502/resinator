@@ -43,8 +43,10 @@ pub const usage_string =
     \\  /s                             Unsupported HWB-related option.
     \\
     \\Custom Options (resinator-specific):
-    \\  /no-preprocess         Do not run the preprocessor.
-    \\  /debug                 Output the preprocessed .rc file and the parsed AST.
+    \\  /:no-preprocess         Do not run the preprocessor.
+    \\  /:debug                 Output the preprocessed .rc file and the parsed AST.
+    \\
+    \\Note: For compatibility reasons, all custom options start with :
     \\
 ;
 
@@ -377,13 +379,6 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
     var output_filename: ?[]const u8 = null;
     var output_filename_context: Arg.Context = undefined;
 
-    // TODO: prefix all custom options with something, e.g. a `.`, `!` or something like that,
-    //       since the Win32 RC compiler allows combining any available commands into one
-    //       parameter (e.g. `/no` could be the option 'n' and the option 'o' if they were
-    //       both valid options), so adding arbitrary new options could result in effectively
-    //       shadowing other combinations of different options.
-    //       Currently only the `/no-preprocess` option is custom, and that comes from LLVM-RC.
-
     var arg_i: usize = 1; // start at 1 to skip past the exe name
     next_arg: while (arg_i < args.len) {
         var arg = Arg.fromString(args[arg_i]) orelse break;
@@ -411,15 +406,15 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
             // Note: These cases should be in order from longest to shortest, since
             //       shorter options that are a substring of a longer one could make
             //       the longer option's branch unreachable.
-            if (std.ascii.startsWithIgnoreCase(arg_name, "no-preprocess")) {
+            if (std.ascii.startsWithIgnoreCase(arg_name, ":no-preprocess")) {
                 options.preprocess = .no;
-                arg.name_offset += "no-preprocess".len;
+                arg.name_offset += ":no-preprocess".len;
             } else if (std.ascii.startsWithIgnoreCase(arg_name, "nologo")) {
                 // No-op, we don't display any 'logo' to suppress
                 arg.name_offset += "nologo".len;
-            } else if (std.ascii.startsWithIgnoreCase(arg_name, "debug")) {
+            } else if (std.ascii.startsWithIgnoreCase(arg_name, ":debug")) {
                 options.debug = true;
-                arg.name_offset += "debug".len;
+                arg.name_offset += ":debug".len;
             }
             // Unsupported LCX/LCE options that need a value (within the same arg only)
             else if (std.ascii.startsWithIgnoreCase(arg_name, "tp:")) {
