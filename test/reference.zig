@@ -31,7 +31,7 @@ fn setupTmpDir() !std.testing.TmpDir {
 
 test "reference.rc" {
     var tmp = try setupTmpDir();
-    //defer tmp.cleanup();
+    defer tmp.cleanup();
 
     const tmp_path = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
     defer std.testing.allocator.free(tmp_path);
