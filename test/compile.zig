@@ -688,7 +688,7 @@ test "dialog, dialogex resource" {
         },
         \\1 DIALOGEX 1, 2, 3, 4
         \\CLASS 5+5
-        \\CLASS "intermediate string is ignored and doesn't negate the forced ordianl"
+        \\CLASS "intermediate string is ignored and doesn't negate the forced ordinal"
         \\CLASS "forced ordinal"
         \\{}
     ,

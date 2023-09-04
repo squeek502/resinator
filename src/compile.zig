@@ -1484,7 +1484,7 @@ pub const Compiler = struct {
                 .type = .warning,
                 .token = simple_statement.identifier,
                 .token_span_start = simple_statement.base.getFirstToken(),
-                .token_span_end = simple_statement.base.getFirstToken(),
+                .token_span_end = simple_statement.base.getLastToken(),
                 .extra = .{ .menu_or_class = switch (statement_type) {
                     .menu => .menu,
                     .class => .class,
