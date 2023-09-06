@@ -309,7 +309,7 @@ const Preprocessor = enum {
 
     pub fn find(allocator: std.mem.Allocator) !Preprocessor {
         // TODO: Make zig cc the first choice
-        for (&[_]enum { zig, clang }{ .zig, .clang }) |pre| {
+        for (&[_]enum { zig, clang }{ .clang, .zig }) |pre| {
             var argv = std.ArrayList([]const u8).init(allocator);
             defer argv.deinit();
 
