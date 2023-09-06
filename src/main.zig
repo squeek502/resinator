@@ -70,8 +70,22 @@ pub fn main() !void {
                 temp_strings.deinit();
             }
 
+            const preprocessor = Preprocessor.find(allocator) catch |err| switch (err) {
+                error.OutOfMemory => |e| return e,
+                else => {
+                    try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to find a suitable preprocessor", .{});
+                    try renderErrorMessage(stderr.writer(), stderr_config, .note, "resinator depends on either zig (via zig cc) or clang for preprocessing", .{});
+                    try renderErrorMessage(stderr.writer(), stderr_config, .note, "either zig or clang must be within the environment's PATH", .{});
+                    std.os.exit(1);
+                },
+            };
+
+            if (options.verbose) {
+                try stdout_writer.print("Preprocessor: {s}\n\n", .{preprocessor.nameForDisplay()});
+            }
+
+            try argv.appendSlice(preprocessor.getCommandArgs());
             try argv.appendSlice(&[_][]const u8{
-                "clang",
                 "-E", // preprocessor only
                 "--comments",
                 "-fuse-line-directives", // #line <num> instead of # <num>
@@ -116,9 +130,7 @@ pub fn main() !void {
                 .argv = argv.items,
                 .max_output_bytes = std.math.maxInt(u32),
             }) catch |err| {
-                try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to spawn clang preprocessor: {s}", .{@errorName(err)});
-                try renderErrorMessage(stderr.writer(), stderr_config, .note, "resinator depends on clang for preprocessing; the clang executable must be found within PATH", .{});
-                // TODO: Note about how to set the path to the clang executable once that option is added
+                try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to spawn the preprocessor ('{s}'): {s}", .{ preprocessor.nameForDisplay(), @errorName(err) });
                 std.os.exit(1);
             };
             errdefer allocator.free(result.stdout);
@@ -127,14 +139,14 @@ pub fn main() !void {
             switch (result.term) {
                 .Exited => |code| {
                     if (code != 0) {
-                        try renderErrorMessage(stderr.writer(), stderr_config, .err, "the clang preprocessor failed:", .{});
+                        try renderErrorMessage(stderr.writer(), stderr_config, .err, "the preprocessor ('{s}') failed:", .{preprocessor.nameForDisplay()});
                         try stderr.writeAll(result.stderr);
                         try stderr.writeAll("\n");
                         std.os.exit(1);
                     }
                 },
                 .Signal, .Stopped, .Unknown => {
-                    try renderErrorMessage(stderr.writer(), stderr_config, .err, "the clang preprocessor failed: {s}", .{@tagName(result.term)});
+                    try renderErrorMessage(stderr.writer(), stderr_config, .err, "the preprocessor ('{s}') failed: {s}", .{ preprocessor.nameForDisplay(), @tagName(result.term) });
                     std.os.exit(1);
                 },
             }
@@ -252,7 +264,7 @@ pub fn main() !void {
     diagnostics.renderToStdErr(std.fs.cwd(), final_input, stderr_config, mapping_results.mappings);
 }
 
-pub fn renderErrorMessage(writer: anytype, config: std.io.tty.Config, msg_type: enum { err, note }, comptime format: []const u8, args: anytype) !void {
+fn renderErrorMessage(writer: anytype, config: std.io.tty.Config, msg_type: enum { err, note }, comptime format: []const u8, args: anytype) !void {
     switch (msg_type) {
         .err => {
             try config.setColor(writer, .bold);
@@ -273,3 +285,58 @@ pub fn renderErrorMessage(writer: anytype, config: std.io.tty.Config, msg_type: 
     try writer.writeByte('\n');
     try config.setColor(writer, .reset);
 }
+
+const Preprocessor = enum {
+    // note: these fields are in order of precedence
+    zig_cc,
+    clang,
+
+    pub fn getCommandArgs(pre: Preprocessor) []const []const u8 {
+        switch (pre) {
+            .zig_cc => return &.{ "zig", "cc" },
+            .clang => return &.{"clang"},
+        }
+    }
+
+    pub fn nameForDisplay(pre: Preprocessor) []const u8 {
+        switch (pre) {
+            .zig_cc => return "zig cc",
+            .clang => return "clang",
+        }
+    }
+
+    pub fn find(allocator: std.mem.Allocator) !Preprocessor {
+        for (std.enums.values(Preprocessor)) |pre| {
+            var argv = std.ArrayList([]const u8).init(allocator);
+            defer argv.deinit();
+
+            try argv.appendSlice(getCommandArgs(pre));
+            try argv.append("--version");
+
+            var result = std.ChildProcess.exec(.{
+                .allocator = allocator,
+                .argv = argv.items,
+                .max_output_bytes = std.math.maxInt(u16),
+            }) catch |err| switch (err) {
+                error.OutOfMemory => |e| return e,
+                else => continue,
+            };
+            defer allocator.free(result.stdout);
+            defer allocator.free(result.stderr);
+
+            switch (result.term) {
+                .Exited => |code| {
+                    if (code == 0) {
+                        return pre;
+                    } else {
+                        continue;
+                    }
+                },
+                .Signal, .Stopped, .Unknown => {
+                    continue;
+                },
+            }
+        }
+        return error.NoPreprocessorFound;
+    }
+};
