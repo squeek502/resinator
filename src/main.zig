@@ -287,30 +287,36 @@ fn renderErrorMessage(writer: anytype, config: std.io.tty.Config, msg_type: enum
 }
 
 const Preprocessor = enum {
-    // note: these fields are in order of precedence
-    zig_cc,
+    zig_cc_msvc,
+    zig_cc_gnu,
     clang,
 
     pub fn getCommandArgs(pre: Preprocessor) []const []const u8 {
         switch (pre) {
-            .zig_cc => return &.{ "zig", "cc" },
+            .zig_cc_msvc => return &.{ "zig", "cc", "-target", "native-windows-msvc" },
+            .zig_cc_gnu => return &.{ "zig", "cc" },
             .clang => return &.{"clang"},
         }
     }
 
     pub fn nameForDisplay(pre: Preprocessor) []const u8 {
         switch (pre) {
-            .zig_cc => return "zig cc",
+            .zig_cc_msvc => return "zig cc (abi=msvc)",
+            .zig_cc_gnu => return "zig cc (abi=gnu)",
             .clang => return "clang",
         }
     }
 
     pub fn find(allocator: std.mem.Allocator) !Preprocessor {
-        for (std.enums.values(Preprocessor)) |pre| {
+        // TODO: Make zig cc the first choice
+        for (&[_]enum { zig, clang }{ .zig, .clang }) |pre| {
             var argv = std.ArrayList([]const u8).init(allocator);
             defer argv.deinit();
 
-            try argv.appendSlice(getCommandArgs(pre));
+            try argv.appendSlice(switch (pre) {
+                .clang => &.{"clang"},
+                .zig => &.{ "zig", "cc" },
+            });
             try argv.append("--version");
 
             var result = std.ChildProcess.exec(.{
@@ -327,7 +333,12 @@ const Preprocessor = enum {
             switch (result.term) {
                 .Exited => |code| {
                     if (code == 0) {
-                        return pre;
+                        switch (pre) {
+                            // Need to do some extra validation for msvc, since it can only
+                            // be used on hosts with MSVC installed
+                            .zig => return if (try canZigTargetMsvc(allocator)) .zig_cc_msvc else .zig_cc_gnu,
+                            .clang => return .clang,
+                        }
                     } else {
                         continue;
                     }
@@ -338,5 +349,33 @@ const Preprocessor = enum {
             }
         }
         return error.NoPreprocessorFound;
+    }
+
+    fn canZigTargetMsvc(allocator: std.mem.Allocator) !bool {
+        var result = std.ChildProcess.exec(.{
+            .allocator = allocator,
+            .argv = &.{ "zig", "libc" },
+            .max_output_bytes = std.math.maxInt(u16),
+        }) catch |err| switch (err) {
+            error.OutOfMemory => |e| return e,
+            else => return false,
+        };
+        defer allocator.free(result.stdout);
+        defer allocator.free(result.stderr);
+
+        switch (result.term) {
+            .Exited => |code| if (code != 0) return false,
+            .Signal, .Stopped, .Unknown => return false,
+        }
+
+        // Look for msvc_lib_dir since that will only be set to a
+        // non-empty value when MSVC is found.
+        var line_it = std.mem.splitScalar(u8, result.stdout, '\n');
+        while (line_it.next()) |line| {
+            if (std.mem.startsWith(u8, line, "msvc_lib_dir=")) {
+                if (line.len > "msvc_lib_dir=".len + 3) return true;
+            }
+        }
+        return false;
     }
 };
