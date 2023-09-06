@@ -17,7 +17,8 @@ pub fn main() !void {
     if (@import("builtin").os.tag == .windows) {
         _ = std.os.windows.kernel32.SetConsoleOutputCP(65001);
     }
-    const stderr_config = std.io.tty.detectConfig(std.io.getStdErr());
+    const stderr = std.io.getStdErr();
+    const stderr_config = std.io.tty.detectConfig(stderr);
 
     var options = options: {
         var args = try std.process.argsAlloc(allocator);
@@ -47,7 +48,7 @@ pub fn main() !void {
     defer options.deinit();
 
     if (options.print_help_and_exit) {
-        std.debug.print("{s}", .{cli.usage_string});
+        try stderr.writeAll(cli.usage_string);
         return;
     }
 
@@ -110,24 +111,31 @@ pub fn main() !void {
             }
             try argv.append(options.input_filename);
 
-            var result = try std.ChildProcess.exec(.{
+            var result = std.ChildProcess.exec(.{
                 .allocator = allocator,
                 .argv = argv.items,
                 .max_output_bytes = std.math.maxInt(u32),
-            });
+            }) catch |err| {
+                try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to spawn clang preprocessor: {s}", .{@errorName(err)});
+                try renderErrorMessage(stderr.writer(), stderr_config, .note, "resinator depends on clang for preprocessing; the clang executable must be found within PATH", .{});
+                // TODO: Note about how to set the path to the clang executable once that option is added
+                std.os.exit(1);
+            };
             errdefer allocator.free(result.stdout);
             defer allocator.free(result.stderr);
 
             switch (result.term) {
                 .Exited => |code| {
                     if (code != 0) {
-                        // TODO: Better formatting
-                        std.debug.print("Preprocessor errors:\n{s}\n", .{result.stderr});
-                        return error.ExitCodeFailure;
+                        try renderErrorMessage(stderr.writer(), stderr_config, .err, "the clang preprocessor failed:", .{});
+                        try stderr.writeAll(result.stderr);
+                        try stderr.writeAll("\n");
+                        std.os.exit(1);
                     }
                 },
                 .Signal, .Stopped, .Unknown => {
-                    return error.ClangProcessTerminated;
+                    try renderErrorMessage(stderr.writer(), stderr_config, .err, "the clang preprocessor failed: {s}", .{@tagName(result.term)});
+                    std.os.exit(1);
                 },
             }
 
@@ -196,7 +204,7 @@ pub fn main() !void {
             };
             defer tree.deinit();
 
-            try tree.dump(std.io.getStdErr().writer());
+            try tree.dump(stderr.writer());
             std.debug.print("\n", .{});
         }
     }
@@ -242,4 +250,26 @@ pub fn main() !void {
 
     // print any warnings/notes
     diagnostics.renderToStdErr(std.fs.cwd(), final_input, stderr_config, mapping_results.mappings);
+}
+
+pub fn renderErrorMessage(writer: anytype, config: std.io.tty.Config, msg_type: enum { err, note }, comptime format: []const u8, args: anytype) !void {
+    switch (msg_type) {
+        .err => {
+            try config.setColor(writer, .bold);
+            try config.setColor(writer, .red);
+            try writer.writeAll("error: ");
+        },
+        .note => {
+            try config.setColor(writer, .reset);
+            try config.setColor(writer, .cyan);
+            try writer.writeAll("note: ");
+        },
+    }
+    try config.setColor(writer, .reset);
+    if (msg_type == .err) {
+        try config.setColor(writer, .bold);
+    }
+    try writer.print(format, args);
+    try writer.writeByte('\n');
+    try config.setColor(writer, .reset);
 }
