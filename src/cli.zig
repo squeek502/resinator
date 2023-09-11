@@ -45,6 +45,9 @@ pub const usage_string =
     \\Custom Options (resinator-specific):
     \\  /:no-preprocess         Do not run the preprocessor.
     \\  /:debug                 Output the preprocessed .rc file and the parsed AST.
+    \\  /:no-slash-options      Disable '/' as an option prefix.  This enables file paths
+    \\                          starting with '/' to be interpreted as paths. Note '-'
+    \\                          can still be used to specify options.
     \\
     \\Note: For compatibility reasons, all custom options start with :
     \\
@@ -116,6 +119,7 @@ pub const Options = struct {
     extra_include_paths: std.ArrayListUnmanaged([]const u8) = .{},
     ignore_include_env_var: bool = false,
     preprocess: Preprocess = .yes,
+    slashes: Slashes = .yes,
     default_language_id: ?u16 = null,
     default_code_page: ?CodePage = null,
     verbose: bool = false,
@@ -128,6 +132,7 @@ pub const Options = struct {
     print_help_and_exit: bool = false,
 
     pub const Preprocess = enum { no, yes, only };
+    pub const Slashes = enum { no, yes };
     pub const SymbolAction = enum { define, undefine };
     pub const SymbolValue = union(SymbolAction) {
         define: []const u8,
@@ -283,12 +288,12 @@ pub const Arg = struct {
     name_offset: usize,
     full: []const u8,
 
-    pub fn fromString(str: []const u8) ?@This() {
+    pub fn fromString(str: []const u8, slashes: Options.Slashes) ?@This() {
         if (std.mem.startsWith(u8, str, "--")) {
             return .{ .prefix = .long, .name_offset = 2, .full = str };
         } else if (std.mem.startsWith(u8, str, "-")) {
             return .{ .prefix = .short, .name_offset = 1, .full = str };
-        } else if (std.mem.startsWith(u8, str, "/")) {
+        } else if (slashes == .yes and std.mem.startsWith(u8, str, "/")) {
             return .{ .prefix = .slash, .name_offset = 1, .full = str };
         }
         return null;
@@ -381,7 +386,7 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
 
     var arg_i: usize = 1; // start at 1 to skip past the exe name
     next_arg: while (arg_i < args.len) {
-        var arg = Arg.fromString(args[arg_i]) orelse break;
+        var arg = Arg.fromString(args[arg_i], options.slashes) orelse break;
         if (arg.name().len == 0) {
             switch (arg.prefix) {
                 // -- on its own ends arg parsing
@@ -409,6 +414,9 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
             if (std.ascii.startsWithIgnoreCase(arg_name, ":no-preprocess")) {
                 options.preprocess = .no;
                 arg.name_offset += ":no-preprocess".len;
+            } else if (std.ascii.startsWithIgnoreCase(arg_name, ":no-slash-options")) {
+                options.slashes = .no;
+                arg.name_offset += ":no-slash-options".len;
             } else if (std.ascii.startsWithIgnoreCase(arg_name, "nologo")) {
                 // No-op, we don't display any 'logo' to suppress
                 arg.name_offset += "nologo".len;
