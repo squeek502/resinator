@@ -10,7 +10,10 @@ const lex = @import("lex.zig");
 pub const max_string_literal_length_100_percent = 8192;
 
 pub const usage_string =
-    \\Usage: resinator [options] <INPUT> [<OUTPUT>]
+    \\Usage: resinator [options] [--] <INPUT> [<OUTPUT>]
+    \\
+    \\The sequence -- can be used to signify when to stop parsing options.
+    \\This is necessary when the input path begins with a forward slash.
     \\
     \\Supported Win32 RC Options:
     \\  /?, /h                  Print this help and exit.
@@ -802,6 +805,15 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
         var msg_writer = err_details.msg.writer(allocator);
         try msg_writer.writeAll("missing input filename");
         try diagnostics.append(err_details);
+
+        const last_arg = args[args.len - 1];
+        if (arg_i > 1 and last_arg.len > 0 and last_arg[0] == '/' and std.ascii.endsWithIgnoreCase(last_arg, ".rc")) {
+            var note_details = Diagnostics.ErrorDetails{ .type = .note, .print_args = true, .arg_index = arg_i - 1 };
+            var note_writer = note_details.msg.writer(allocator);
+            try note_writer.writeAll("if this argument was intended to be the input filename, then -- should be specified in front of it to exclude it from option parsing");
+            try diagnostics.append(note_details);
+        }
+
         // This is a fatal enough problem to justify an early return, since
         // things after this rely on the value of the input filename.
         return error.ParseError;
@@ -1144,6 +1156,17 @@ test "parse errors: basic" {
         \\     ~~ ^~~~~~~~~~~~~~
         \\<cli>: error: missing input filename
         \\
+        \\
+    );
+    try testParseError(&.{ "foo.exe", "/some/absolute/path/parsed/as/an/option.rc" },
+        \\<cli>: error: the /s option is unsupported
+        \\ ... /some/absolute/path/parsed/as/an/option.rc
+        \\     ~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        \\<cli>: error: missing input filename
+        \\
+        \\<cli>: note: if this argument was intended to be the input filename, then -- should be specified in front of it to exclude it from option parsing
+        \\ ... /some/absolute/path/parsed/as/an/option.rc
+        \\     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         \\
     );
 }
