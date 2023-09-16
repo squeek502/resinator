@@ -113,6 +113,7 @@ pub fn main() !void {
                 //       since the only real problem is when clang doesn't preserve null characters
                 //"-Werror=invalid-pp-token", // will error on unfinished string literals
                 // TODO: could use -Werror instead
+                "-fms-compatibility", // Allow things like "header.h" to be resolved relative to the 'root' .rc file, among other things
                 // https://learn.microsoft.com/en-us/windows/win32/menurc/predefined-macros
                 "-DRC_INVOKED",
             });
