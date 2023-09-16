@@ -74,15 +74,31 @@ pub fn main() !void {
                 error.OutOfMemory => |e| return e,
                 else => {
                     try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to find a suitable preprocessor", .{});
-                    try renderErrorMessage(stderr.writer(), stderr_config, .note, "resinator depends on either zig (via zig cc) or clang for preprocessing", .{});
+                    try renderErrorMessage(stderr.writer(), stderr_config, .note, "resinator depends on either zig or clang for preprocessing", .{});
                     try renderErrorMessage(stderr.writer(), stderr_config, .note, "either zig or clang must be within the environment's PATH", .{});
                     std.os.exit(1);
                 },
             };
 
-            if (options.verbose) {
-                try stdout_writer.print("Preprocessor: {s}\n\n", .{preprocessor.nameForDisplay()});
+            if (preprocessor == .clang and options.auto_includes == .gnu) {
+                try renderErrorMessage(stderr.writer(), stderr_config, .err, "the clang preprocessor cannot autodetect MinGW include paths", .{});
+                try renderErrorMessage(stderr.writer(), stderr_config, .note, "clang is being used as the preprocessor because zig was not found in the PATH", .{});
+                try renderErrorMessage(stderr.writer(), stderr_config, .note, "the /i option could be used to provide MinGW include paths manually", .{});
+                std.os.exit(1);
+            } else if (options.auto_includes != .none and preprocessor == .zig_clang and !(try Preprocessor.zigSupportsLibcIncludesOption(allocator))) {
+                try renderErrorMessage(stderr.writer(), stderr_config, .warning, "the version of zig being used for preprocessing cannot autodetect include paths", .{});
+                try renderErrorMessage(stderr.writer(), stderr_config, .note, "zig must support the -includes option of the 'zig libc' subcommand to autodetect include paths", .{});
+                try renderErrorMessage(stderr.writer(), stderr_config, .note, "support for the -includes option was added in zig version 0.12.0-dev.378+4f952c7e0", .{});
             }
+
+            const include_args = preprocessor.getIncludeArgs(allocator, options.auto_includes) catch |err| switch (err) {
+                error.OutOfMemory => |e| return e,
+                else => {
+                    try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to autodetect include paths: {s}", .{@errorName(err)});
+                    std.os.exit(1);
+                },
+            };
+            defer include_args.deinit(allocator);
 
             try argv.appendSlice(preprocessor.getCommandArgs());
             try argv.appendSlice(&[_][]const u8{
@@ -104,6 +120,32 @@ pub fn main() !void {
                 try argv.append("--include-directory");
                 try argv.append(extra_include_path);
             }
+
+            if (include_args.nostdinc) {
+                try argv.append("-nostdinc");
+            }
+            for (include_args.include_paths) |include_path| {
+                try argv.append("-isystem");
+                try argv.append(include_path);
+            }
+
+            const include_var = include_var: {
+                if (!options.ignore_include_env_var) {
+                    const INCLUDE = std.process.getEnvVarOwned(allocator, "INCLUDE") catch "";
+                    errdefer allocator.free(INCLUDE);
+
+                    // TODO: Should this be platform-specific? How does windres/llvm-rc handle this (if at all)?
+                    var it = std.mem.tokenize(u8, INCLUDE, ";");
+                    while (it.next()) |include_path| {
+                        try argv.append("-isystem");
+                        try argv.append(include_path);
+                    }
+                    break :include_var INCLUDE;
+                }
+                break :include_var &[_]u8{};
+            };
+            defer allocator.free(include_var);
+
             var symbol_it = options.symbols.iterator();
             while (symbol_it.next()) |entry| {
                 switch (entry.value_ptr.*) {
@@ -124,6 +166,14 @@ pub fn main() !void {
                 }
             }
             try argv.append(options.input_filename);
+
+            if (options.verbose) {
+                try stdout_writer.print("Preprocessor: {s}\n", .{preprocessor.nameForDisplay()});
+                for (argv.items[0 .. argv.items.len - 1]) |arg| {
+                    try stdout_writer.print("{s} ", .{arg});
+                }
+                try stdout_writer.print("{s}\n\n", .{argv.items[argv.items.len - 1]});
+            }
 
             var result = std.ChildProcess.exec(.{
                 .allocator = allocator,
@@ -264,12 +314,17 @@ pub fn main() !void {
     diagnostics.renderToStdErr(std.fs.cwd(), final_input, stderr_config, mapping_results.mappings);
 }
 
-fn renderErrorMessage(writer: anytype, config: std.io.tty.Config, msg_type: enum { err, note }, comptime format: []const u8, args: anytype) !void {
+fn renderErrorMessage(writer: anytype, config: std.io.tty.Config, msg_type: enum { err, warning, note }, comptime format: []const u8, args: anytype) !void {
     switch (msg_type) {
         .err => {
             try config.setColor(writer, .bold);
             try config.setColor(writer, .red);
             try writer.writeAll("error: ");
+        },
+        .warning => {
+            try config.setColor(writer, .bold);
+            try config.setColor(writer, .yellow);
+            try writer.writeAll("warning: ");
         },
         .note => {
             try config.setColor(writer, .reset);
@@ -287,36 +342,35 @@ fn renderErrorMessage(writer: anytype, config: std.io.tty.Config, msg_type: enum
 }
 
 const Preprocessor = enum {
-    zig_cc_msvc,
-    zig_cc_gnu,
+    zig_clang,
     clang,
+
+    var zig_supports_libc_includes_option: ?bool = null;
 
     pub fn getCommandArgs(pre: Preprocessor) []const []const u8 {
         switch (pre) {
-            .zig_cc_msvc => return &.{ "zig", "cc", "-target", "native-windows-msvc" },
-            .zig_cc_gnu => return &.{ "zig", "cc" },
+            .zig_clang => return &.{ "zig", "clang" },
             .clang => return &.{"clang"},
         }
     }
 
     pub fn nameForDisplay(pre: Preprocessor) []const u8 {
         switch (pre) {
-            .zig_cc_msvc => return "zig cc (abi=msvc)",
-            .zig_cc_gnu => return "zig cc (abi=gnu)",
+            .zig_clang => return "zig clang",
             .clang => return "clang",
         }
     }
 
     pub fn find(allocator: std.mem.Allocator) !Preprocessor {
-        // TODO: Make zig cc the first choice
-        for (&[_]enum { zig, clang }{ .clang, .zig }) |pre| {
+        var found_zig = false;
+        for (&[_]Preprocessor{
+            .zig_clang,
+            .clang,
+        }) |pre| {
             var argv = std.ArrayList([]const u8).init(allocator);
             defer argv.deinit();
 
-            try argv.appendSlice(switch (pre) {
-                .clang => &.{"clang"},
-                .zig => &.{ "zig", "cc" },
-            });
+            try argv.appendSlice(pre.getCommandArgs());
             try argv.append("--version");
 
             var result = std.ChildProcess.exec(.{
@@ -332,14 +386,7 @@ const Preprocessor = enum {
 
             switch (result.term) {
                 .Exited => |code| {
-                    if (code == 0) {
-                        switch (pre) {
-                            // Need to do some extra validation for msvc, since it can only
-                            // be used on hosts with MSVC installed
-                            .zig => return if (try canZigTargetMsvc(allocator)) .zig_cc_msvc else .zig_cc_gnu,
-                            .clang => return .clang,
-                        }
-                    } else {
+                    if (code != 0) {
                         continue;
                     }
                 },
@@ -347,35 +394,130 @@ const Preprocessor = enum {
                     continue;
                 },
             }
+
+            if (pre == .zig_clang) {
+                found_zig = true;
+                // If the Zig install doesn't support `zig libc -include`, then we can't
+                // use it for include dir autodetection, so skip it for now and use zig
+                // as a last resort in this case.
+                if (!(try zigSupportsLibcIncludesOption(allocator))) {
+                    continue;
+                }
+            }
+            return pre;
+        }
+        if (found_zig) {
+            return .zig_clang;
         }
         return error.NoPreprocessorFound;
     }
 
-    fn canZigTargetMsvc(allocator: std.mem.Allocator) !bool {
-        var result = std.ChildProcess.exec(.{
+    pub const IncludeArgs = struct {
+        nostdinc: bool = false,
+        include_paths: []const []const u8 = &.{},
+
+        pub fn deinit(self: IncludeArgs, allocator: std.mem.Allocator) void {
+            for (self.include_paths) |include_path| {
+                allocator.free(include_path);
+            }
+            allocator.free(self.include_paths);
+        }
+    };
+
+    pub fn getIncludeArgs(pre: Preprocessor, allocator: std.mem.Allocator, auto_includes: cli.Options.AutoIncludes) !IncludeArgs {
+        if (auto_includes == .none) return .{ .nostdinc = true };
+        switch (pre) {
+            // Clang does it's own autodetection when -nostdinc is not passed
+            .clang => return .{},
+            .zig_clang => {
+                // If the Zig version doesn't support `libc -includes`, then just
+                // leave the args empty (zig clang doesn't seem to do the include paths
+                // autodetection that standalone clang does)
+                if (!(try zigSupportsLibcIncludesOption(allocator))) {
+                    return .{};
+                }
+
+                var cur_includes = auto_includes;
+                while (true) {
+                    switch (cur_includes) {
+                        .any, .msvc => {
+                            return .{
+                                .nostdinc = true,
+                                .include_paths = getIncludeDirsFromZig(allocator, "native-windows-msvc") catch |err| {
+                                    if (cur_includes == .any) {
+                                        // fall back to mingw
+                                        cur_includes = .gnu;
+                                        continue;
+                                    }
+                                    return err;
+                                },
+                            };
+                        },
+                        .gnu => {
+                            return .{
+                                .nostdinc = true,
+                                .include_paths = try getIncludeDirsFromZig(allocator, "native-windows-gnu"),
+                            };
+                        },
+                        .none => unreachable,
+                    }
+                }
+            },
+        }
+    }
+
+    fn zigSupportsLibcIncludesOption(allocator: std.mem.Allocator) !bool {
+        if (Preprocessor.zig_supports_libc_includes_option == null) {
+            var result = std.ChildProcess.exec(.{
+                .allocator = allocator,
+                .argv = &.{ "zig", "libc", "-includes" },
+                .max_output_bytes = std.math.maxInt(u16),
+            }) catch |err| switch (err) {
+                error.OutOfMemory => |e| return e,
+                else => return false,
+            };
+            defer allocator.free(result.stdout);
+            defer allocator.free(result.stderr);
+
+            switch (result.term) {
+                .Exited => |code| if (code == 0) return true,
+                .Signal, .Stopped, .Unknown => return false,
+            }
+
+            Preprocessor.zig_supports_libc_includes_option = std.mem.indexOf(u8, result.stderr, "error: unrecognized parameter") == null;
+        }
+        return Preprocessor.zig_supports_libc_includes_option.?;
+    }
+
+    fn getIncludeDirsFromZig(allocator: std.mem.Allocator, target: []const u8) ![]const []const u8 {
+        var result = try std.ChildProcess.exec(.{
             .allocator = allocator,
-            .argv = &.{ "zig", "libc" },
+            .argv = &.{ "zig", "libc", "-includes", "-target", target },
             .max_output_bytes = std.math.maxInt(u16),
-        }) catch |err| switch (err) {
-            error.OutOfMemory => |e| return e,
-            else => return false,
-        };
+        });
         defer allocator.free(result.stdout);
         defer allocator.free(result.stderr);
 
         switch (result.term) {
-            .Exited => |code| if (code != 0) return false,
-            .Signal, .Stopped, .Unknown => return false,
+            .Exited => |code| if (code != 0) return error.NonZeroExitCode,
+            .Signal, .Stopped, .Unknown => return error.UnexpectedStop,
         }
 
-        // Look for msvc_lib_dir since that will only be set to a
-        // non-empty value when MSVC is found.
         var line_it = std.mem.splitScalar(u8, result.stdout, '\n');
+        var includes = std.ArrayList([]const u8).init(allocator);
+        errdefer {
+            for (includes.items) |include| {
+                allocator.free(include);
+            }
+            includes.deinit();
+        }
         while (line_it.next()) |line| {
-            if (std.mem.startsWith(u8, line, "msvc_lib_dir=")) {
-                if (line.len > "msvc_lib_dir=".len + 3) return true;
+            if (line.len > 0) {
+                const duped_line = try allocator.dupe(u8, line);
+                errdefer allocator.free(duped_line);
+                try includes.append(duped_line);
             }
         }
-        return false;
+        return includes.toOwnedSlice();
     }
 };

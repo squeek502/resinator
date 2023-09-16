@@ -1,7 +1,6 @@
 const std = @import("std");
 const CodePage = @import("code_pages.zig").CodePage;
 const lang = @import("lang.zig");
-const utils = @import("utils.zig");
 const res = @import("res.zig");
 const Allocator = std.mem.Allocator;
 const lex = @import("lex.zig");
@@ -46,8 +45,13 @@ pub const usage_string =
     \\  /s                             Unsupported HWB-related option.
     \\
     \\Custom Options (resinator-specific):
-    \\  /:no-preprocess         Do not run the preprocessor.
-    \\  /:debug                 Output the preprocessed .rc file and the parsed AST.
+    \\  /:no-preprocess           Do not run the preprocessor.
+    \\  /:debug                   Output the preprocessed .rc file and the parsed AST.
+    \\  /:auto-includes <value>   Set the automatic include path detection behavior.
+    \\    any                     (default) Use MSVC if available, fall back to MinGW
+    \\    msvc                    Use MSVC include paths (must be present on the system)
+    \\    gnu                     Use MinGW include paths (requires Zig as the preprocessor)
+    \\    none                    Do not use any autodetected include paths
     \\
     \\Note: For compatibility reasons, all custom options start with :
     \\
@@ -129,7 +133,9 @@ pub const Options = struct {
     warn_instead_of_error_on_invalid_code_page: bool = false,
     debug: bool = false,
     print_help_and_exit: bool = false,
+    auto_includes: AutoIncludes = .any,
 
+    pub const AutoIncludes = enum { any, msvc, gnu, none };
     pub const Preprocess = enum { no, yes, only };
     pub const SymbolAction = enum { define, undefine };
     pub const SymbolValue = union(SymbolAction) {
@@ -412,6 +418,24 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
             if (std.ascii.startsWithIgnoreCase(arg_name, ":no-preprocess")) {
                 options.preprocess = .no;
                 arg.name_offset += ":no-preprocess".len;
+            } else if (std.ascii.startsWithIgnoreCase(arg_name, ":auto-includes")) {
+                const value = arg.value(":auto-includes".len, arg_i, args) catch {
+                    var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = arg.missingSpan() };
+                    var msg_writer = err_details.msg.writer(allocator);
+                    try msg_writer.print("missing value after {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(":auto-includes".len) });
+                    try diagnostics.append(err_details);
+                    arg_i += 1;
+                    break :next_arg;
+                };
+                options.auto_includes = std.meta.stringToEnum(Options.AutoIncludes, value.slice) orelse blk: {
+                    var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = value.argSpan(arg) };
+                    var msg_writer = err_details.msg.writer(allocator);
+                    try msg_writer.print("invalid auto includes setting: {s} ", .{value.slice});
+                    try diagnostics.append(err_details);
+                    break :blk options.auto_includes;
+                };
+                arg_i += value.index_increment;
+                continue :next_arg;
             } else if (std.ascii.startsWithIgnoreCase(arg_name, "nologo")) {
                 // No-op, we don't display any 'logo' to suppress
                 arg.name_offset += "nologo".len;

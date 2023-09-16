@@ -113,6 +113,7 @@ pub fn compile(allocator: Allocator, source: []const u8, writer: anytype, option
         const INCLUDE = std.process.getEnvVarOwned(allocator, "INCLUDE") catch "";
         defer allocator.free(INCLUDE);
 
+        // TODO: Should this be platform-specific? How does windres/llvm-rc handle this (if at all)?
         var it = std.mem.tokenize(u8, INCLUDE, ";");
         while (it.next()) |search_path| {
             var dir = openSearchPathDir(options.cwd, search_path) catch continue;
