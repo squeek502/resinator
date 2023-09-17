@@ -85,10 +85,11 @@ pub fn main() !void {
                 try renderErrorMessage(stderr.writer(), stderr_config, .note, "clang is being used as the preprocessor because zig was not found in the PATH", .{});
                 try renderErrorMessage(stderr.writer(), stderr_config, .note, "the /i option could be used to provide MinGW include paths manually", .{});
                 std.os.exit(1);
-            } else if (options.auto_includes != .none and preprocessor == .zig_clang and !(try Preprocessor.zigSupportsLibcIncludesOption(allocator))) {
-                try renderErrorMessage(stderr.writer(), stderr_config, .warning, "the version of zig being used for preprocessing cannot autodetect include paths", .{});
-                try renderErrorMessage(stderr.writer(), stderr_config, .note, "zig must support the -includes option of the 'zig libc' subcommand to autodetect include paths", .{});
+            } else if (options.auto_includes == .gnu and preprocessor == .zig_clang and !(try Preprocessor.zigSupportsLibcIncludesOption(allocator))) {
+                try renderErrorMessage(stderr.writer(), stderr_config, .err, "the version of zig being used for preprocessing cannot autodetect MinGW include paths", .{});
+                try renderErrorMessage(stderr.writer(), stderr_config, .note, "zig must support the -includes option of the 'zig libc' subcommand to autodetect MinGW include paths", .{});
                 try renderErrorMessage(stderr.writer(), stderr_config, .note, "support for the -includes option was added in zig version 0.12.0-dev.378+4f952c7e0", .{});
+                std.os.exit(1);
             }
 
             const include_args = preprocessor.getIncludeArgs(allocator, options.auto_includes) catch |err| switch (err) {
@@ -128,6 +129,10 @@ pub fn main() !void {
             for (include_args.include_paths) |include_path| {
                 try argv.append("-isystem");
                 try argv.append(include_path);
+            }
+            if (include_args.target) |target| {
+                try argv.append("-target");
+                try argv.append(target);
             }
 
             const include_var = include_var: {
@@ -363,7 +368,6 @@ const Preprocessor = enum {
     }
 
     pub fn find(allocator: std.mem.Allocator) !Preprocessor {
-        var found_zig = false;
         for (&[_]Preprocessor{
             .zig_clang,
             .clang,
@@ -395,20 +399,7 @@ const Preprocessor = enum {
                     continue;
                 },
             }
-
-            if (pre == .zig_clang) {
-                found_zig = true;
-                // If the Zig install doesn't support `zig libc -include`, then we can't
-                // use it for include dir autodetection, so skip it for now and use zig
-                // as a last resort in this case.
-                if (!(try zigSupportsLibcIncludesOption(allocator))) {
-                    continue;
-                }
-            }
             return pre;
-        }
-        if (found_zig) {
-            return .zig_clang;
         }
         return error.NoPreprocessorFound;
     }
@@ -416,6 +407,9 @@ const Preprocessor = enum {
     pub const IncludeArgs = struct {
         nostdinc: bool = false,
         include_paths: []const []const u8 = &.{},
+        // Passing an explicit target will get clang to do autodetection of include dirs
+        // as long as -nostdinc is not passed as well.
+        target: ?[]const u8 = "x86_64-unknown-windows",
 
         pub fn deinit(self: IncludeArgs, allocator: std.mem.Allocator) void {
             for (self.include_paths) |include_path| {
@@ -428,12 +422,8 @@ const Preprocessor = enum {
     pub fn getIncludeArgs(pre: Preprocessor, allocator: std.mem.Allocator, auto_includes: cli.Options.AutoIncludes) !IncludeArgs {
         if (auto_includes == .none) return .{ .nostdinc = true };
         switch (pre) {
-            // Clang does it's own autodetection when -nostdinc is not passed
             .clang => return .{},
             .zig_clang => {
-                // If the Zig version doesn't support `libc -includes`, then just
-                // leave the args empty (zig clang doesn't seem to do the include paths
-                // autodetection that standalone clang does)
                 if (!(try zigSupportsLibcIncludesOption(allocator))) {
                     return .{};
                 }
@@ -452,12 +442,14 @@ const Preprocessor = enum {
                                     }
                                     return err;
                                 },
+                                .target = "x86_64-unknown-windows-msvc",
                             };
                         },
                         .gnu => {
                             return .{
                                 .nostdinc = true,
                                 .include_paths = try getIncludeDirsFromZig(allocator, "native-windows-gnu"),
+                                .target = "x86_64-unknown-windows-gnu",
                             };
                         },
                         .none => unreachable,
