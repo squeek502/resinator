@@ -3,15 +3,6 @@
 
 A cross-platform Windows resource-definition script (.rc) to resource file (.res) compiler. The intention is for this to [get merged into the Zig compiler](https://github.com/ziglang/zig/pull/17069) as per [this accepted proposal](https://github.com/ziglang/zig/issues/3702), but it will also be maintained as a separate tool.
 
-Similar to `llvm-rc` and GNU's `windres`, `resinator` aims to be a cross-platform alternative to [the Windows `rc.exe` tool](https://learn.microsoft.com/en-us/windows/win32/menurc/using-rc-the-rc-command-line-).
-
-However, unlike `llvm-rc` and `windres` (see [this section](#an-example-of-the-differences-between-the-implementations)), `resinator` aims to get as close to 1:1 compatibility with the Windows `rc.exe` implementation as possible. That is, the ideal would be:
-
-- The `.res` output of `resinator` should match the `.res` output of the Windows `rc.exe` in as many cases as possible (if not exactly, then functionally). However, `resinator` will not support all valid `.rc` files (i.e. `#pragma code_page` support will be limited to particular code pages).
-- `resinator` should fail to compile `.rc` files that the Windows `rc.exe` tool fails to compile.
-
-In practice, though, 1:1 compatibility is not actually desirable, as there are quirks/bugs in the `rc.exe` implementation that `resinator` attempts to handle better.
-
 - This is a fully [clean-room](https://en.wikipedia.org/wiki/Clean_room_design) implementation, using [fuzz testing](#testing-resinator) as the primary method of determining how `rc.exe` works and how compatible `resinator` is with its implementation.
 - As of now, `resinator` can successfully compile every `.rc` file in the [Windows-classic-samples repo](https://github.com/microsoft/Windows-classic-samples) byte-for-byte identically to the Windows RC compiler when using the includes from MSVC/the Windows SDK. This is tested via [win32-samples-rc-tests](https://github.com/squeek502/win32-samples-rc-tests).
 - [Documentation](https://squeek502.github.io/resinator/)
@@ -24,29 +15,42 @@ A Windows resource-definition file (`.rc`) is made up of both C/C++ preprocessor
 - The preprocessed `.rc` file will then be compiled into a `.res` file
 - The `.res` file can then be linked into an executable by a linker
 
+`resinator` is similar to `llvm-rc` and GNU's `windres`, in that it aims to be a cross-platform alternative to [the Windows `rc.exe` tool](https://learn.microsoft.com/en-us/windows/win32/menurc/using-rc-the-rc-command-line-).
+
+However, unlike `llvm-rc` and `windres` (see [this section](#an-example-of-the-differences-between-the-implementations)), `resinator` aims to get as close to 1:1 compatibility with the Windows `rc.exe` implementation as possible. That is, the ideal would be:
+
+- The `.res` output of `resinator` should match the `.res` output of the Windows `rc.exe` in as many cases as possible (if not exactly, then functionally). However, `resinator` will not support all valid `.rc` files (i.e. `#pragma code_page` support will be limited to particular code pages).
+- `resinator` should fail to compile `.rc` files that the Windows `rc.exe` tool fails to compile.
+
+In practice, though, 1:1 compatibility is not actually desirable, as there are quirks/bugs in the `rc.exe` implementation that `resinator` attempts to handle better.
+
 ## Comparison to `rc.exe` (the Win32 RC compiler)
 
 `resinator` is a drop-in replacement for `rc.exe` with some improvements, some known exceptions, and some caveats.
 
-### `resinator` has better error messages
+#### `resinator` relies on an external preprocessor
+
+`rc.exe` is self-contained and includes its own preprocessor implementation, while `resinator` relies on either `zig` or `clang` (in that order of preference) to handle preprocessing.
+
+#### `resinator` has better error messages
 
 ![](https://github.com/squeek502/resinator/assets/2389051/1d2a6dd1-dbcb-4df8-88b1-ab1b84ea36eb)
 
-### `resinator` handles edge cases better and avoids miscompilations
+#### `resinator` handles edge cases better and avoids miscompilations
 
 `resinator` avoids some miscompilations of the Win32 RC compiler and generally handles edge cases better (e.g. resource data size overflow). See [this exhaustive list of intentional differences between `resinator` and `rc.exe`](https://squeek502.github.io/resinator/divergences.html).
 
-Also, `resinator` will emit warnings/errors for many of these differences:
+Also, `resinator` will emit helpful warnings/errors for many of these differences:
 
 ![](https://github.com/squeek502/resinator/assets/2389051/85150176-a06f-47a4-9e80-ed15961a1d72)
 
-### `resinator` does not support UTF-16 encoded scripts
+#### `resinator` does not support UTF-16 encoded scripts
 
 This is a limitation of the preprocessor that is used by `resinator` (see [this issue](https://github.com/squeek502/resinator/issues/5)).
 
-### `resinator` will auto-detect system include paths by default
+#### `resinator` will auto-detect system include paths by default
 
-`.rc` files can `#include` files from MSVC/Windows SDKs (most commonly, `windows.h`). The paths for these files are typically provided via the `INCLUDE` environment variable or the `/i` command line option. `resinator` supports the same options, but it will also try to auto-detect system include paths on Windows, or use the MinGW includes bundled with Zig if `zig clang` is being used as the preprocessor (meaning that if `zig` is used as the preprocessor, `#include "windows.h"` will work by default on Linux).
+`.rc` files can `#include` files from MSVC/Windows SDKs (most commonly, `windows.h`). The paths for these files are typically provided via the `INCLUDE` environment variable or the `/i` command line option. `resinator` supports the same options, but it will also try to auto-detect system include paths on Windows, or use the MinGW includes bundled with Zig if `zig` is being used as the preprocessor (meaning that if `zig` is used as the preprocessor, `#include "windows.h"` will work by default on Linux).
 
 This behavior can be controlled with the `/:auto-includes` CLI option.
 
@@ -70,7 +74,7 @@ Here is an example `.rc` script that is handled differently by each of `windres`
 1 "FOO" { "bar" }
 ```
 
-- `rc.exe` compiles this to a `.res` file with a resource of ID `1` that has the type `"FOO"` (the quotes are part of the custom resource type name)
+- `rc.exe` compiles this to a `.res` file with a resource of ID `1` that has the type `"FOO"` (the quotes are part of the user-defined resource type name)
 - `windres` compiles this to a `.res` file with a resource of ID `1` that has the type `FOO` (the `"FOO"` is parsed as a quoted string)
 - `llvm-rc` errors on this file with: `Error: expected int or identifier, got "FOO"`
 - `resinator` matches the `rc.exe` behavior exactly in this case
