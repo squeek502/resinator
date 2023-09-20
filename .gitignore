@@ -2,3 +2,4 @@ zig-out
 zig-cache
 tmp
 test/outputs
+/misc/

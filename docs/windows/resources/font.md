@@ -2,6 +2,7 @@
 layout: default
 title: FONT
 parent: Resources
+grand_parent: Windows RC compiler documentation
 ---
 
 # `FONT` resource
