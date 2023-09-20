@@ -4,6 +4,7 @@
 A cross-platform Windows resource-definition script (.rc) to resource file (.res) compiler. The intention is for this to [get merged into the Zig compiler](https://github.com/ziglang/zig/pull/17069) as per [this accepted proposal](https://github.com/ziglang/zig/issues/3702), but it will also be maintained as a separate tool.
 
 - This is a fully [clean-room](https://en.wikipedia.org/wiki/Clean_room_design) implementation, using [fuzz testing](#testing-resinator) as the primary method of determining how `rc.exe` works and how compatible `resinator` is with its implementation.
+  + See [this talk](https://www.youtube.com/watch?v=RZczLb_uI9E) for a deeper dive into this
 - As of now, `resinator` can successfully compile every `.rc` file in the [Windows-classic-samples repo](https://github.com/microsoft/Windows-classic-samples) byte-for-byte identically to the Windows RC compiler when using the includes from MSVC/the Windows SDK. This is tested via [win32-samples-rc-tests](https://github.com/squeek502/win32-samples-rc-tests).
 - [Documentation](https://squeek502.github.io/resinator/)
 
