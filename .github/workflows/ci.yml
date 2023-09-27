@@ -32,6 +32,10 @@ jobs:
           submodules: true
           path: 'win32-samples-rc-tests'
 
+      - name: Install qemu
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        run: sudo apt-get install -y qemu-user-static
+
       - run: zig version
       - run: zig env
 
@@ -40,6 +44,18 @@ jobs:
 
       - name: Test
         run: zig build test
+
+      - name: Test 32-bit
+        if: ${{ matrix.os != 'macos-latest' }}
+        run: zig build test -Dtarget=x86-native
+
+      - name: Test big endian (mips)
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        run: zig build test -Dtarget=mips-native -fqemu
+
+      - name: Test big endian (powerpc64)
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        run: zig build test -Dtarget=powerpc64-native -fqemu
 
       - name: Add zig-out to PATH
         if: ${{ matrix.os == 'windows-latest' }}
