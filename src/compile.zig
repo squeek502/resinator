@@ -826,7 +826,9 @@ pub const Compiler = struct {
                     }
                     if (bitmap_info.getExpectedPaletteByteLen() > 0) {
                         try writeResourceDataNoPadding(writer, file_reader, @intCast(bitmap_info.getActualPaletteByteLen()));
-                        const padding_bytes = bitmap_info.getMissingPaletteByteLen();
+                        // We know that the number of missing palette bytes is <= 4096
+                        // (see `bmp_too_many_missing_palette_bytes` error case above)
+                        const padding_bytes: usize = @intCast(bitmap_info.getMissingPaletteByteLen());
                         if (padding_bytes > 0) {
                             try writer.writeByteNTimes(0, padding_bytes);
                         }
@@ -2855,7 +2857,7 @@ pub const SearchDir = struct {
 pub fn HeaderSlurpingReader(comptime size: usize, comptime ReaderType: anytype) type {
     return struct {
         child_reader: ReaderType,
-        bytes_read: u64 = 0,
+        bytes_read: usize = 0,
         slurped_header: [size]u8 = [_]u8{0x00} ** size,
 
         pub const Error = ReaderType.Error;
@@ -2868,7 +2870,7 @@ pub fn HeaderSlurpingReader(comptime size: usize, comptime ReaderType: anytype) 
                 const end_index = self.bytes_read + bytes_to_add;
                 std.mem.copy(u8, self.slurped_header[self.bytes_read..end_index], buf[0..bytes_to_add]);
             }
-            self.bytes_read += amt;
+            self.bytes_read +|= amt;
             return amt;
         }
 
