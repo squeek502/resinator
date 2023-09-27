@@ -18,8 +18,6 @@
 //       resource at all anymore.
 
 const std = @import("std");
-const builtin = @import("builtin");
-const native_endian = builtin.cpu.arch.endian();
 
 pub const ReadError = std.mem.Allocator.Error || error{ InvalidHeader, ImpossibleNameOffset, OverlappingNames, ImpossibleDataSize, UnexpectedEOF, ReadError };
 
@@ -59,9 +57,6 @@ pub fn readAnyError(allocator: std.mem.Allocator, reader: anytype, max_size: u64
     };
     errdefer font.deinit();
 
-    if (native_endian != .Little) {
-        std.mem.byteSwapAllFields(FontDirEntry, &font.entry);
-    }
     var cur_offset: usize = FontDirEntry.len;
 
     // This is not technically a requirement, but all known specified version fields
@@ -130,16 +125,7 @@ pub const Font = struct {
     /// FONTDIRENTRY and the .FNT format's 'device name' and 'face name'
     /// values.
     pub fn writeResData(self: *const Font, writer: anytype) !void {
-        const entry_to_write = switch (native_endian) {
-            .Little => self.entry,
-            .Big => swapped: {
-                var copy: FontDirEntry = undefined;
-                copy.* = self.entry;
-                std.mem.byteSwapAllFields(FontDirEntry, copy);
-                break :swapped copy;
-            },
-        };
-        try entry_to_write.write(writer);
+        try self.entry.write(writer);
         try writer.writeAll(self.device_name);
         try writer.writeByte(0);
         try writer.writeAll(self.face_name);

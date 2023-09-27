@@ -571,7 +571,7 @@ pub const Compiler = struct {
                         }
 
                         try file.seekTo(entry.data_offset_from_start_of_file);
-                        const header_bytes = file.reader().readBytesNoEof(16) catch {
+                        var header_bytes = file.reader().readBytesNoEof(16) catch {
                             return self.iconReadError(
                                 error.UnexpectedEOF,
                                 filename_utf8,
@@ -647,8 +647,11 @@ pub const Compiler = struct {
                                 },
                             },
                             .dib => {
-                                const bitmap_header: *const ico.BitmapHeader = @ptrCast(@alignCast(&header_bytes));
-                                const bitmap_version = ico.BitmapHeader.Version.get(std.mem.littleToNative(u32, bitmap_header.bcSize));
+                                var bitmap_header: *ico.BitmapHeader = @ptrCast(@alignCast(&header_bytes));
+                                if (builtin.cpu.arch.endian() == .Big) {
+                                    std.mem.byteSwapAllFields(ico.BitmapHeader, bitmap_header);
+                                }
+                                const bitmap_version = ico.BitmapHeader.Version.get(bitmap_header.bcSize);
 
                                 // The Win32 RC compiler only allows headers with
                                 // `bcSize == sizeof(BITMAPINFOHEADER)`, but it seems unlikely
@@ -684,15 +687,15 @@ pub const Compiler = struct {
                                     .icon => {
                                         // The values in the icon's BITMAPINFOHEADER always take precedence over
                                         // the values in the IconDir, but not in the LOCALHEADER (see above).
-                                        entry.type_specific_data.icon.color_planes = std.mem.littleToNative(u16, bitmap_header.bcPlanes);
-                                        entry.type_specific_data.icon.bits_per_pixel = std.mem.littleToNative(u16, bitmap_header.bcBitCount);
+                                        entry.type_specific_data.icon.color_planes = bitmap_header.bcPlanes;
+                                        entry.type_specific_data.icon.bits_per_pixel = bitmap_header.bcBitCount;
                                     },
                                     .cursor => {
                                         // Only cursors get the width/height from BITMAPINFOHEADER (icons don't)
                                         entry.width = @intCast(bitmap_header.bcWidth);
                                         entry.height = @intCast(bitmap_header.bcHeight);
-                                        entry.type_specific_data.cursor.hotspot_x = std.mem.littleToNative(u16, bitmap_header.bcPlanes);
-                                        entry.type_specific_data.cursor.hotspot_y = std.mem.littleToNative(u16, bitmap_header.bcBitCount);
+                                        entry.type_specific_data.cursor.hotspot_x = bitmap_header.bcPlanes;
+                                        entry.type_specific_data.cursor.hotspot_y = bitmap_header.bcBitCount;
                                     },
                                 }
                             },
@@ -3197,9 +3200,7 @@ pub const StringTable = struct {
                 // We already trimmed any trailing NULs, so we know it will be a new addition to the string.
                 if (compiler.null_terminate_string_table_strings) string_len_in_utf16_code_units += 1;
                 try data_writer.writeIntLittle(u16, string_len_in_utf16_code_units);
-                for (trimmed_string) |wc| {
-                    try data_writer.writeIntLittle(u16, wc);
-                }
+                try data_writer.writeAll(std.mem.sliceAsBytes(trimmed_string));
                 if (compiler.null_terminate_string_table_strings) {
                     try data_writer.writeIntLittle(u16, 0);
                 }
