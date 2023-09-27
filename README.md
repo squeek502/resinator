@@ -3,17 +3,17 @@
 
 A cross-platform Windows resource-definition script (.rc) to resource file (.res) compiler. The intention is for this to [get merged into the Zig compiler](https://github.com/ziglang/zig/pull/17069) as per [this accepted proposal](https://github.com/ziglang/zig/issues/3702), but it will also be maintained as a separate tool.
 
-- This is a fully [clean-room](https://en.wikipedia.org/wiki/Clean_room_design) implementation, using [fuzz testing](#testing-resinator) as the primary method of determining how `rc.exe` works and how compatible `resinator` is with its implementation.
+- This is a fully from-scratch and [clean-room](https://en.wikipedia.org/wiki/Clean_room_design) implementation, using [fuzz testing](#testing-resinator) as the primary method of determining how `rc.exe` works and how compatible `resinator` is with its implementation.
   + See [this talk](https://www.youtube.com/watch?v=RZczLb_uI9E) for a deeper dive into this
 - As of now, `resinator` can successfully compile every `.rc` file in the [Windows-classic-samples repo](https://github.com/microsoft/Windows-classic-samples) byte-for-byte identically to the Windows RC compiler when using the includes from MSVC/the Windows SDK. This is tested via [win32-samples-rc-tests](https://github.com/squeek502/win32-samples-rc-tests).
-- [Documentation](https://squeek502.github.io/resinator/)
+- [Documentation](https://squeek502.github.io/resinator/) (really just a dumping ground for documentation-adjacent stuff; to-be-improved-upon)
 
 ## Overview
 
 A Windows resource-definition file (`.rc`) is made up of both C/C++ preprocessor commands and resource definitions.
 
 - The preprocessor commands are evaluated first via either `zig` or `clang` (one or the other must be available)
-- The preprocessed `.rc` file will then be compiled into a `.res` file
+- The preprocessed `.rc` file is then compiled into a `.res` file
 - The `.res` file can then be linked into an executable by a linker
 
 `resinator` is similar to `llvm-rc` and GNU's `windres`, in that it aims to be a cross-platform alternative to [the Windows `rc.exe` tool](https://learn.microsoft.com/en-us/windows/win32/menurc/using-rc-the-rc-command-line-).
@@ -59,14 +59,14 @@ This behavior can be controlled with the `/:auto-includes` CLI option.
 
 | Feature | `resinator` | `windres` | `llvm-rc` |
 | --- | --- | --- | --- |
-| [Identical outputs for `.rc` files in `Windows-classic-samples`](https://github.com/squeek502/win32-samples-rc-tests) | ✅ | ❌ | ❌ |
-| UTF-16 encoded `.rc` support | ❌ | ❌ | ❌ |
-| CLI compatibility | ✅ | ❌ | ✅ |
 | Cross-platform | ✅ | ✅ | ✅ |
+| [Identical outputs for `.rc` files in `Windows-classic-samples`](https://github.com/squeek502/win32-samples-rc-tests) | ✅ | ❌ | ❌ |
+| Support for UTF-16 encoded `.rc` files | ❌ | ❌ | ❌ |
+| CLI compatibility with `rc.exe` | ✅ | ❌ | ✅ |
 | Support for outputting `.rc` files | ❌ | ✅ | ❌ |
 | Support for outputting COFF object files | ❌ | ✅ | ❌ |
 
-### An example of the differences between the implementations
+#### An example of the differences between the implementations
 
 Here is an example `.rc` script that is handled differently by each of `windres`, `llvm-rc`, and the canonical Windows `rc.exe` implementation:
 
