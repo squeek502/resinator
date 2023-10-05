@@ -14,6 +14,7 @@ pub const lang = @import("lang.zig");
 pub const lex = @import("lex.zig");
 pub const literals = @import("literals.zig");
 pub const parse = @import("parse.zig");
+pub const preprocess = @import("preprocess.zig");
 pub const rc = @import("rc.zig");
 pub const res = @import("res.zig");
 pub const source_mapping = @import("source_mapping.zig");

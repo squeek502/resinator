@@ -6,6 +6,8 @@ const Diagnostics = @import("errors.zig").Diagnostics;
 const cli = @import("cli.zig");
 const parse = @import("parse.zig");
 const lex = @import("lex.zig");
+const preprocess = @import("preprocess.zig");
+const renderErrorMessage = @import("utils.zig").renderErrorMessage;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{ .stack_trace_frames = 8 }){};
@@ -48,7 +50,7 @@ pub fn main() !void {
     defer options.deinit();
 
     if (options.print_help_and_exit) {
-        try stderr.writeAll(cli.usage_string);
+        try cli.writeUsage(stderr.writer(), "resinator");
         return;
     }
 
@@ -62,13 +64,6 @@ pub fn main() !void {
         if (options.preprocess != .no) {
             var argv = std.ArrayList([]const u8).init(allocator);
             defer argv.deinit();
-            var temp_strings = std.ArrayList([]const u8).init(allocator);
-            defer {
-                for (temp_strings.items) |temp_string| {
-                    allocator.free(temp_string);
-                }
-                temp_strings.deinit();
-            }
 
             const preprocessor = Preprocessor.find(allocator) catch |err| switch (err) {
                 error.OutOfMemory => |e| return e,
@@ -102,88 +97,17 @@ pub fn main() !void {
             defer include_args.deinit(allocator);
 
             try argv.appendSlice(preprocessor.getCommandArgs());
-            try argv.appendSlice(&[_][]const u8{
-                "-E", // preprocessor only
-                "--comments",
-                "-fuse-line-directives", // #line <num> instead of # <num>
-                // TODO: could use --trace-includes to give info about what's included from where
-                "-xc", // output c
-                // TODO: Turn this off, check the warnings, and convert the spaces back to NUL
-                "-Werror=null-character", // error on null characters instead of converting them to spaces
-                // TODO: could remove -Werror=null-character and instead parse warnings looking for 'warning: null character ignored'
-                //       since the only real problem is when clang doesn't preserve null characters
-                //"-Werror=invalid-pp-token", // will error on unfinished string literals
-                // TODO: could use -Werror instead
-                "-fms-compatibility", // Allow things like "header.h" to be resolved relative to the 'root' .rc file, among other things
-                // https://learn.microsoft.com/en-us/windows/win32/menurc/predefined-macros
-                "-DRC_INVOKED",
+
+            var args_arena = std.heap.ArenaAllocator.init(allocator);
+            defer args_arena.deinit();
+
+            try preprocess.appendClangArgs(args_arena.allocator(), &argv, options, .{
+                .clang_target = include_args.target,
+                .system_include_paths = include_args.include_paths,
+                .needs_gnu_workaround = if (include_args.target) |target| std.mem.endsWith(u8, target, "-gnu") else false,
+                .nostdinc = include_args.nostdinc,
             });
-            for (options.extra_include_paths.items) |extra_include_path| {
-                try argv.append("--include-directory");
-                try argv.append(extra_include_path);
-            }
 
-            if (include_args.nostdinc) {
-                try argv.append("-nostdinc");
-            }
-            for (include_args.include_paths) |include_path| {
-                try argv.append("-isystem");
-                try argv.append(include_path);
-            }
-            if (include_args.target) |target| {
-                try argv.append("-target");
-                try argv.append(target);
-                // Using -fms-compatibility and targeting the GNU abi interact in a strange way:
-                // - Targeting the GNU abi stops _MSC_VER from being defined
-                // - Passing -fms-compatibility stops __GNUC__ from being defined
-                // Neither being defined is a problem for things like MinGW's vadefs.h,
-                // which will fail during preprocessing if neither are defined.
-                // So, when targeting the GNU abi, we need to force __GNUC__ to be defined.
-                //
-                // TODO: This is a workaround that should be removed if possible.
-                if (std.mem.endsWith(u8, target, "-gnu")) {
-                    // This is the same default gnuc version that Clang uses:
-                    // https://github.com/llvm/llvm-project/blob/4b5366c9512aa273a5272af1d833961e1ed156e7/clang/lib/Driver/ToolChains/Clang.cpp#L6738
-                    try argv.append("-fgnuc-version=4.2.1");
-                }
-            }
-
-            const include_var = include_var: {
-                if (!options.ignore_include_env_var) {
-                    const INCLUDE = std.process.getEnvVarOwned(allocator, "INCLUDE") catch "";
-                    errdefer allocator.free(INCLUDE);
-
-                    // TODO: Should this be platform-specific? How does windres/llvm-rc handle this (if at all)?
-                    var it = std.mem.tokenize(u8, INCLUDE, ";");
-                    while (it.next()) |include_path| {
-                        try argv.append("-isystem");
-                        try argv.append(include_path);
-                    }
-                    break :include_var INCLUDE;
-                }
-                break :include_var &[_]u8{};
-            };
-            defer allocator.free(include_var);
-
-            var symbol_it = options.symbols.iterator();
-            while (symbol_it.next()) |entry| {
-                switch (entry.value_ptr.*) {
-                    .define => |value| {
-                        try argv.append("-D");
-                        const define_arg = arg: {
-                            const arg = try std.fmt.allocPrint(allocator, "{s}={s}", .{ entry.key_ptr.*, value });
-                            errdefer allocator.free(arg);
-                            try temp_strings.append(arg);
-                            break :arg arg;
-                        };
-                        try argv.append(define_arg);
-                    },
-                    .undefine => {
-                        try argv.append("-U");
-                        try argv.append(entry.key_ptr.*);
-                    },
-                }
-            }
             try argv.append(options.input_filename);
 
             if (options.verbose) {
@@ -222,7 +146,10 @@ pub fn main() !void {
 
             break :full_input result.stdout;
         } else {
-            break :full_input try std.fs.cwd().readFileAlloc(allocator, options.input_filename, std.math.maxInt(usize));
+            break :full_input std.fs.cwd().readFileAlloc(allocator, options.input_filename, std.math.maxInt(usize)) catch |err| {
+                try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to read input file path '{s}': {s}", .{ options.input_filename, @errorName(err) });
+                std.os.exit(1);
+            };
         }
     };
     defer allocator.free(full_input);
@@ -248,7 +175,10 @@ pub fn main() !void {
 
     var final_input = removeComments(mapping_results.result, mapping_results.result, &mapping_results.mappings);
 
-    var output_file = try std.fs.cwd().createFile(options.output_filename, .{});
+    var output_file = std.fs.cwd().createFile(options.output_filename, .{}) catch |err| {
+        try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to create output file '{s}': {s}", .{ options.output_filename, @errorName(err) });
+        std.os.exit(1);
+    };
     var output_file_closed = false;
     defer if (!output_file_closed) output_file.close();
 
@@ -331,33 +261,6 @@ pub fn main() !void {
 
     // print any warnings/notes
     diagnostics.renderToStdErr(std.fs.cwd(), final_input, stderr_config, mapping_results.mappings);
-}
-
-fn renderErrorMessage(writer: anytype, config: std.io.tty.Config, msg_type: enum { err, warning, note }, comptime format: []const u8, args: anytype) !void {
-    switch (msg_type) {
-        .err => {
-            try config.setColor(writer, .bold);
-            try config.setColor(writer, .red);
-            try writer.writeAll("error: ");
-        },
-        .warning => {
-            try config.setColor(writer, .bold);
-            try config.setColor(writer, .yellow);
-            try writer.writeAll("warning: ");
-        },
-        .note => {
-            try config.setColor(writer, .reset);
-            try config.setColor(writer, .cyan);
-            try writer.writeAll("note: ");
-        },
-    }
-    try config.setColor(writer, .reset);
-    if (msg_type == .err) {
-        try config.setColor(writer, .bold);
-    }
-    try writer.print(format, args);
-    try writer.writeByte('\n');
-    try config.setColor(writer, .reset);
 }
 
 const Preprocessor = enum {
