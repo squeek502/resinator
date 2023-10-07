@@ -69,6 +69,7 @@ pub const Token = struct {
         };
     }
 
+    /// Returns 0-based column
     pub fn calculateColumn(token: Token, source: []const u8, tab_columns: usize, maybe_line_start: ?usize) usize {
         const line_start = maybe_line_start orelse token.getLineStart(source);
 
