@@ -441,7 +441,7 @@ pub const SourceMappings = struct {
         ptr.* = span;
     }
 
-    pub fn has(self: *SourceMappings, line_num: usize) bool {
+    pub fn has(self: SourceMappings, line_num: usize) bool {
         return self.mapping.items.len >= line_num;
     }
 

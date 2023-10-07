@@ -109,6 +109,7 @@ pub const Token = struct {
         const line_start = maybe_line_start orelse token.getLineStart(source);
 
         var line_end = line_start + 1;
+        if (line_end >= source.len or source[line_end] == '\n') return source[line_start..line_start];
         while (line_end < source.len and source[line_end] != '\n') : (line_end += 1) {}
         while (line_end > 0 and source[line_end - 1] == '\r') : (line_end -= 1) {}
 

@@ -804,7 +804,8 @@ pub const ErrorDetails = struct {
                 .point_offset = self.token.start - source_line_start,
                 .after_len = after: {
                     const end = @min(source_line_end, if (self.token_span_end) |span_end| span_end.end else self.token.end);
-                    if (end == self.token.start) break :after 0;
+                    // end may be less than start when pointing to EOF
+                    if (end <= self.token.start) break :after 0;
                     break :after end - self.token.start - 1;
                 },
             },
@@ -818,11 +819,14 @@ pub fn renderErrorMessage(allocator: std.mem.Allocator, writer: anytype, tty_con
     const source_line_start = err_details.token.getLineStart(source);
     const column = err_details.token.calculateColumn(source, 1, source_line_start);
 
-    // var counting_writer_container = std.io.countingWriter(writer);
-    // const counting_writer = counting_writer_container.writer();
-
-    const corresponding_span: ?SourceMappings.SourceSpan = if (source_mappings) |mappings| mappings.get(err_details.token.line_number) else null;
-    const corresponding_file: ?[]const u8 = if (source_mappings) |mappings| mappings.files.get(corresponding_span.?.filename_offset) else null;
+    const corresponding_span: ?SourceMappings.SourceSpan = if (source_mappings != null and source_mappings.?.has(err_details.token.line_number))
+        source_mappings.?.get(err_details.token.line_number)
+    else
+        null;
+    const corresponding_file: ?[]const u8 = if (source_mappings != null and corresponding_span != null)
+        source_mappings.?.files.get(corresponding_span.?.filename_offset)
+    else
+        null;
 
     const err_line = if (corresponding_span) |span| span.start_line else err_details.token.line_number;
 
@@ -897,7 +901,7 @@ pub fn renderErrorMessage(allocator: std.mem.Allocator, writer: anytype, tty_con
     try writer.writeByte('\n');
     try tty_config.setColor(writer, .reset);
 
-    if (source_mappings) |_| {
+    if (corresponding_span != null and corresponding_file != null) {
         var corresponding_lines = try CorrespondingLines.init(allocator, cwd, err_details, source_line_for_display_buf.items, corresponding_span.?, corresponding_file.?);
         defer corresponding_lines.deinit(allocator);
 
