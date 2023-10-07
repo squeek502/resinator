@@ -240,6 +240,9 @@ pub fn handleLineCommand(allocator: Allocator, line_command: []const u8, current
     };
     defer allocator.free(filename);
 
+    // \x00 bytes in the filename is incompatible with how StringTable works
+    if (std.mem.indexOfScalar(u8, filename, '\x00') != null) return;
+
     current_mapping.line_num = linenum;
     current_mapping.filename.clearRetainingCapacity();
     try current_mapping.filename.appendSlice(allocator, filename);
