@@ -807,6 +807,8 @@ pub const Lexer = struct {
             }
         }
 
+        result.end = self.index;
+
         if (result.id == .quoted_ascii_string or result.id == .quoted_wide_string) {
             if (string_literal_length > self.max_string_literal_codepoints) {
                 self.error_context_token = result;
@@ -814,7 +816,6 @@ pub const Lexer = struct {
             }
         }
 
-        result.end = self.index;
         return result;
     }
 
