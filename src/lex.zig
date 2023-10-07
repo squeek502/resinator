@@ -878,6 +878,7 @@ pub const Lexer = struct {
             .end = end,
             .line_number = self.line_handler.line_number,
         };
+        errdefer self.error_context_token = token;
         const full_command = self.buffer[start..end];
         var command = full_command;
 
@@ -902,7 +903,6 @@ pub const Lexer = struct {
         }
 
         if (command.len == 0 or command[0] != '(') {
-            self.error_context_token = token;
             return error.CodePagePragmaMissingLeftParen;
         }
         command = command[1..];
@@ -918,7 +918,6 @@ pub const Lexer = struct {
         }
 
         if (num_str.len == 0) {
-            self.error_context_token = token;
             return error.CodePagePragmaNotInteger;
         }
 
@@ -927,7 +926,6 @@ pub const Lexer = struct {
         }
 
         if (command.len == 0 or command[0] != ')') {
-            self.error_context_token = token;
             return error.CodePagePragmaMissingRightParen;
         }
 
@@ -944,41 +942,26 @@ pub const Lexer = struct {
             //
             // Instead of that, we just have a separate error specifically for overflow.
             const num = parseCodePageNum(num_str) catch |err| switch (err) {
-                error.InvalidCharacter => {
-                    self.error_context_token = token;
-                    return error.CodePagePragmaNotInteger;
-                },
-                error.Overflow => {
-                    self.error_context_token = token;
-                    return error.CodePagePragmaOverflow;
-                },
+                error.InvalidCharacter => return error.CodePagePragmaNotInteger,
+                error.Overflow => return error.CodePagePragmaOverflow,
             };
 
             // Anything that starts with 0 but does not resolve to 0 is treated as invalid, e.g. 01252
             if (num_str[0] == '0' and num != 0) {
-                self.error_context_token = token;
                 return error.CodePagePragmaInvalidCodePage;
             }
             // Anything that resolves to 0 is treated as 'not an integer' by the Win32 implementation.
             else if (num == 0) {
-                self.error_context_token = token;
                 return error.CodePagePragmaNotInteger;
             }
             // Anything above u16 max is not going to be found since our CodePage enum is backed by a u16.
             if (num > std.math.maxInt(u16)) {
-                self.error_context_token = token;
                 return error.CodePagePragmaInvalidCodePage;
             }
 
             break :code_page code_pages.CodePage.getByIdentifierEnsureSupported(@intCast(num)) catch |err| switch (err) {
-                error.InvalidCodePage => {
-                    self.error_context_token = token;
-                    return error.CodePagePragmaInvalidCodePage;
-                },
-                error.UnsupportedCodePage => {
-                    self.error_context_token = token;
-                    return error.CodePagePragmaUnsupportedCodePage;
-                },
+                error.InvalidCodePage => return error.CodePagePragmaInvalidCodePage,
+                error.UnsupportedCodePage => return error.CodePagePragmaUnsupportedCodePage,
             };
         };
 
@@ -991,7 +974,6 @@ pub const Lexer = struct {
         // to still be able to work correctly after this error is returned.
         if (self.source_mappings) |source_mappings| {
             if (!source_mappings.isRootFile(token.line_number)) {
-                self.error_context_token = token;
                 return error.CodePagePragmaInIncludedFile;
             }
         }
