@@ -57,14 +57,14 @@ This behavior can be controlled with the `/:auto-includes` CLI option.
 
 ## Comparison to `windres` and `llvm-rc`
 
-| Feature | `resinator` | `windres` | `llvm-rc` |
-| --- | --- | --- | --- |
-| Cross-platform | ✅ | ✅ | ✅ |
-| [Identical outputs for `.rc` files in `Windows-classic-samples`](https://github.com/squeek502/win32-samples-rc-tests) | ✅ | ❌ | ❌ |
-| Support for UTF-16 encoded `.rc` files | ❌ | ❌ | ❌ |
-| CLI compatibility with `rc.exe` | ✅ | ❌ | ✅ |
-| Support for outputting `.rc` files | ❌ | ✅ | ❌ |
-| Support for outputting COFF object files | ❌ | ✅ | ❌ |
+| Feature | `resinator` | `windres` | `llvm-rc` | `rc.exe` |
+| --- | --- | --- | --- | --- |
+| Cross-platform | ✅ | ✅ | ✅ | ❌ |
+| Identical [`win32-samples-rc-tests`](https://github.com/squeek502/win32-samples-rc-tests) outputs as `rc.exe` | ✅ | ❌ | ❌ | ✅ |
+| Support for UTF-16 encoded `.rc` files | ❌ | ❌ | ❌ | ✅ |
+| CLI compatibility with `rc.exe` | ✅ | ❌ | ✅ | ✅ |
+| Support for outputting `.rc` files | ❌ | ✅ | ❌ | ❌ |
+| Support for outputting COFF object files | ❌ | ✅ | ❌ | ❌ |
 
 #### An example of the differences between the implementations
 
