@@ -817,7 +817,8 @@ pub fn renderErrorMessage(allocator: std.mem.Allocator, writer: anytype, tty_con
     if (err_details.type == .hint) return;
 
     const source_line_start = err_details.token.getLineStart(source);
-    // Add one to get a 1-based column for display purposes
+    // Treat tab stops as 1 column wide for error display purposes,
+    // and add one to get a 1-based column
     const column = err_details.token.calculateColumn(source, 1, source_line_start) + 1;
 
     const corresponding_span: ?SourceMappings.SourceSpan = if (source_mappings != null and source_mappings.?.has(err_details.token.line_number))

@@ -6,7 +6,7 @@
 
 const std = @import("std");
 const ErrorDetails = @import("errors.zig").ErrorDetails;
-const columnsUntilTabStop = @import("literals.zig").columnsUntilTabStop;
+const columnWidth = @import("literals.zig").columnWidth;
 const code_pages = @import("code_pages.zig");
 const CodePage = code_pages.CodePage;
 const SourceMappings = @import("source_mapping.zig").SourceMappings;
@@ -76,11 +76,7 @@ pub const Token = struct {
         var i: usize = line_start;
         var column: usize = 0;
         while (i < token.start) : (i += 1) {
-            const c = source[i];
-            switch (c) {
-                '\t' => column += columnsUntilTabStop(column, tab_columns),
-                else => column += 1,
-            }
+            column += columnWidth(column, source[i], tab_columns);
         }
         return column;
     }
@@ -406,6 +402,9 @@ pub const Lexer = struct {
         // TODO: Understand this more, bring it more in line with how the Win32 limits work.
         //       Alternatively, do something that makes more sense but may be more permissive.
         var string_literal_length: usize = 0;
+        // Keeping track of the string literal column prevents pathological edge cases when
+        // there are tons of tab stop characters within a string literal.
+        var string_literal_column: usize = 0;
         var string_literal_collapsing_whitespace: bool = false;
         var still_could_have_exponent: bool = true;
         var exponent_index: ?usize = null;
@@ -473,6 +472,14 @@ pub const Lexer = struct {
                         self.at_start_of_line = false;
                         string_literal_collapsing_whitespace = false;
                         string_literal_length = 0;
+
+                        var dummy_token = Token{
+                            .start = self.index,
+                            .end = self.index,
+                            .line_number = self.line_handler.line_number,
+                            .id = .invalid,
+                        };
+                        string_literal_column = dummy_token.calculateColumn(self.buffer, 8, null);
                     },
                     '+', '&', '|' => {
                         self.index += 1;
@@ -620,6 +627,14 @@ pub const Lexer = struct {
                         state = .quoted_wide_string;
                         string_literal_collapsing_whitespace = false;
                         string_literal_length = 0;
+
+                        var dummy_token = Token{
+                            .start = self.index,
+                            .end = self.index,
+                            .line_number = self.line_handler.line_number,
+                            .id = .invalid,
+                        };
+                        string_literal_column = dummy_token.calculateColumn(self.buffer, 8, null);
                     },
                     else => {
                         state = .literal;
@@ -697,18 +712,23 @@ pub const Lexer = struct {
                 },
                 .quoted_ascii_string, .quoted_wide_string => switch (c) {
                     '"' => {
+                        string_literal_column += 1;
                         state = if (state == .quoted_ascii_string) .quoted_ascii_string_maybe_end else .quoted_wide_string_maybe_end;
                     },
                     '\\' => {
+                        string_literal_length += 1;
+                        string_literal_column += 1;
                         state = if (state == .quoted_ascii_string) .quoted_ascii_string_escape else .quoted_wide_string_escape;
                     },
                     '\r' => {
+                        string_literal_column = 0;
                         // \r doesn't count towards string literal length
 
                         // Increment line number but don't affect the result token's line number
                         _ = self.incrementLineNumber();
                     },
                     '\n' => {
+                        string_literal_column = 0;
                         // first \n expands to <space><\n>
                         if (!string_literal_collapsing_whitespace) {
                             string_literal_length += 2;
@@ -722,33 +742,17 @@ pub const Lexer = struct {
                     // only \t, space, Vertical Tab, and Form Feed count as whitespace when collapsing
                     '\t', ' ', '\x0b', '\x0c' => {
                         if (!string_literal_collapsing_whitespace) {
-                            if (c == '\t') {
-                                // Literal tab characters are counted as the number of space characters
-                                // needed to reach the next 8-column tab stop.
-                                //
-                                // This implemention is ineffecient but hopefully it's enough of an
-                                // edge case that it doesn't matter too much. Literal tab characters in
-                                // string literals being replaced by a variable number of spaces depending
-                                // on which column the tab character is located in the source .rc file seems
-                                // like it has extremely limited use-cases, so it seems unlikely that it's used
-                                // in real .rc files.
-                                var dummy_token = Token{
-                                    .start = self.index,
-                                    .end = self.index,
-                                    .line_number = self.line_handler.line_number,
-                                    .id = .invalid,
-                                };
-                                dummy_token.start = self.index;
-                                const current_column = dummy_token.calculateColumn(self.buffer, 8, null);
-                                string_literal_length += columnsUntilTabStop(current_column, 8);
-                            } else {
-                                string_literal_length += 1;
-                            }
+                            // Literal tab characters are counted as the number of space characters
+                            // needed to reach the next 8-column tab stop.
+                            const width = columnWidth(string_literal_column, @intCast(c), 8);
+                            string_literal_length += width;
+                            string_literal_column += width;
                         }
                     },
                     else => {
                         string_literal_collapsing_whitespace = false;
                         string_literal_length += 1;
+                        string_literal_column += 1;
                     },
                 },
                 .quoted_ascii_string_escape, .quoted_wide_string_escape => switch (c) {
@@ -762,14 +766,19 @@ pub const Lexer = struct {
                         return error.FoundCStyleEscapedQuote;
                     },
                     else => {
+                        string_literal_length += 1;
+                        string_literal_column += 1;
                         state = if (state == .quoted_ascii_string_escape) .quoted_ascii_string else .quoted_wide_string;
                     },
                 },
                 .quoted_ascii_string_maybe_end, .quoted_wide_string_maybe_end => switch (c) {
                     '"' => {
                         state = if (state == .quoted_ascii_string_maybe_end) .quoted_ascii_string else .quoted_wide_string;
-                        // Escaped quotes only count as 1 char for string literal length checks,
-                        // so we don't increment string_literal_length here.
+                        // Escaped quotes count as 1 char for string literal length checks.
+                        // Since we did not increment on the first " (because it could have been
+                        // the end of the quoted string), we increment here
+                        string_literal_length += 1;
+                        string_literal_column += 1;
                     },
                     else => {
                         result.id = if (state == .quoted_ascii_string_maybe_end) .quoted_ascii_string else .quoted_wide_string;
