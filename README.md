@@ -1,7 +1,7 @@
 ![](https://www.ryanliptak.com/images/resinator-dynamic-32.svg) resinator
 =========
 
-A cross-platform Windows resource-definition script (.rc) to resource file (.res) compiler. The intention is for this to [get merged into the Zig compiler](https://github.com/ziglang/zig/pull/17069) as per [this accepted proposal](https://github.com/ziglang/zig/issues/3702), but it will also be maintained as a separate tool.
+A cross-platform Windows resource-definition script (.rc) to resource file (.res) compiler. It has been merged into the Zig compiler ([#17069](https://github.com/ziglang/zig/pull/17069), [#17412](https://github.com/ziglang/zig/pull/17412)), but it will also be maintained as a separate tool.
 
 - This is a fully from-scratch and [clean-room](https://en.wikipedia.org/wiki/Clean_room_design) implementation, using [fuzz testing](#testing-resinator) as the primary method of determining how `rc.exe` works and how compatible `resinator` is with its implementation.
   + See [this talk](https://www.youtube.com/watch?v=RZczLb_uI9E) for a deeper dive into this
