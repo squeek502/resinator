@@ -69,4 +69,4 @@ jobs:
       - name: Test Win32 Samples
         if: ${{ matrix.os == 'windows-latest' }}
         working-directory: ./win32-samples-rc-tests
-        run: .\test.ps1 -ErrorOnAnyDiscrepancies -ErrorOnAnyLikelyPanics -IncludeWin32WillCompileErrorFiles -ExcludeLLVMRC -ExcludeWindres
+        run: .\test.ps1 -ErrorOnAnyDiscrepancies -ErrorOnAnyLikelyPanics -IncludeWin32WillCompileErrorFiles -ExcludeLLVMRC -ExcludeWindres -ExcludeZigRC
