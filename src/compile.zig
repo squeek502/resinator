@@ -126,8 +126,13 @@ pub fn compile(allocator: Allocator, source: []const u8, writer: anytype, option
         const INCLUDE = std.process.getEnvVarOwned(allocator, "INCLUDE") catch "";
         defer allocator.free(INCLUDE);
 
-        // TODO: Should this be platform-specific? How does windres/llvm-rc handle this (if at all)?
-        var it = std.mem.tokenize(u8, INCLUDE, ";");
+        // The only precedence here is llvm-rc which also uses the platform-specific
+        // delimiter. There's no precedence set by `rc.exe` since it's Windows-only.
+        const delimiter = switch (builtin.os.tag) {
+            .windows => ';',
+            else => ':',
+        };
+        var it = std.mem.tokenizeScalar(u8, INCLUDE, delimiter);
         while (it.next()) |search_path| {
             var dir = openSearchPathDir(options.cwd, search_path) catch continue;
             errdefer dir.close();
