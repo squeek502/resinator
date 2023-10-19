@@ -395,6 +395,10 @@ pub const ErrorDetails = struct {
         // General (used in various places)
         /// `number` is populated and contains the value that the ordinal would have in the Win32 RC compiler implementation
         win32_non_ascii_ordinal,
+
+        // Initialization
+        /// `file_open_error` is populated, but `filename_string_index` is not
+        failed_to_open_cwd,
     };
 
     pub fn render(self: ErrorDetails, writer: anytype, source: []const u8, strings: []const []const u8) !void {
@@ -765,6 +769,9 @@ pub const ErrorDetails = struct {
                 .err, .warning => unreachable,
                 .note => return writer.print("the Win32 RC compiler would accept this as an ordinal but its value would be {}", .{self.extra.number}),
                 .hint => return,
+            },
+            .failed_to_open_cwd => {
+                try writer.print("failed to open CWD for compilation: {s}", .{@tagName(self.extra.file_open_error.err)});
             },
         }
     }

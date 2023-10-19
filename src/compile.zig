@@ -88,10 +88,23 @@ pub fn compile(allocator: Allocator, source: []const u8, writer: anytype, option
         }
     }
     // Re-open the passed in cwd since we want to be able to close it (std.fs.cwd() shouldn't be closed)
-    // `catch unreachable` since `options.cwd` is expected to be a valid dir handle, so opening
-    // a new handle to it should be fine as well.
-    // TODO: Maybe catch and return an error instead
-    const cwd_dir = options.cwd.openDir(".", .{}) catch unreachable;
+    const cwd_dir = options.cwd.openDir(".", .{}) catch |err| {
+        try options.diagnostics.append(.{
+            .err = .failed_to_open_cwd,
+            .token = .{
+                .id = .invalid,
+                .start = 0,
+                .end = 0,
+                .line_number = 1,
+            },
+            .print_source_line = false,
+            .extra = .{ .file_open_error = .{
+                .err = ErrorDetails.FileOpenError.enumFromError(err),
+                .filename_string_index = undefined,
+            } },
+        });
+        return error.CompileError;
+    };
     try search_dirs.append(.{ .dir = cwd_dir, .path = null });
     for (options.extra_include_paths) |extra_include_path| {
         var dir = openSearchPathDir(options.cwd, extra_include_path) catch {
