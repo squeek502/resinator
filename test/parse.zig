@@ -1954,12 +1954,9 @@ test "max dialog controls" {
         null,
     );
 
-    // Now reset and add 1 more than the max number of controls.
-    source_buffer.clearRetainingCapacity();
-    try source_buffer.appendSlice("1 DIALOGEX 1, 2, 3, 4 {\n");
-    for (0..max_controls + 1) |_| {
-        try source_buffer.appendSlice("CHECKBOX \"foo\", 1, 2, 3, 4, 5\n");
-    }
+    // Now pop the } and add one more control
+    _ = source_buffer.pop();
+    try source_buffer.appendSlice("CHECKBOX \"foo\", 1, 2, 3, 4, 5\n");
     try source_buffer.appendSlice("}");
 
     // Now we should get the 'too many controls' error.
@@ -1967,6 +1964,42 @@ test "max dialog controls" {
         &.{
             .{ .type = .err, .str = "dialogex contains too many controls (max is 65535)" },
             .{ .type = .note, .str = "maximum number of controls exceeded here" },
+        },
+        source_buffer.items,
+        null,
+    );
+}
+
+test "max toolbar buttons" {
+    var source_buffer = std.ArrayList(u8).init(std.testing.allocator);
+    defer source_buffer.deinit();
+
+    const max_buttons = std.math.maxInt(u16);
+
+    try source_buffer.appendSlice("1 TOOLBAR 1, 2 {\n");
+    for (0..max_buttons) |_| {
+        try source_buffer.appendSlice("BUTTON 1\n");
+    }
+    try source_buffer.appendSlice("}");
+
+    // This should succeed, but we don't care about validating the tree since it's
+    // just a dialog with a giant list of buttons.
+    try testParseErrorDetails(
+        &.{},
+        source_buffer.items,
+        null,
+    );
+
+    // Now pop the } and add one more button
+    _ = source_buffer.pop();
+    try source_buffer.appendSlice("BUTTON 1\n");
+    try source_buffer.appendSlice("}");
+
+    // Now we should get the 'too many buttons' error.
+    try testParseErrorDetails(
+        &.{
+            .{ .type = .err, .str = "toolbar contains too many buttons (max is 65535)" },
+            .{ .type = .note, .str = "maximum number of buttons exceeded here" },
         },
         source_buffer.items,
         null,

@@ -314,7 +314,7 @@ pub const ErrorDetails = struct {
         rc_would_miscompile_version_value_byte_count,
         code_page_pragma_in_included_file,
         nested_resource_level_exceeds_max,
-        too_many_dialog_controls,
+        too_many_dialog_controls_or_toolbar_buttons,
         nested_expression_level_exceeds_max,
         close_paren_expression,
         unary_plus_expression,
@@ -541,9 +541,15 @@ pub const ErrorDetails = struct {
                 .note => return writer.print("max {s} nesting level exceeded here", .{self.extra.resource.nameForErrorDisplay()}),
                 .hint => return,
             },
-            .too_many_dialog_controls => switch (self.type) {
-                .err, .warning => return writer.print("{s} contains too many controls (max is {})", .{ self.extra.resource.nameForErrorDisplay(), std.math.maxInt(u16) }),
-                .note => return writer.writeAll("maximum number of controls exceeded here"),
+            .too_many_dialog_controls_or_toolbar_buttons => switch (self.type) {
+                .err, .warning => return writer.print("{s} contains too many {s} (max is {})", .{ self.extra.resource.nameForErrorDisplay(), switch (self.extra.resource) {
+                    .toolbar => "buttons",
+                    else => "controls",
+                }, std.math.maxInt(u16) }),
+                .note => return writer.print("maximum number of {s} exceeded here", .{switch (self.extra.resource) {
+                    .toolbar => "buttons",
+                    else => "controls",
+                }}),
                 .hint => return,
             },
             .nested_expression_level_exceeds_max => switch (self.type) {

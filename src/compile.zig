@@ -1668,6 +1668,7 @@ pub const Compiler = struct {
             };
         }
 
+        // We know the data_buffer len is limited to u32 max.
         const data_size: u32 = @intCast(data_buffer.items.len);
         var header = try self.resourceHeader(node.id, node.type, .{
             .data_size = data_size,
@@ -1965,6 +1966,7 @@ pub const Compiler = struct {
         try data_writer.writeIntLittle(u16, 1);
         try data_writer.writeIntLittle(u16, button_width.asWord());
         try data_writer.writeIntLittle(u16, button_height.asWord());
+        // Number of buttons is guaranteed by the parser to be within maxInt(u16).
         try data_writer.writeIntLittle(u16, @as(u16, @intCast(node.buttons.len)));
 
         for (node.buttons) |button_or_sep| {
