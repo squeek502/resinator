@@ -156,13 +156,14 @@ pub const IterativeStringParser = struct {
             .wide => 4,
         };
 
-        while (self.code_page.codepointAt(self.index, self.source)) |codepoint| : (self.index += codepoint.byte_len) {
+        var backtrack: bool = undefined;
+        while (self.code_page.codepointAt(self.index, self.source)) |codepoint| : ({
+            if (!backtrack) self.index += codepoint.byte_len;
+        }) {
+            backtrack = false;
             const c = codepoint.value;
-            var backtrack = false;
             defer {
-                if (backtrack) {
-                    self.index -= codepoint.byte_len;
-                } else {
+                if (!backtrack) {
                     if (c == '\t') {
                         self.column += columnsUntilTabStop(self.column, 8);
                     } else {
@@ -213,10 +214,12 @@ pub const IterativeStringParser = struct {
                 .newline => switch (c) {
                     '\r', ' ', '\t', '\n', '\x0b', '\x0c', '\xa0' => {},
                     else => {
-                        // backtrack so that we handle the current char properly
+                        // we intentionally avoid incrementing self.index
+                        // to handle the current char in the next call,
+                        // and we set backtrack so column count is handled correctly
                         backtrack = true;
+
                         // <space><newline>
-                        self.index += codepoint.byte_len;
                         self.pending_codepoint = '\n';
                         return .{ .codepoint = ' ' };
                     },
@@ -263,9 +266,10 @@ pub const IterativeStringParser = struct {
                             else => switch (self.declared_string_type) {
                                 .wide => {}, // invalid escape sequences are skipped in wide strings
                                 .ascii => {
-                                    // backtrack so that we handle the current char properly
+                                    // we intentionally avoid incrementing self.index
+                                    // to handle the current char in the next call,
+                                    // and we set backtrack so column count is handled correctly
                                     backtrack = true;
-                                    self.index += codepoint.byte_len;
                                     return .{ .codepoint = '\\' };
                                 },
                             },
@@ -277,9 +281,10 @@ pub const IterativeStringParser = struct {
                     '\r' => {},
                     '\n' => state = .escaped_newlines,
                     else => {
-                        // backtrack so that we handle the current char properly
+                        // we intentionally avoid incrementing self.index
+                        // to handle the current char in the next call,
+                        // and we set backtrack so column count is handled correctly
                         backtrack = true;
-                        self.index += codepoint.byte_len;
                         return .{ .codepoint = '\\' };
                     },
                 },
@@ -306,14 +311,16 @@ pub const IterativeStringParser = struct {
                         }
                     },
                     else => {
-                        // backtrack so that we handle the current char properly
+                        // we intentionally avoid incrementing self.index
+                        // to handle the current char in the next call,
+                        // and we set backtrack so column count is handled correctly
                         backtrack = true;
+
                         // write out whatever byte we have parsed so far
                         const escaped_value = switch (self.declared_string_type) {
                             .ascii => @as(u8, @truncate(string_escape_n)),
                             .wide => string_escape_n,
                         };
-                        self.index += codepoint.byte_len;
                         return .{ .codepoint = escaped_value, .from_escaped_integer = true };
                     },
                 },
@@ -332,15 +339,17 @@ pub const IterativeStringParser = struct {
                         }
                     },
                     else => {
-                        // backtrack so that we handle the current char properly
+                        // we intentionally avoid incrementing self.index
+                        // to handle the current char in the next call,
+                        // and we set backtrack so column count is handled correctly
                         backtrack = true;
+
                         // write out whatever byte we have parsed so far
                         // (even with 0 actual digits, \x alone parses to 0)
                         const escaped_value = switch (self.declared_string_type) {
                             .ascii => @as(u8, @truncate(string_escape_n)),
                             .wide => string_escape_n,
                         };
-                        self.index += codepoint.byte_len;
                         return .{ .codepoint = escaped_value, .from_escaped_integer = true };
                     },
                 },
@@ -649,6 +658,14 @@ test "parse quoted ascii string with utf8 code page" {
     try std.testing.expectEqualSlices(u8, "\xF2\xAF\xBA\xB4", try parseQuotedAsciiString(
         arena,
         .{ .slice = "\"\xF2\xAF\xBA\xB4\"", .code_page = .utf8 },
+        .{ .output_code_page = .utf8 },
+    ));
+
+    // This used to cause integer overflow when reconsuming the 4-byte long codepoint
+    // after the escaped CRLF pair.
+    try std.testing.expectEqualSlices(u8, "\u{10348}", try parseQuotedAsciiString(
+        arena,
+        .{ .slice = "\"\\\r\n\u{10348}\"", .code_page = .utf8 },
         .{ .output_code_page = .utf8 },
     ));
 }
