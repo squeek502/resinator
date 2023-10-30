@@ -105,7 +105,7 @@ pub const ResinatorResult = struct {
     pre: ?PreprocessResult = null,
 
     pub const PreprocessResult = struct {
-        preprocessor: std.ChildProcess.ExecResult = undefined,
+        preprocessor: std.ChildProcess.RunResult = undefined,
         known_preprocessor_difference: bool = false,
     };
 
@@ -250,7 +250,7 @@ pub fn runPreprocessor(allocator: Allocator, input_filepath: []const u8, options
     });
     try argv.append(input_filepath);
 
-    result.preprocessor = try std.ChildProcess.exec(.{
+    result.preprocessor = try std.ChildProcess.run(.{
         .allocator = allocator,
         .argv = argv.items,
         .max_output_bytes = std.math.maxInt(u32),
@@ -264,7 +264,7 @@ pub fn runPreprocessor(allocator: Allocator, input_filepath: []const u8, options
 
 pub const Win32Result = struct {
     res: ?[]const u8 = null,
-    exec: std.ChildProcess.ExecResult,
+    exec: std.ChildProcess.RunResult,
 
     pub fn deinit(self: *Win32Result, allocator: Allocator) void {
         if (self.res) |res| {
@@ -282,7 +282,7 @@ pub fn getWin32Result(allocator: Allocator, source: []const u8, options: GetResu
 
 pub fn getWin32ResultFromFile(allocator: Allocator, input_path: []const u8, options: GetResultOptions) !Win32Result {
     const output_path = options.output_path orelse "test_win32.res";
-    var exec_result = try std.ChildProcess.exec(.{
+    var exec_result = try std.ChildProcess.run(.{
         .allocator = allocator,
         .argv = &[_][]const u8{
             // Note: This relies on `rc.exe` being in the PATH
