@@ -403,6 +403,72 @@ pub const Compiler = struct {
         return first_error orelse error.FileNotFound;
     }
 
+    pub fn parseDlgIncludeString(self: *Compiler, token: Token) ![]u8 {
+        // For the purposes of parsing, we want to strip the L prefix
+        // if it exists since we want escaped integers to be limited to
+        // their ascii string range.
+        //
+        // We keep track of whether or not there was an L prefix, though,
+        // since there's more weirdness to come.
+        var bytes = self.sourceBytesForToken(token);
+        var was_wide_string = false;
+        if (bytes.slice[0] == 'L' or bytes.slice[0] == 'l') {
+            was_wide_string = true;
+            bytes.slice = bytes.slice[1..];
+        }
+
+        var buf = try std.ArrayList(u8).initCapacity(self.allocator, bytes.slice.len);
+        errdefer buf.deinit();
+
+        var iterative_parser = literals.IterativeStringParser.init(bytes, .{
+            .start_column = token.calculateColumn(self.source, 8, null),
+            .diagnostics = .{ .diagnostics = self.diagnostics, .token = token },
+        });
+
+        // No real idea what's going on here, but this matches the rc.exe behavior
+        while (try iterative_parser.next()) |parsed| {
+            const c = parsed.codepoint;
+            switch (was_wide_string) {
+                true => {
+                    switch (c) {
+                        0...0x7F, 0xA0...0xFF => try buf.append(@intCast(c)),
+                        0x80...0x9F => {
+                            if (windows1252.bestFitFromCodepoint(c)) |_| {
+                                try buf.append(@intCast(c));
+                            } else {
+                                try buf.append('?');
+                            }
+                        },
+                        else => {
+                            if (windows1252.bestFitFromCodepoint(c)) |best_fit| {
+                                try buf.append(best_fit);
+                            } else if (c < 0x10000 or c == code_pages.Codepoint.invalid) {
+                                try buf.append('?');
+                            } else {
+                                try buf.appendSlice("??");
+                            }
+                        },
+                    }
+                },
+                false => {
+                    if (parsed.from_escaped_integer) {
+                        try buf.append(@truncate(c));
+                    } else {
+                        if (windows1252.bestFitFromCodepoint(c)) |best_fit| {
+                            try buf.append(best_fit);
+                        } else if (c < 0x10000 or c == code_pages.Codepoint.invalid) {
+                            try buf.append('?');
+                        } else {
+                            try buf.appendSlice("??");
+                        }
+                    }
+                },
+            }
+        }
+
+        return buf.toOwnedSlice();
+    }
+
     pub fn writeResourceExternal(self: *Compiler, node: *Node.ResourceExternal, writer: anytype) !void {
         // Init header with data size zero for now, will need to fill it in later
         var header = try self.resourceHeader(node.id, node.type, .{});
@@ -413,13 +479,16 @@ pub const Compiler = struct {
         // DLGINCLUDE has special handling that doesn't actually need the file to exist
         if (maybe_predefined_type != null and maybe_predefined_type.? == .DLGINCLUDE) {
             const filename_token = node.filename.cast(.literal).?.token;
-            const parsed_filename = try self.parseQuotedStringAsAsciiString(filename_token);
+            const parsed_filename = try self.parseDlgIncludeString(filename_token);
             defer self.allocator.free(parsed_filename);
 
+            // NUL within the parsed string acts as a terminator
+            const parsed_filename_terminated = std.mem.sliceTo(parsed_filename, 0);
+
             header.applyMemoryFlags(node.common_resource_attributes, self.source);
-            header.data_size = @intCast(parsed_filename.len + 1);
+            header.data_size = @intCast(parsed_filename_terminated.len + 1);
             try header.write(writer, .{ .diagnostics = self.diagnostics, .token = node.id });
-            try writer.writeAll(parsed_filename);
+            try writer.writeAll(parsed_filename_terminated);
             try writer.writeByte(0);
             try writeDataPadding(writer, header.data_size);
             return;
@@ -2798,19 +2867,6 @@ pub const Compiler = struct {
     /// Resulting slice is allocated by `self.allocator`.
     pub fn parseQuotedStringAsWideString(self: *Compiler, token: Token) ![:0]u16 {
         return literals.parseQuotedStringAsWideString(
-            self.allocator,
-            self.sourceBytesForToken(token),
-            .{
-                .start_column = token.calculateColumn(self.source, 8, null),
-                .diagnostics = .{ .diagnostics = self.diagnostics, .token = token },
-            },
-        );
-    }
-
-    /// Helper that calls parseQuotedStringAsAsciiString with the relevant context
-    /// Resulting slice is allocated by `self.allocator`.
-    pub fn parseQuotedStringAsAsciiString(self: *Compiler, token: Token) ![]u8 {
-        return literals.parseQuotedStringAsAsciiString(
             self.allocator,
             self.sourceBytesForToken(token),
             .{

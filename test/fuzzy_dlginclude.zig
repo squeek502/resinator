@@ -17,7 +17,6 @@ test "octal escapes, ascii string literal" {
     const byte_index = std.mem.indexOfScalar(u8, source, '?').?;
     var value: u32 = 1;
     while (true) : (value += 1) {
-        std.debug.print("{} (0o{o})\n", .{ value, value });
         _ = std.fmt.bufPrint(source[byte_index..], "{o:0>3}", .{value}) catch unreachable;
 
         utils.expectSameResOutput(allocator, source, .{
@@ -46,7 +45,6 @@ test "octal escapes, wide string literal" {
     const byte_index = std.mem.indexOfScalar(u8, source, '?').?;
     var value: u32 = 1;
     while (true) : (value += 1) {
-        std.debug.print("{} (0o{o})\n", .{ value, value });
         _ = std.fmt.bufPrint(source[byte_index..], "{o:0>3}", .{value}) catch unreachable;
 
         utils.expectSameResOutput(allocator, source, .{
