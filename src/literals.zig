@@ -469,7 +469,15 @@ pub fn parseQuotedStringAsWideString(allocator: std.mem.Allocator, bytes: Source
 
 pub fn parseQuotedStringAsAsciiString(allocator: std.mem.Allocator, bytes: SourceBytes, options: StringParseOptions) ![]u8 {
     std.debug.assert(bytes.slice.len >= 2); // ""
-    return parseQuotedString(.ascii, allocator, bytes, options);
+    // This is slightly hacky, but L"\xABCD" will lead to an @intCast failure
+    // because to the L prefix makes the parser allow 4 hex digits in an escape sequence.
+    // To avoid this error and get the behavior we want, we just strip the L if it exists
+    // and parse the string as if there was no prefix.
+    var ascii_bytes = bytes;
+    if (bytes.slice[0] == 'L' or bytes.slice[0] == 'l') {
+        ascii_bytes.slice = ascii_bytes.slice[1..];
+    }
+    return parseQuotedString(.ascii, allocator, ascii_bytes, options);
 }
 
 test "parse quoted ascii string" {
