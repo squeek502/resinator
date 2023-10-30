@@ -118,7 +118,7 @@ pub fn main() !void {
                 try stdout_writer.print("{s}\n\n", .{argv.items[argv.items.len - 1]});
             }
 
-            var result = std.ChildProcess.exec(.{
+            var result = std.ChildProcess.run(.{
                 .allocator = allocator,
                 .argv = argv.items,
                 .max_output_bytes = std.math.maxInt(u32),
@@ -294,7 +294,7 @@ const Preprocessor = enum {
             try argv.appendSlice(pre.getCommandArgs());
             try argv.append("--version");
 
-            var result = std.ChildProcess.exec(.{
+            var result = std.ChildProcess.run(.{
                 .allocator = allocator,
                 .argv = argv.items,
                 .max_output_bytes = std.math.maxInt(u16),
@@ -377,7 +377,7 @@ const Preprocessor = enum {
 
     fn zigSupportsLibcIncludesOption(allocator: std.mem.Allocator) !bool {
         if (Preprocessor.zig_supports_libc_includes_option == null) {
-            var result = std.ChildProcess.exec(.{
+            var result = std.ChildProcess.run(.{
                 .allocator = allocator,
                 .argv = &.{ "zig", "libc", "-includes" },
                 .max_output_bytes = std.math.maxInt(u16),
@@ -399,7 +399,7 @@ const Preprocessor = enum {
     }
 
     fn getIncludeDirsFromZig(allocator: std.mem.Allocator, target: []const u8) ![]const []const u8 {
-        var result = try std.ChildProcess.exec(.{
+        var result = try std.ChildProcess.run(.{
             .allocator = allocator,
             .argv = &.{ "zig", "libc", "-includes", "-target", target },
             .max_output_bytes = std.math.maxInt(u16),
