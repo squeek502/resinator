@@ -44,28 +44,28 @@ test "BITMAP fuzz" {
 
         // write a bitmap header and DIB header
         try image_writer.writeAll("BM");
-        try image_writer.writeIntLittle(u32, reported_data_size); // size of the file (including everything)
-        try image_writer.writeIntLittle(u16, rand.int(u16)); // reserved
-        try image_writer.writeIntLittle(u16, rand.int(u16)); // reserved
+        try image_writer.writeInt(u32, reported_data_size, .little); // size of the file (including everything)
+        try image_writer.writeInt(u16, rand.int(u16), .little); // reserved
+        try image_writer.writeInt(u16, rand.int(u16), .little); // reserved
         // offset of bmp image data
         // Note: This being larger than the file size can trigger some weird behavior in the
         //       Win32 rc compiler
-        try image_writer.writeIntLittle(u32, if (rand.boolean()) bmp_file_header_len + 40 else rand.uintLessThanBiased(u32, real_data_size + 100));
+        try image_writer.writeInt(u32, if (rand.boolean()) bmp_file_header_len + 40 else rand.uintLessThanBiased(u32, real_data_size + 100), .little);
 
         const dib_header_size: u32 = if (rand.boolean()) 40 else rand.int(u32);
-        try image_writer.writeIntLittle(u32, dib_header_size);
-        try image_writer.writeIntLittle(i32, rand.int(i32)); // width
-        try image_writer.writeIntLittle(i32, rand.int(i32)); // height
-        try image_writer.writeIntLittle(u16, rand.int(u16)); // planes
-        try image_writer.writeIntLittle(u16, rand.uintLessThanBiased(u16, 34)); // bits_per_pixel
-        try image_writer.writeIntLittle(u32, rand.uintLessThanBiased(u32, 15)); // compression
-        try image_writer.writeIntLittle(u32, rand.int(u32)); // image_size
-        try image_writer.writeIntLittle(i32, rand.int(i32)); // x_pixels_per_meter
-        try image_writer.writeIntLittle(i32, rand.int(i32)); // y_pixels_per_meter
+        try image_writer.writeInt(u32, dib_header_size, .little);
+        try image_writer.writeInt(i32, rand.int(i32), .little); // width
+        try image_writer.writeInt(i32, rand.int(i32), .little); // height
+        try image_writer.writeInt(u16, rand.int(u16), .little); // planes
+        try image_writer.writeInt(u16, rand.uintLessThanBiased(u16, 34), .little); // bits_per_pixel
+        try image_writer.writeInt(u32, rand.uintLessThanBiased(u32, 15), .little); // compression
+        try image_writer.writeInt(u32, rand.int(u32), .little); // image_size
+        try image_writer.writeInt(i32, rand.int(i32), .little); // x_pixels_per_meter
+        try image_writer.writeInt(i32, rand.int(i32), .little); // y_pixels_per_meter
         // This being large can trigger `out of memory` or really long .res compile
         // times in the Win32 rc compiler
-        try image_writer.writeIntLittle(u32, if (rand.boolean()) rand.uintLessThan(u32, 500) else rand.int(u32)); // num_colors
-        try image_writer.writeIntLittle(u32, rand.int(u32)); // important colors used
+        try image_writer.writeInt(u32, if (rand.boolean()) rand.uintLessThan(u32, 500) else rand.int(u32), .little); // num_colors
+        try image_writer.writeInt(u32, rand.int(u32), .little); // important colors used
 
         // and now a bunch of random bytes
         try image_buffer.ensureUnusedCapacity(random_bytes_len);

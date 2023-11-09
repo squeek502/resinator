@@ -189,7 +189,7 @@ pub const FontDirEntry = struct {
         inline for (@typeInfo(FontDirEntry).Struct.fields) |field| {
             switch (field.type) {
                 u8 => @field(entry, field.name) = try reader.readByte(),
-                u16, u32 => @field(entry, field.name) = try reader.readIntLittle(field.type),
+                u16, u32 => @field(entry, field.name) = try reader.readInt(field.type, .little),
                 [60]u8 => @field(entry, field.name) = try reader.readBytesNoEof(60),
                 else => @compileError("unknown field in FontDirEntry"),
             }
@@ -201,7 +201,7 @@ pub const FontDirEntry = struct {
         inline for (@typeInfo(FontDirEntry).Struct.fields) |field| {
             switch (field.type) {
                 u8 => try writer.writeByte(@field(entry, field.name)),
-                u16, u32 => try writer.writeIntLittle(field.type, @field(entry, field.name)),
+                u16, u32 => try writer.writeInt(field.type, @field(entry, field.name), .little),
                 [60]u8 => try writer.writeAll(&@field(entry, field.name)),
                 else => @compileError("unknown field in FontDirEntry"),
             }

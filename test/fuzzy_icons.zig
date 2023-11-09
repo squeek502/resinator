@@ -24,26 +24,26 @@ test "ICON fuzz" {
         icon_buffer.shrinkRetainingCapacity(0);
         const icon_writer = icon_buffer.writer();
         // reserved bytes, very occasionally make it random
-        try icon_writer.writeIntLittle(u16, if (rand.int(u8) == 0) rand.int(u16) else 0);
+        try icon_writer.writeInt(u16, if (rand.int(u8) == 0) rand.int(u16) else 0, .little);
         // icon is 1, cursor is 2, anything else is invalid
         var res_type = if (rand.int(u8) == 0) rand.int(u16) else 1;
         // we don't want to test with a cursor value here, though, since
         // that is a compile error for us but not for the Win32 RC compiler
         if (res_type == 2) res_type = 0;
-        try icon_writer.writeIntLittle(u16, res_type);
+        try icon_writer.writeInt(u16, res_type, .little);
         // Unfortunately, we can't really make this random (or even > 1) because
         // the Win32 RC compiler has a bug that can lead to infinite `.res` filesize
         // (see also below comment about reported data size)
-        try icon_writer.writeIntLittle(u16, if (rand.int(u8) == 0) @as(u16, 0) else 1);
+        try icon_writer.writeInt(u16, if (rand.int(u8) == 0) @as(u16, 0) else 1, .little);
 
         // we'll write one well-formed-ish resdir
-        try icon_writer.writeIntLittle(u8, rand.int(u8)); // width
-        try icon_writer.writeIntLittle(u8, rand.int(u8)); // height
-        try icon_writer.writeIntLittle(u8, rand.int(u8)); // num_colors
+        try icon_writer.writeInt(u8, rand.int(u8), .little); // width
+        try icon_writer.writeInt(u8, rand.int(u8), .little); // height
+        try icon_writer.writeInt(u8, rand.int(u8), .little); // num_colors
         // reserved, should be zero but occasionally make it random
-        try icon_writer.writeIntLittle(u8, if (rand.int(u8) == 0) rand.int(u8) else 0);
-        try icon_writer.writeIntLittle(u16, rand.int(u16)); // color_planes/hotspot_x
-        try icon_writer.writeIntLittle(u16, rand.int(u16)); // bits_per_pixel/hotspot_y
+        try icon_writer.writeInt(u8, if (rand.int(u8) == 0) rand.int(u8) else 0, .little);
+        try icon_writer.writeInt(u16, rand.int(u16), .little); // color_planes/hotspot_x
+        try icon_writer.writeInt(u16, rand.int(u16), .little); // bits_per_pixel/hotspot_y
 
         const make_png = rand.boolean();
         const random_bytes_len = rand.uintLessThanBiased(u32, 1000);
@@ -57,14 +57,14 @@ test "ICON fuzz" {
             @as(u32, @intCast(@max(0, @as(i33, @intCast(real_data_size)) - rand.int(i8))))
         else
             real_data_size;
-        try icon_writer.writeIntLittle(u32, reported_data_size);
+        try icon_writer.writeInt(u32, reported_data_size, .little);
         // Offset to the first icon, 0x16 is correct if there's 1 icon
-        try icon_writer.writeIntLittle(u32, if (rand.int(u8) == 0) rand.int(u32) else 0x16);
+        try icon_writer.writeInt(u32, if (rand.int(u8) == 0) rand.int(u32) else 0x16, .little);
 
         // half the time write enough of a PNG that the RC compiler treats it as a PNG
         if (make_png) {
             try icon_writer.writeAll("\x89PNG\r\n\x1a\n");
-            try icon_writer.writeIntBig(u32, rand.int(u32)); // IHDR chunk size
+            try icon_writer.writeInt(u32, rand.int(u32), .big); // IHDR chunk size
             try icon_writer.writeAll("IHDR");
         }
 
