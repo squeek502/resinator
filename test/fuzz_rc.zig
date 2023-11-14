@@ -36,16 +36,30 @@ pub fn zigMain() !void {
 
     const stderr_config = std.io.tty.detectConfig(std.io.getStdErr());
 
+    const language_id = rand.int(u16);
+    const code_page: resinator.code_pages.CodePage = if (rand.boolean()) .utf8 else .windows1252;
+    const null_terminate_string_table_strings = rand.boolean();
+    const max_string_literal_codepoints = rand.int(u15);
+    const warn_instead_of_error_on_invalid_code_page = rand.boolean();
+
+    std.debug.print("language_id: 0x{X}\ncode_page: {}\nnull_terminate: {}\nmax_string_literal: {}\nwarn_invalid_code_page: {}\n", .{
+        language_id,
+        code_page,
+        null_terminate_string_table_strings,
+        max_string_literal_codepoints,
+        warn_instead_of_error_on_invalid_code_page,
+    });
+
     resinator.compile.compile(allocator, final_input, output_buf.writer(), .{
         .cwd = std.fs.cwd(),
         .diagnostics = &diagnostics,
         .source_mappings = &mapping_results.mappings,
         .ignore_include_env_var = true,
-        .default_language_id = rand.int(u16),
-        .default_code_page = if (rand.boolean()) .utf8 else .windows1252,
-        .null_terminate_string_table_strings = rand.boolean(),
-        .max_string_literal_codepoints = rand.int(u15),
-        .warn_instead_of_error_on_invalid_code_page = rand.boolean(),
+        .default_language_id = language_id,
+        .default_code_page = code_page,
+        .null_terminate_string_table_strings = null_terminate_string_table_strings,
+        .max_string_literal_codepoints = max_string_literal_codepoints,
+        .warn_instead_of_error_on_invalid_code_page = warn_instead_of_error_on_invalid_code_page,
     }) catch |err| switch (err) {
         error.ParseError, error.CompileError => {
             diagnostics.renderToStdErr(std.fs.cwd(), final_input, stderr_config, mapping_results.mappings);
