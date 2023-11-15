@@ -187,7 +187,7 @@ pub fn getResinatorResultFromFile(allocator: Allocator, input_filepath: []const 
     );
     defer mapping_results.mappings.deinit(allocator);
 
-    var final_input = resinator.comments.removeComments(mapping_results.result, mapping_results.result, &mapping_results.mappings);
+    var final_input = try resinator.comments.removeComments(mapping_results.result, mapping_results.result, &mapping_results.mappings);
     result.processed_rc = final_input;
 
     // TODO: Somehow make this re-usable between calls

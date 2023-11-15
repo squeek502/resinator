@@ -831,13 +831,13 @@ pub const ErrorDetails = struct {
 pub fn renderErrorMessage(allocator: std.mem.Allocator, writer: anytype, tty_config: std.io.tty.Config, cwd: std.fs.Dir, err_details: ErrorDetails, source: []const u8, strings: []const []const u8, source_mappings: ?SourceMappings) !void {
     if (err_details.type == .hint) return;
 
-    const source_line_start = err_details.token.getLineStart(source);
+    const source_line_start = err_details.token.getLineStartForErrorDisplay(source);
     // Treat tab stops as 1 column wide for error display purposes,
     // and add one to get a 1-based column
     const column = err_details.token.calculateColumn(source, 1, source_line_start) + 1;
 
-    const corresponding_span: ?SourceMappings.SourceSpan = if (source_mappings != null and source_mappings.?.has(err_details.token.line_number))
-        source_mappings.?.get(err_details.token.line_number)
+    const corresponding_span: ?SourceMappings.CorrespondingSpan = if (source_mappings) |mappings|
+        mappings.getCorrespondingSpan(err_details.token.line_number)
     else
         null;
     const corresponding_file: ?[]const u8 = if (source_mappings != null and corresponding_span != null)
@@ -883,7 +883,7 @@ pub fn renderErrorMessage(allocator: std.mem.Allocator, writer: anytype, tty_con
         return;
     }
 
-    const source_line = err_details.token.getLine(source, source_line_start);
+    const source_line = err_details.token.getLineForErrorDisplay(source, source_line_start);
     const visual_info = err_details.visualTokenInfo(source_line_start, source_line_start + source_line.len);
 
     // Need this to determine if the 'line originated from' note is worth printing
@@ -971,7 +971,7 @@ const CorrespondingLines = struct {
     lines: std.ArrayListUnmanaged(u8) = .{},
     lines_is_error_message: bool = false,
 
-    pub fn init(allocator: std.mem.Allocator, cwd: std.fs.Dir, err_details: ErrorDetails, lines_for_comparison: []const u8, corresponding_span: SourceMappings.SourceSpan, corresponding_file: []const u8) !CorrespondingLines {
+    pub fn init(allocator: std.mem.Allocator, cwd: std.fs.Dir, err_details: ErrorDetails, lines_for_comparison: []const u8, corresponding_span: SourceMappings.CorrespondingSpan, corresponding_file: []const u8) !CorrespondingLines {
         var corresponding_lines = CorrespondingLines{};
 
         // We don't do line comparison for this error, so don't print the note if the line
@@ -1041,17 +1041,27 @@ inline fn writeSourceByte(writer: anytype, byte: u8) !void {
 
 pub fn writeLinesFromStream(writer: anytype, input: anytype, start_line: usize, end_line: usize) !void {
     var line_num: usize = 1;
+    var last_byte: u8 = 0;
     while (try readByteOrEof(input)) |byte| {
         switch (byte) {
-            '\n' => {
-                if (line_num == end_line) return;
-                if (line_num >= start_line) try writeSourceByte(writer, byte);
-                line_num += 1;
+            '\n', '\r' => {
+                if (!utils.isLineEndingPair(last_byte, byte)) {
+                    if (line_num == end_line) return;
+                    if (line_num >= start_line) try writeSourceByte(writer, byte);
+                    line_num += 1;
+                } else {
+                    // reset last_byte to a non-line ending so that
+                    // consecutive CRLF pairs don't get treated as one
+                    // long line ending 'pair'
+                    last_byte = 0;
+                    continue;
+                }
             },
             else => {
                 if (line_num >= start_line) try writeSourceByte(writer, byte);
             },
         }
+        last_byte = byte;
     }
     if (line_num != end_line) {
         return error.LinesNotFound;

@@ -173,7 +173,7 @@ pub fn main() !void {
     // may be a mismatch in how the line directive strings are parsed versus
     // how they are escaped/written by the preprocessor.
 
-    var final_input = removeComments(mapping_results.result, mapping_results.result, &mapping_results.mappings);
+    var final_input = try removeComments(mapping_results.result, mapping_results.result, &mapping_results.mappings);
 
     var output_file = std.fs.cwd().createFile(options.output_filename, .{}) catch |err| {
         try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to create output file '{s}': {s}", .{ options.output_filename, @errorName(err) });
@@ -196,11 +196,13 @@ pub fn main() !void {
     if (options.debug) {
         std.debug.print("after preprocessor:\n------------------\n{s}\n------------------\n", .{final_input});
         std.debug.print("\nmappings:\n", .{});
-        for (mapping_results.mappings.mapping.items, 0..) |span, i| {
-            const line_num = i + 1;
-            const filename = mapping_results.mappings.files.get(span.filename_offset);
-            std.debug.print("{}: {s}:{}-{}\n", .{ line_num, filename, span.start_line, span.end_line });
+        var it = mapping_results.mappings.sources.inorderIterator();
+        while (it.next()) |node| {
+            const source = node.key;
+            const filename = mapping_results.mappings.files.get(source.filename_offset);
+            std.debug.print("{}: {s} : {}-{}\n", .{ source.start_line, filename, source.corresponding_start_line, source.corresponding_start_line + source.span });
         }
+        std.debug.print("end line #: {}\n", .{mapping_results.mappings.end_line});
         std.debug.print("\n", .{});
 
         // Separately parse and dump the AST
