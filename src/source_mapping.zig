@@ -575,10 +575,22 @@ pub const SourceMappings = struct {
             .current = node,
             .previous = node.children[0],
         };
-        // skip past current
-        _ = it.next();
+        // skip past current, but store it
+        var prev = it.next().?;
         while (it.next()) |inorder_node| {
             inorder_node.key.start_line -= span_diff;
+
+            // This can only really happen if there are #line commands within
+            // a multiline comment, which in theory should be skipped over.
+            // However, currently, parseAndRemoveLineCommands is not aware of
+            // comments at all.
+            //
+            // TODO: Make parseAndRemoveLineCommands aware of comments/strings
+            //       and turn this into an assertion
+            if (prev.key.start_line > inorder_node.key.start_line) {
+                return error.InvalidSourceMappingCollapse;
+            }
+            prev = inorder_node;
         }
         self.end_line -= span_diff;
     }
@@ -791,4 +803,29 @@ test "in place" {
     var result = try parseAndRemoveLineCommands(std.testing.allocator, &mut_source, &mut_source, .{});
     defer result.mappings.deinit(std.testing.allocator);
     try std.testing.expectEqualStrings("", result.result);
+}
+
+test "line command within a multiline comment" {
+    // TODO: Enable once parseAndRemoveLineCommands is comment-aware
+    if (true) return error.SkipZigTest;
+
+    try testParseAndRemoveLineCommands(
+        \\/*
+        \\#line 1 "irrelevant.rc"
+        \\
+        \\
+        \\*/
+    , &[_]ExpectedSourceSpan{
+        .{ .start_line = 1, .end_line = 1, .filename = "blah.rc" },
+        .{ .start_line = 2, .end_line = 2, .filename = "blah.rc" },
+        .{ .start_line = 3, .end_line = 3, .filename = "blah.rc" },
+        .{ .start_line = 4, .end_line = 4, .filename = "blah.rc" },
+        .{ .start_line = 5, .end_line = 5, .filename = "blah.rc" },
+    },
+        \\/*
+        \\#line 1 "irrelevant.rc"
+        \\
+        \\
+        \\*/
+    , .{ .initial_filename = "blah.rc" });
 }

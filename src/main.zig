@@ -173,7 +173,13 @@ pub fn main() !void {
     // may be a mismatch in how the line directive strings are parsed versus
     // how they are escaped/written by the preprocessor.
 
-    var final_input = try removeComments(mapping_results.result, mapping_results.result, &mapping_results.mappings);
+    var final_input = removeComments(mapping_results.result, mapping_results.result, &mapping_results.mappings) catch |err| switch (err) {
+        error.InvalidSourceMappingCollapse => {
+            try renderErrorMessage(stderr.writer(), stderr_config, .err, "failed during comment removal; this is a known bug", .{});
+            std.os.exit(1);
+        },
+        else => |e| return e,
+    };
 
     var output_file = std.fs.cwd().createFile(options.output_filename, .{}) catch |err| {
         try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to create output file '{s}': {s}", .{ options.output_filename, @errorName(err) });
