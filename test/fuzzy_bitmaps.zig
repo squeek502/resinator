@@ -34,7 +34,7 @@ test "BITMAP fuzz" {
 
         const bmp_file_header_len = 14;
         const dib_header_len = 40;
-        var real_data_size = random_bytes_len + bmp_file_header_len + dib_header_len;
+        const real_data_size = random_bytes_len + bmp_file_header_len + dib_header_len;
 
         const reported_data_size = if (rand.boolean())
             // essentially `real_data_size -| rand.int(i8)`
@@ -70,7 +70,7 @@ test "BITMAP fuzz" {
         // and now a bunch of random bytes
         try image_buffer.ensureUnusedCapacity(random_bytes_len);
 
-        var slice_to_fill = image_buffer.unusedCapacitySlice()[0..random_bytes_len];
+        const slice_to_fill = image_buffer.unusedCapacitySlice()[0..random_bytes_len];
         rand.bytes(slice_to_fill);
 
         image_buffer.items.len += random_bytes_len;

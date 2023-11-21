@@ -23,7 +23,7 @@ pub fn main() !void {
     const stderr_config = std.io.tty.detectConfig(stderr);
 
     var options = options: {
-        var args = try std.process.argsAlloc(allocator);
+        const args = try std.process.argsAlloc(allocator);
         defer std.process.argsFree(allocator, args);
 
         var cli_diagnostics = cli.Diagnostics.init(allocator);
@@ -60,7 +60,7 @@ pub fn main() !void {
         try stdout_writer.writeByte('\n');
     }
 
-    var full_input = full_input: {
+    const full_input = full_input: {
         if (options.preprocess != .no) {
             var argv = std.ArrayList([]const u8).init(allocator);
             defer argv.deinit();
@@ -118,7 +118,7 @@ pub fn main() !void {
                 try stdout_writer.print("{s}\n\n", .{argv.items[argv.items.len - 1]});
             }
 
-            var result = std.ChildProcess.run(.{
+            const result = std.ChildProcess.run(.{
                 .allocator = allocator,
                 .argv = argv.items,
                 .max_output_bytes = std.math.maxInt(u32),
@@ -173,7 +173,7 @@ pub fn main() !void {
     // may be a mismatch in how the line directive strings are parsed versus
     // how they are escaped/written by the preprocessor.
 
-    var final_input = removeComments(mapping_results.result, mapping_results.result, &mapping_results.mappings) catch |err| switch (err) {
+    const final_input = removeComments(mapping_results.result, mapping_results.result, &mapping_results.mappings) catch |err| switch (err) {
         error.InvalidSourceMappingCollapse => {
             try renderErrorMessage(stderr.writer(), stderr_config, .err, "failed during comment removal; this is a known bug", .{});
             std.os.exit(1);
@@ -302,7 +302,7 @@ const Preprocessor = enum {
             try argv.appendSlice(pre.getCommandArgs());
             try argv.append("--version");
 
-            var result = std.ChildProcess.run(.{
+            const result = std.ChildProcess.run(.{
                 .allocator = allocator,
                 .argv = argv.items,
                 .max_output_bytes = std.math.maxInt(u16),
@@ -385,7 +385,7 @@ const Preprocessor = enum {
 
     fn zigSupportsLibcIncludesOption(allocator: std.mem.Allocator) !bool {
         if (Preprocessor.zig_supports_libc_includes_option == null) {
-            var result = std.ChildProcess.run(.{
+            const result = std.ChildProcess.run(.{
                 .allocator = allocator,
                 .argv = &.{ "zig", "libc", "-includes" },
                 .max_output_bytes = std.math.maxInt(u16),
@@ -407,7 +407,7 @@ const Preprocessor = enum {
     }
 
     fn getIncludeDirsFromZig(allocator: std.mem.Allocator, target: []const u8) ![]const []const u8 {
-        var result = try std.ChildProcess.run(.{
+        const result = try std.ChildProcess.run(.{
             .allocator = allocator,
             .argv = &.{ "zig", "libc", "-includes", "-target", target },
             .max_output_bytes = std.math.maxInt(u16),

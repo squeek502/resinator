@@ -71,7 +71,7 @@ test "ICON fuzz" {
         // and now a bunch of random bytes
         try icon_buffer.ensureUnusedCapacity(random_bytes_len);
 
-        var slice_to_fill = icon_buffer.unusedCapacitySlice()[0..random_bytes_len];
+        const slice_to_fill = icon_buffer.unusedCapacitySlice()[0..random_bytes_len];
         rand.bytes(slice_to_fill);
 
         icon_buffer.items.len += random_bytes_len;

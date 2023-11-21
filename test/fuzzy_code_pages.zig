@@ -61,7 +61,7 @@ test "windows-1252 mappings" {
 test "fuzz" {
     const allocator = std.testing.allocator;
     var random = std.rand.DefaultPrng.init(0);
-    var rand = random.random();
+    const rand = random.random();
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();

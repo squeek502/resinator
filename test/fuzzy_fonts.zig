@@ -30,7 +30,7 @@ test "FONT fuzz" {
         // Just a bunch of random bytes
         const random_bytes_len = rand.uintLessThanBiased(u32, max_file_len);
         try font_buffer.ensureUnusedCapacity(random_bytes_len);
-        var slice_to_fill = font_buffer.unusedCapacitySlice()[0..random_bytes_len];
+        const slice_to_fill = font_buffer.unusedCapacitySlice()[0..random_bytes_len];
         rand.bytes(slice_to_fill);
         font_buffer.items.len += random_bytes_len;
 

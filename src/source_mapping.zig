@@ -244,7 +244,7 @@ pub fn handleLineCommand(allocator: Allocator, line_command: []const u8, current
 }
 
 pub fn parseAndRemoveLineCommandsAlloc(allocator: Allocator, source: []const u8, options: ParseAndRemoveLineCommandsOptions) !ParseLineCommandsResult {
-    var buf = try allocator.alloc(u8, source.len);
+    const buf = try allocator.alloc(u8, source.len);
     errdefer allocator.free(buf);
     var result = try parseAndRemoveLineCommands(allocator, source, buf, options);
     result.result = try allocator.realloc(buf, result.result.len);
@@ -487,15 +487,15 @@ pub const SourceMappings = struct {
 
     /// Note: `line_num` and `corresponding_line_num` start at 1
     pub fn set(self: *SourceMappings, line_num: usize, corresponding_line_num: usize, filename_offset: u32) !void {
-        var maybe_node = self.findNode(line_num);
+        const maybe_node = self.findNode(line_num);
 
-        var need_new_node = need_new_node: {
+        const need_new_node = need_new_node: {
             if (maybe_node) |node| {
                 if (node.key.filename_offset != filename_offset) {
                     break :need_new_node true;
                 }
-                var exist_delta = @as(i64, @intCast(node.key.corresponding_start_line)) - @as(i64, @intCast(node.key.start_line));
-                var cur_delta = @as(i64, @intCast(corresponding_line_num)) - @as(i64, @intCast(line_num));
+                const exist_delta = @as(i64, @intCast(node.key.corresponding_start_line)) - @as(i64, @intCast(node.key.start_line));
+                const cur_delta = @as(i64, @intCast(corresponding_line_num)) - @as(i64, @intCast(line_num));
                 if (exist_delta != cur_delta) {
                     break :need_new_node true;
                 }
@@ -551,7 +551,7 @@ pub const SourceMappings = struct {
     pub fn collapse(self: *SourceMappings, line_num: usize, num_following_lines_to_collapse: usize) !void {
         std.debug.assert(num_following_lines_to_collapse > 0);
         var node = self.findNode(line_num).?;
-        var span_diff = num_following_lines_to_collapse;
+        const span_diff = num_following_lines_to_collapse;
         if (node.key.start_line != line_num) {
             const offset = line_num - node.key.start_line;
             const key = Source{

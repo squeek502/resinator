@@ -2218,7 +2218,7 @@ fn testParseErrorDetails(expected_details: []const ExpectedErrorDetails, source:
     const tree: ?*resinator.ast.Tree = tree: {
         var lexer = resinator.lex.Lexer.init(source, .{});
         var parser = resinator.parse.Parser.init(&lexer, .{});
-        var tree = parser.parse(allocator, &diagnostics) catch |err| switch (err) {
+        const tree = parser.parse(allocator, &diagnostics) catch |err| switch (err) {
             error.OutOfMemory => |e| return e,
             error.ParseError => {
                 if (!expect_fail) {

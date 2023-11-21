@@ -177,7 +177,7 @@ pub fn getResinatorResultFromFile(allocator: Allocator, input_filepath: []const 
     if (!options.run_preprocessor) {
         result.rc_data = try options.cwd.readFileAlloc(allocator, input_filepath, std.math.maxInt(usize));
     }
-    var data = result.rc_data orelse result.pre.?.preprocessor.stdout;
+    const data = result.rc_data orelse result.pre.?.preprocessor.stdout;
 
     var mapping_results = try resinator.source_mapping.parseAndRemoveLineCommands(
         allocator,
@@ -187,7 +187,7 @@ pub fn getResinatorResultFromFile(allocator: Allocator, input_filepath: []const 
     );
     defer mapping_results.mappings.deinit(allocator);
 
-    var final_input = try resinator.comments.removeComments(mapping_results.result, mapping_results.result, &mapping_results.mappings);
+    const final_input = try resinator.comments.removeComments(mapping_results.result, mapping_results.result, &mapping_results.mappings);
     result.processed_rc = final_input;
 
     // TODO: Somehow make this re-usable between calls
@@ -221,7 +221,7 @@ pub fn runPreprocessor(allocator: Allocator, input_filepath: []const u8, options
 
     var result = ResinatorResult.PreprocessResult{};
 
-    var data = try options.cwd.readFileAlloc(allocator, input_filepath, std.math.maxInt(usize));
+    const data = try options.cwd.readFileAlloc(allocator, input_filepath, std.math.maxInt(usize));
     defer allocator.free(data);
 
     if (inputContainsKnownPreprocessorDifference(data)) {
@@ -282,7 +282,7 @@ pub fn getWin32Result(allocator: Allocator, source: []const u8, options: GetResu
 
 pub fn getWin32ResultFromFile(allocator: Allocator, input_path: []const u8, options: GetResultOptions) !Win32Result {
     const output_path = options.output_path orelse "test_win32.res";
-    var exec_result = try std.ChildProcess.run(.{
+    const exec_result = try std.ChildProcess.run(.{
         .allocator = allocator,
         .argv = &[_][]const u8{
             // Note: This relies on `rc.exe` being in the PATH
@@ -313,7 +313,7 @@ pub fn randomNumberLiteral(allocator: Allocator, rand: std.rand.Random, comptime
     errdefer buf.deinit();
 
     const Prefix = enum { none, minus, complement };
-    var prefix = rand.enumValue(Prefix);
+    const prefix = rand.enumValue(Prefix);
 
     switch (prefix) {
         .none => {},
@@ -377,12 +377,12 @@ const dicts = struct {
 };
 
 pub fn randomAlpha(rand: std.rand.Random) u8 {
-    var index = rand.uintLessThanBiased(u8, dicts.alpha.len);
+    const index = rand.uintLessThanBiased(u8, dicts.alpha.len);
     return dicts.alpha[index];
 }
 
 pub fn randomAlphanumeric(rand: std.rand.Random) u8 {
-    var index = rand.uintLessThanBiased(u8, dicts.alphanumeric.len);
+    const index = rand.uintLessThanBiased(u8, dicts.alphanumeric.len);
     return dicts.alphanumeric[index];
 }
 
@@ -393,14 +393,14 @@ pub fn randomNumeric(rand: std.rand.Random) u8 {
 /// Includes Windows-1252 encoded ¹ ² ³
 pub fn randomNumericRC(rand: std.rand.Random) u8 {
     const dict = dicts.digits ++ [_]u8{ '\xb2', '\xb3', '\xb9' };
-    var index = rand.uintLessThanBiased(u8, dict.len);
+    const index = rand.uintLessThanBiased(u8, dict.len);
     return dict[index];
 }
 
 /// Includes Windows-1252 encoded ¹ ² ³
 pub fn randomAlphanumericRC(rand: std.rand.Random) u8 {
     const dict = dicts.alphanumeric ++ [_]u8{ '\xb2', '\xb3', '\xb9' };
-    var index = rand.uintLessThanBiased(u8, dict.len);
+    const index = rand.uintLessThanBiased(u8, dict.len);
     return dict[index];
 }
 
@@ -413,7 +413,7 @@ pub fn randomOperator(rand: std.rand.Random) u8 {
 pub fn randomAsciiStringLiteral(allocator: Allocator, rand: std.rand.Random) ![]const u8 {
     // max string literal length is 4097 so this will generate some invalid string literals
     // need at least two for the ""
-    var slice_len = rand.uintAtMostBiased(u16, 256) + 2;
+    const slice_len = rand.uintAtMostBiased(u16, 256) + 2;
     var buf = try allocator.alloc(u8, slice_len);
     errdefer allocator.free(buf);
 
@@ -470,12 +470,12 @@ pub fn randomAlphanumExtendedBytes(allocator: Allocator, rand: std.rand.Random) 
     };
     const dict = dicts.alphanumeric ++ extended;
     // at least 1 byte
-    var slice_len = rand.uintAtMostBiased(u16, 512) + 1;
-    var buf = try allocator.alloc(u8, slice_len);
+    const slice_len = rand.uintAtMostBiased(u16, 512) + 1;
+    const buf = try allocator.alloc(u8, slice_len);
     errdefer allocator.free(buf);
 
     for (buf) |*c| {
-        var index = rand.uintLessThanBiased(u8, dict.len);
+        const index = rand.uintLessThanBiased(u8, dict.len);
         var byte = dict[index];
         // swap out e/E to avoid 'expected exponent value' errors
         if (byte == 'e' or byte == 'E') byte += 1;
@@ -586,7 +586,7 @@ pub const KPermutationsIterator = struct {
 
         if (tail > 0) {
             var swap_in: usize = 0;
-            var pivot: usize = self.indexes[tail - 1];
+            const pivot: usize = self.indexes[tail - 1];
 
             if (pivot >= self.indexes[n - 1]) {
                 swap_in = tail;

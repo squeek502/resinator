@@ -49,7 +49,7 @@ pub fn main() !void {
     }
 
     {
-        var tmp_dir = try std.process.getEnvVarOwned(allocator, "TEMP");
+        const tmp_dir = try std.process.getEnvVarOwned(allocator, "TEMP");
         defer allocator.free(tmp_dir);
 
         std.mem.copy(u8, &tmp_buf, tmp_dir);

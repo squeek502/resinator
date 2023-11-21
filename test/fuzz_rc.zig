@@ -13,7 +13,7 @@ pub fn zigMain() !void {
     const allocator = gpa.allocator();
 
     const stdin = std.io.getStdIn();
-    var data = try stdin.readToEndAlloc(allocator, std.math.maxInt(usize));
+    const data = try stdin.readToEndAlloc(allocator, std.math.maxInt(usize));
     defer allocator.free(data);
 
     const dummy_filename = "fuzz.rc";
@@ -21,7 +21,7 @@ pub fn zigMain() !void {
     var mapping_results = try resinator.source_mapping.parseAndRemoveLineCommands(allocator, data, data, .{ .initial_filename = dummy_filename });
     defer mapping_results.mappings.deinit(allocator);
 
-    var final_input = try resinator.comments.removeComments(mapping_results.result, mapping_results.result, &mapping_results.mappings);
+    const final_input = try resinator.comments.removeComments(mapping_results.result, mapping_results.result, &mapping_results.mappings);
 
     var diagnostics = resinator.errors.Diagnostics.init(allocator);
     defer diagnostics.deinit();
