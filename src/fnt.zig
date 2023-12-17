@@ -178,7 +178,7 @@ pub const FontDirEntry = struct {
 
     pub const len = len: {
         var val: comptime_int = 0;
-        inline for (@typeInfo(FontDirEntry).Struct.fields) |field| {
+        for (@typeInfo(FontDirEntry).Struct.fields) |field| {
             val += @sizeOf(field.type);
         }
         break :len val;
