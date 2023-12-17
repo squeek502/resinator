@@ -11,8 +11,16 @@ pub fn build(b: *std.build.Builder) void {
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     const mode = b.standardOptimizeOption(.{});
 
+    const aro = b.dependency("aro", .{
+        .target = target,
+        .optimize = mode,
+    });
+    const aro_module = aro.module("aro");
     const resinator = b.addModule("resinator", .{
         .source_file = .{ .path = "src/resinator.zig" },
+        .dependencies = &.{
+            .{ .name = "aro", .module = aro_module },
+        },
     });
 
     const exe = b.addExecutable(.{
@@ -21,6 +29,7 @@ pub fn build(b: *std.build.Builder) void {
         .target = target,
         .optimize = mode,
     });
+    exe.addModule("aro", aro_module);
     b.installArtifact(exe);
 
     const test_filter = b.option([]const u8, "test-filter", "Skip tests that do not match filter");
