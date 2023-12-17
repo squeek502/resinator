@@ -18,12 +18,12 @@ fn setupTmpDir() !std.testing.TmpDir {
     // TODO: Figure out a better way to consistently find the ./test/files directory.
     const files_dir_path = "test/data/files";
 
-    var files_dir = try std.fs.cwd().openIterableDir(files_dir_path, .{});
+    var files_dir = try std.fs.cwd().openDir(files_dir_path, .{ .iterate = true });
     defer files_dir.close();
 
     var files_it = files_dir.iterate();
     while (try files_it.next()) |entry| {
-        try files_dir.dir.copyFile(entry.name, tmp.dir, entry.name, .{});
+        try files_dir.copyFile(entry.name, tmp.dir, entry.name, .{});
     }
 
     return tmp;

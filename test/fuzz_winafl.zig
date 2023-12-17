@@ -52,7 +52,7 @@ pub fn main() !void {
         const tmp_dir = try std.process.getEnvVarOwned(allocator, "TEMP");
         defer allocator.free(tmp_dir);
 
-        std.mem.copy(u8, &tmp_buf, tmp_dir);
+        @memcpy(&tmp_buf, tmp_dir);
         tmp_dir_len = tmp_dir.len;
         tmp_buf[tmp_dir_len] = std.fs.path.sep;
     }
