@@ -2,7 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 
-const compressed_mingw_includes = @embedFile("include.tar.zst");
+const compressed_mingw_includes = @import("compressed_mingw_includes").data;
 const include_ver = 2;
 
 pub fn extractMingwIncludes(allocator: Allocator, maybe_progress: ?*std.Progress) ![]const u8 {

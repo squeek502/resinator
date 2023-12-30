@@ -16,6 +16,8 @@ pub fn build(b: *std.build.Builder) void {
         .optimize = mode,
     });
     const aro_module = aro.module("aro");
+    const compressed_mingw_includes = b.dependency("compressed_mingw_includes", .{});
+    const compressed_mingw_includes_module = compressed_mingw_includes.module("compressed_mingw_includes");
     const resinator = b.addModule("resinator", .{
         .source_file = .{ .path = "src/resinator.zig" },
         .dependencies = &.{
@@ -30,6 +32,7 @@ pub fn build(b: *std.build.Builder) void {
         .optimize = mode,
     });
     exe.addModule("aro", aro_module);
+    exe.addModule("compressed_mingw_includes", compressed_mingw_includes_module);
     b.installArtifact(exe);
 
     const test_filter = b.option([]const u8, "test-filter", "Skip tests that do not match filter");
