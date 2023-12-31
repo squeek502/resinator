@@ -61,10 +61,10 @@ This behavior can be controlled with the `/:auto-includes` CLI option.
 | --- | --- | --- | --- | --- |
 | Cross-platform | ✅ | ✅ | ✅ | ❌ |
 | Identical [`win32-samples-rc-tests`](https://github.com/squeek502/win32-samples-rc-tests) outputs as `rc.exe` | ✅ | ❌ | ❌ | ✅ |
-| Support for UTF-16 encoded `.rc` files | ❌ | ❌ | ❌ | ✅ |
+| Support for UTF-16 encoded `.rc` files | ❌ <sup>[(TODO)](https://github.com/squeek502/resinator/issues/5)</sup> | ❌ | ❌ | ✅ |
 | CLI compatibility with `rc.exe` | ✅ | ❌ | ✅ | ✅ |
 | Support for outputting `.rc` files | ❌ | ✅ | ❌ | ❌ |
-| Support for outputting COFF object files | ❌ | ✅ | ❌ | ❌ |
+| Support for outputting COFF object files | ❌ <sup>[(TODO)](https://github.com/squeek502/resinator/issues/7)</sup> | ✅ | ❌ | ❌ |
 
 #### An example of the differences between the implementations
 
