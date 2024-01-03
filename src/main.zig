@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const removeComments = @import("comments.zig").removeComments;
 const parseAndRemoveLineCommands = @import("source_mapping.zig").parseAndRemoveLineCommands;
 const compile = @import("compile.zig").compile;
@@ -8,6 +9,7 @@ const parse = @import("parse.zig");
 const lex = @import("lex.zig");
 const preprocess = @import("preprocess.zig");
 const renderErrorMessage = @import("utils.zig").renderErrorMessage;
+const auto_includes = @import("auto_includes.zig");
 const aro = @import("aro");
 
 pub fn main() !void {
@@ -17,7 +19,7 @@ pub fn main() !void {
 
     // Set the codepage to UTF-8 unconditionally to ensure that everything renders okay
     // TODO: Reset codepage afterwards?
-    if (@import("builtin").os.tag == .windows) {
+    if (builtin.os.tag == .windows) {
         _ = std.os.windows.kernel32.SetConsoleOutputCP(65001);
     }
     const stderr = std.io.getStdErr();
@@ -63,22 +65,31 @@ pub fn main() !void {
 
     const full_input = full_input: {
         if (options.preprocess != .no) {
-            // TODO: replace include detection with `windows_sdk.zig`-alike
-            if (options.auto_includes != .none and !(try Preprocessor.zigSupportsLibcIncludesOption(allocator))) {
-                try renderErrorMessage(stderr.writer(), stderr_config, .err, "the version of zig being used for preprocessing cannot autodetect include paths", .{});
-                try renderErrorMessage(stderr.writer(), stderr_config, .note, "zig must support the -includes option of the 'zig libc' subcommand to autodetect include paths", .{});
-                try renderErrorMessage(stderr.writer(), stderr_config, .note, "support for the -includes option was added in zig version 0.12.0-dev.378+4f952c7e0", .{});
-                std.os.exit(1);
-            }
-
-            const include_args = Preprocessor.getIncludeArgs(allocator, options.auto_includes) catch |err| switch (err) {
+            const include_paths = getIncludePaths(allocator, options.auto_includes) catch |err| switch (err) {
                 error.OutOfMemory => |e| return e,
                 else => {
-                    try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to autodetect include paths: {s}", .{@errorName(err)});
+                    switch (err) {
+                        error.MsvcIncludesNotFound => {
+                            try renderErrorMessage(stderr.writer(), stderr_config, .err, "MSVC include paths could not be automatically detected", .{});
+                        },
+                        error.CannotResolveCachePath => {
+                            try renderErrorMessage(stderr.writer(), stderr_config, .err, "could not resolve global cache path (for MinGW auto includes)", .{});
+                        },
+                        // All other errors are related to MinGW includes
+                        else => {
+                            try renderErrorMessage(stderr.writer(), stderr_config, .err, "failed to find / extract cached MinGW includes: {s}", .{@errorName(err)});
+                        },
+                    }
+                    try renderErrorMessage(stderr.writer(), stderr_config, .note, "to disable auto includes, use the option /:auto-includes none", .{});
                     std.os.exit(1);
                 },
             };
-            defer include_args.deinit(allocator);
+            defer {
+                for (include_paths) |include_path| {
+                    allocator.free(include_path);
+                }
+                allocator.free(include_paths);
+            }
 
             var comp = aro.Compilation.init(allocator);
             defer comp.deinit();
@@ -93,7 +104,7 @@ pub fn main() !void {
             defer args_arena.deinit();
 
             try argv.append("arocc"); // dummy command name
-            try preprocess.appendAroArgs(args_arena.allocator(), &argv, options, include_args.include_paths);
+            try preprocess.appendAroArgs(args_arena.allocator(), &argv, options, include_paths);
             try argv.append(options.input_filename);
 
             if (options.verbose) {
@@ -105,19 +116,14 @@ pub fn main() !void {
             }
 
             preprocess.preprocess(&comp, preprocessed_buf.writer(), argv.items) catch |err| switch (err) {
-                error.ArgError => {
-                    // extra newline to separate this line from the aro errors
-                    try renderErrorMessage(stderr.writer(), stderr_config, .err, "failed during preprocessor argument parsing (this is always a bug):\n", .{});
-                    aro.Diagnostics.render(&comp, stderr_config);
-                    std.os.exit(1);
-                },
                 error.GeneratedSourceError => {
                     // extra newline to separate this line from the aro errors
                     try renderErrorMessage(stderr.writer(), stderr_config, .err, "failed during preprocessor setup (this is always a bug):\n", .{});
                     aro.Diagnostics.render(&comp, stderr_config);
                     std.os.exit(1);
                 },
-                error.PreprocessError => {
+                // ArgError can occur if e.g. the .rc file is not found
+                error.ArgError, error.PreprocessError => {
                     // extra newline to separate this line from the aro errors
                     try renderErrorMessage(stderr.writer(), stderr_config, .err, "failed during preprocessing:\n", .{});
                     aro.Diagnostics.render(&comp, stderr_config);
@@ -257,111 +263,48 @@ pub fn main() !void {
     diagnostics.renderToStdErr(std.fs.cwd(), final_input, stderr_config, mapping_results.mappings);
 }
 
-const Preprocessor = struct {
-    var zig_supports_libc_includes_option: ?bool = null;
-
-    pub const IncludeArgs = struct {
-        nostdinc: bool = false,
-        include_paths: []const []const u8 = &.{},
-        // Passing an explicit target will get clang to do autodetection of include dirs
-        // as long as -nostdinc is not passed as well.
-        target: ?[]const u8 = "x86_64-unknown-windows",
-
-        pub fn deinit(self: IncludeArgs, allocator: std.mem.Allocator) void {
-            for (self.include_paths) |include_path| {
-                allocator.free(include_path);
-            }
-            allocator.free(self.include_paths);
-        }
-    };
-
-    pub fn getIncludeArgs(allocator: std.mem.Allocator, auto_includes: cli.Options.AutoIncludes) !IncludeArgs {
-        if (auto_includes == .none) return .{ .nostdinc = true };
-        if (!(try zigSupportsLibcIncludesOption(allocator))) {
-            return .{};
-        }
-
-        var cur_includes = auto_includes;
-        while (true) {
-            switch (cur_includes) {
-                .any, .msvc => {
-                    return .{
-                        .nostdinc = true,
-                        .include_paths = getIncludeDirsFromZig(allocator, "native-windows-msvc") catch |err| {
-                            if (cur_includes == .any) {
-                                // fall back to mingw
-                                cur_includes = .gnu;
-                                continue;
-                            }
-                            return err;
-                        },
-                        .target = "x86_64-unknown-windows-msvc",
-                    };
-                },
-                .gnu => {
-                    return .{
-                        .nostdinc = true,
-                        .include_paths = try getIncludeDirsFromZig(allocator, "native-windows-gnu"),
-                        .target = "x86_64-unknown-windows-gnu",
-                    };
-                },
-                .none => unreachable,
-            }
+fn getIncludePaths(allocator: std.mem.Allocator, auto_includes_option: cli.Options.AutoIncludes) ![]const []const u8 {
+    var includes = auto_includes_option;
+    if (builtin.target.os.tag != .windows) {
+        switch (includes) {
+            // MSVC can't be found when the host isn't Windows, so short-circuit.
+            .msvc => return error.MsvcIncludesNotFound,
+            // Skip straight to gnu since we won't be able to detect MSVC on non-Windows hosts.
+            .any => includes = .gnu,
+            .none, .gnu => {},
         }
     }
 
-    fn zigSupportsLibcIncludesOption(allocator: std.mem.Allocator) !bool {
-        if (Preprocessor.zig_supports_libc_includes_option == null) {
-            const result = std.ChildProcess.run(.{
-                .allocator = allocator,
-                .argv = &.{ "zig", "libc", "-includes" },
-                .max_output_bytes = std.math.maxInt(u16),
-            }) catch |err| switch (err) {
-                error.OutOfMemory => |e| return e,
-                else => return false,
-            };
-            defer allocator.free(result.stdout);
-            defer allocator.free(result.stderr);
+    while (true) {
+        switch (includes) {
+            .none => return &[_][]const u8{},
+            .any, .msvc => {
+                // MSVC is only detectable on Windows targets. This unreachable is to signify
+                // that .any and .msvc should be dealt with on non-Windows targets before this point,
+                // since getting MSVC include paths uses Windows-only APIs.
+                if (builtin.target.os.tag != .windows) unreachable;
+                return auto_includes.getMsvcIncludePaths(allocator) catch |err| switch (err) {
+                    error.OutOfMemory => |e| return e,
+                    error.MsvcIncludesNotFound => {
+                        if (includes == .any) {
+                            // fall back to MinGW
+                            includes = .gnu;
+                            continue;
+                        }
+                        return err;
+                    },
+                };
+            },
+            .gnu => {
+                var progress = std.Progress{};
 
-            switch (result.term) {
-                .Exited => |code| if (code == 0) return true,
-                .Signal, .Stopped, .Unknown => return false,
-            }
+                const include_path = try auto_includes.extractMingwIncludes(allocator, &progress);
+                errdefer allocator.free(include_path);
 
-            Preprocessor.zig_supports_libc_includes_option = std.mem.indexOf(u8, result.stderr, "error: unrecognized parameter") == null;
+                var include_paths = try allocator.alloc([]const u8, 1);
+                include_paths[0] = include_path;
+                return include_paths;
+            },
         }
-        return Preprocessor.zig_supports_libc_includes_option.?;
     }
-
-    fn getIncludeDirsFromZig(allocator: std.mem.Allocator, target: []const u8) ![]const []const u8 {
-        const result = try std.ChildProcess.run(.{
-            .allocator = allocator,
-            .argv = &.{ "zig", "libc", "-includes", "-target", target },
-            .max_output_bytes = std.math.maxInt(u16),
-        });
-        defer allocator.free(result.stdout);
-        defer allocator.free(result.stderr);
-
-        switch (result.term) {
-            .Exited => |code| if (code != 0) return error.NonZeroExitCode,
-            .Signal, .Stopped, .Unknown => return error.UnexpectedStop,
-        }
-
-        var line_it = std.mem.splitScalar(u8, result.stdout, '\n');
-        var includes = std.ArrayList([]const u8).init(allocator);
-        errdefer {
-            for (includes.items) |include| {
-                allocator.free(include);
-            }
-            includes.deinit();
-        }
-        while (line_it.next()) |line| {
-            if (line.len > 0) {
-                const duped_line = try allocator.dupe(u8, line);
-                errdefer allocator.free(duped_line);
-                try includes.append(duped_line);
-            }
-        }
-        return includes.toOwnedSlice();
-    }
-};
+}

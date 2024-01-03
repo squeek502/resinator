@@ -1,18 +1,19 @@
 ![](https://www.ryanliptak.com/images/resinator-dynamic-32.svg) resinator
 =========
 
-A cross-platform Windows resource-definition script (.rc) to resource file (.res) compiler. It has been merged into the Zig compiler ([#17069](https://github.com/ziglang/zig/pull/17069), [#17412](https://github.com/ziglang/zig/pull/17412)), but it will also be maintained as a separate tool.
+A cross-platform Windows resource-definition script (.rc) to resource file (.res) compiler. It has been merged into the Zig compiler ([#17069](https://github.com/ziglang/zig/pull/17069), [#17412](https://github.com/ziglang/zig/pull/17412)), but it is also maintained as a separate standalone tool.
 
 - This is a fully from-scratch and [clean-room](https://en.wikipedia.org/wiki/Clean_room_design) implementation, using [fuzz testing](#testing-resinator) as the primary method of determining how `rc.exe` works and how compatible `resinator` is with its implementation.
   + See [this talk](https://www.youtube.com/watch?v=RZczLb_uI9E) for a deeper dive into this
 - As of now, `resinator` can successfully compile every `.rc` file in the [Windows-classic-samples repo](https://github.com/microsoft/Windows-classic-samples) byte-for-byte identically to the Windows RC compiler when using the includes from MSVC/the Windows SDK. This is tested via [win32-samples-rc-tests](https://github.com/squeek502/win32-samples-rc-tests).
+- `resinator` has zero external dependencies at runtime (it includes the [Aro](https://github.com/Vexu/arocc) preprocessor) and can be used to cross-compile from any system out-of-the-box (if Windows system include paths are not found, a complete set of [MinGW](https://www.mingw-w64.org/) include files are extracted on-demand).
 - [Documentation](https://squeek502.github.io/resinator/) (really just a dumping ground for documentation-adjacent stuff; to-be-improved-upon)
 
 ## Overview
 
 A Windows resource-definition file (`.rc`) is made up of both C/C++ preprocessor commands and resource definitions.
 
-- The preprocessor commands are evaluated first via either `zig` or `clang` (one or the other must be available)
+- The preprocessor commands are evaluated first via [Aro](https://github.com/Vexu/arocc)
 - The preprocessed `.rc` file is then compiled into a `.res` file
 - The `.res` file can then be linked into an executable by a linker
 
@@ -28,10 +29,6 @@ In practice, though, 1:1 compatibility is not actually desirable, as there are q
 ## Comparison to `rc.exe` (the Win32 RC compiler)
 
 `resinator` is a drop-in replacement for `rc.exe` with some improvements, some known exceptions, and some caveats.
-
-#### `resinator` relies on an external preprocessor
-
-`rc.exe` is self-contained and includes its own preprocessor implementation, while `resinator` relies on either `zig` or `clang` (in that order of preference) to handle preprocessing.
 
 #### `resinator` has better error messages
 
@@ -51,7 +48,7 @@ This is a limitation of the preprocessor that is used by `resinator` (see [this 
 
 #### `resinator` will auto-detect system include paths by default
 
-`.rc` files can `#include` files from MSVC/Windows SDKs (most commonly, `windows.h`). The paths for these files are typically provided via the `INCLUDE` environment variable or the `/i` command line option. `resinator` supports the same options, but it will also try to auto-detect system include paths on Windows, or use the MinGW includes bundled with Zig if `zig` is being used as the preprocessor (meaning that if `zig` is used as the preprocessor, `#include "windows.h"` will work by default on Linux).
+`.rc` files can `#include` files from MSVC/Windows SDKs (most commonly, `windows.h`). The paths for these files are typically provided via the `INCLUDE` environment variable or the `/i` command line option. `resinator` supports the same options, but it will also try to auto-detect system include paths on Windows, or extract a full set of MinGW includes on-demand (meaning `#include "windows.h"` in a `.rc` file will work out-of-the-box on Linux/MacOS/etc).
 
 This behavior can be controlled with the `/:auto-includes` CLI option.
 
@@ -63,6 +60,7 @@ This behavior can be controlled with the `/:auto-includes` CLI option.
 | Identical [`win32-samples-rc-tests`](https://github.com/squeek502/win32-samples-rc-tests) outputs as `rc.exe` | ✅ | ❌ | ❌ | ✅ |
 | Support for UTF-16 encoded `.rc` files | ❌ <sup>[(TODO)](https://github.com/squeek502/resinator/issues/5)</sup> | ❌ | ❌ | ✅ |
 | CLI compatibility with `rc.exe` | ✅ | ❌ | ✅ | ✅ |
+| Includes preprocessor | ✅ | ❌ | ❌ | ✅ |
 | Support for outputting `.rc` files | ❌ | ✅ | ❌ | ❌ |
 | Support for outputting COFF object files | ❌ <sup>[(TODO)](https://github.com/squeek502/resinator/issues/7)</sup> | ✅ | ❌ | ❌ |
 
