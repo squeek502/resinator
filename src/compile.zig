@@ -321,10 +321,7 @@ pub const Compiler = struct {
 
                         return buf.toOwnedSlice();
                     },
-                    else => {
-                        std.debug.print("unexpected filename token type: {}\n", .{literal_node.token});
-                        unreachable; // no other token types should be in a filename literal node
-                    },
+                    else => unreachable, // no other token types should be in a filename literal node
                 }
             },
             .binary_expression => {
@@ -1210,10 +1207,7 @@ pub const Compiler = struct {
                         errdefer self.allocator.free(parsed_string);
                         return .{ .wide_string = parsed_string };
                     },
-                    else => {
-                        std.debug.print("unexpected token in literal node: {}\n", .{literal_node.token});
-                        unreachable; // no other token types should be in a data literal node
-                    },
+                    else => unreachable, // no other token types should be in a data literal node
                 }
             },
             .binary_expression, .grouped_expression => {
@@ -1221,10 +1215,7 @@ pub const Compiler = struct {
                 return .{ .number = result };
             },
             .not_expression => unreachable,
-            else => {
-                std.debug.print("{}\n", .{expression_node.id});
-                @panic("TODO: evaluateDataExpression");
-            },
+            else => unreachable,
         }
     }
 
