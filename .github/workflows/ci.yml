@@ -20,7 +20,7 @@ jobs:
           submodules: true
       - uses: goto-bus-stop/setup-zig@v2
         with:
-          version: 0.12.0-dev.1830+779b8e259
+          version: 0.12.0-dev.2018+9a56228c2
       - uses: ilammy/msvc-dev-cmd@v1
         if: ${{ matrix.os == 'windows-latest' }}
         with:

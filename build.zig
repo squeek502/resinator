@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub fn build(b: *std.build.Builder) void {
+pub fn build(b: *std.Build) void {
     // Standard target options allows the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
     // means any target is allowed, and the default is native. Other options
@@ -19,8 +19,8 @@ pub fn build(b: *std.build.Builder) void {
     const compressed_mingw_includes = b.dependency("compressed_mingw_includes", .{});
     const compressed_mingw_includes_module = compressed_mingw_includes.module("compressed_mingw_includes");
     const resinator = b.addModule("resinator", .{
-        .source_file = .{ .path = "src/resinator.zig" },
-        .dependencies = &.{
+        .root_source_file = .{ .path = "src/resinator.zig" },
+        .imports = &.{
             .{ .name = "aro", .module = aro_module },
         },
     });
@@ -31,8 +31,8 @@ pub fn build(b: *std.build.Builder) void {
         .target = target,
         .optimize = mode,
     });
-    exe.addModule("aro", aro_module);
-    exe.addModule("compressed_mingw_includes", compressed_mingw_includes_module);
+    exe.root_module.addImport("aro", aro_module);
+    exe.root_module.addImport("compressed_mingw_includes", compressed_mingw_includes_module);
     b.installArtifact(exe);
 
     const test_filter = b.option([]const u8, "test-filter", "Skip tests that do not match filter");
@@ -51,7 +51,7 @@ pub fn build(b: *std.build.Builder) void {
         .optimize = mode,
         .filter = test_filter,
     });
-    reference_tests.addModule("resinator", resinator);
+    reference_tests.root_module.addImport("resinator", resinator);
     const run_reference_tests = b.addRunArtifact(reference_tests);
 
     const parser_tests = b.addTest(.{
@@ -61,7 +61,7 @@ pub fn build(b: *std.build.Builder) void {
         .optimize = mode,
         .filter = test_filter,
     });
-    parser_tests.addModule("resinator", resinator);
+    parser_tests.root_module.addImport("resinator", resinator);
     const run_parser_tests = b.addRunArtifact(parser_tests);
 
     const compiler_tests = b.addTest(.{
@@ -71,7 +71,7 @@ pub fn build(b: *std.build.Builder) void {
         .optimize = mode,
         .filter = test_filter,
     });
-    compiler_tests.addModule("resinator", resinator);
+    compiler_tests.root_module.addImport("resinator", resinator);
     const run_compiler_tests = b.addRunArtifact(compiler_tests);
 
     const test_step = b.step("test", "Run library tests");
@@ -121,28 +121,28 @@ pub fn build(b: *std.build.Builder) void {
         .target = target,
         .optimize = mode,
     });
-    fuzz_winafl_exe.addModule("resinator", resinator);
+    fuzz_winafl_exe.root_module.addImport("resinator", resinator);
     const fuzz_winafl_compile = b.step("fuzz_winafl", "Build/install fuzz_winafl exe");
     const install_fuzz_winafl = b.addInstallArtifact(fuzz_winafl_exe, .{});
     fuzz_winafl_compile.dependOn(&install_fuzz_winafl.step);
 }
 
 fn addFuzzyTest(
-    b: *std.build.Builder,
+    b: *std.Build,
     comptime name: []const u8,
     mode: std.builtin.Mode,
-    target: std.zig.CrossTarget,
-    resinator: *std.build.Module,
-    all_fuzzy_tests_step: *std.build.Step,
-    fuzzy_options: *std.build.OptionsStep,
-) *std.build.LibExeObjStep {
+    target: std.Build.ResolvedTarget,
+    resinator: *std.Build.Module,
+    all_fuzzy_tests_step: *std.Build.Step,
+    fuzzy_options: *std.Build.Step.Options,
+) *std.Build.Step.Compile {
     var test_step = b.addTest(.{
         .root_source_file = .{ .path = "test/fuzzy_" ++ name ++ ".zig" },
         .target = target,
         .optimize = mode,
     });
-    test_step.addModule("resinator", resinator);
-    test_step.addOptions("fuzzy_options", fuzzy_options);
+    test_step.root_module.addImport("resinator", resinator);
+    test_step.root_module.addOptions("fuzzy_options", fuzzy_options);
 
     const run_test = b.addRunArtifact(test_step);
 
@@ -155,11 +155,11 @@ fn addFuzzyTest(
 }
 
 fn addFuzzer(
-    b: *std.build.Builder,
+    b: *std.Build,
     comptime name: []const u8,
     afl_clang_args: []const []const u8,
-    resinator: *std.build.Module,
-    target: std.zig.CrossTarget,
+    resinator: *std.Build.Module,
+    target: std.Build.ResolvedTarget,
 ) FuzzerSteps {
     // The library
     const fuzz_lib = b.addStaticLibrary(.{
@@ -168,10 +168,10 @@ fn addFuzzer(
         .target = target,
         .optimize = .Debug,
     });
-    fuzz_lib.addModule("resinator", resinator);
+    fuzz_lib.root_module.addImport("resinator", resinator);
     fuzz_lib.want_lto = true;
     fuzz_lib.bundle_compiler_rt = true;
-    fuzz_lib.force_pic = true;
+    fuzz_lib.root_module.pic = true;
 
     // Setup the output name
     const fuzz_executable_name = name;
@@ -200,7 +200,7 @@ fn addFuzzer(
         .target = target,
         .optimize = .Debug,
     });
-    fuzz_debug_exe.addModule("resinator", resinator);
+    fuzz_debug_exe.root_module.addImport("resinator", resinator);
 
     // Only install fuzz-debug when the fuzz step is run
     const install_fuzz_debug_exe = b.addInstallArtifact(fuzz_debug_exe, .{});
@@ -213,10 +213,10 @@ fn addFuzzer(
 }
 
 const FuzzerSteps = struct {
-    lib: *std.build.LibExeObjStep,
-    debug_exe: *std.build.LibExeObjStep,
+    lib: *std.Build.Step.Compile,
+    debug_exe: *std.Build.Step.Compile,
 
-    pub fn libExes(self: *const FuzzerSteps) [2]*std.build.LibExeObjStep {
-        return [_]*std.build.LibExeObjStep{ self.lib, self.debug_exe };
+    pub fn libExes(self: *const FuzzerSteps) [2]*std.Build.Step.Compile {
+        return [_]*std.Build.Step.Compile{ self.lib, self.debug_exe };
     }
 };
