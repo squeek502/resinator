@@ -5,8 +5,8 @@ A cross-platform Windows resource-definition script (.rc) to resource file (.res
 
 - This is a fully from-scratch and [clean-room](https://en.wikipedia.org/wiki/Clean_room_design) implementation, using [fuzz testing](#testing-resinator) as the primary method of determining how `rc.exe` works and how compatible `resinator` is with its implementation.
   + See [this talk](https://www.youtube.com/watch?v=RZczLb_uI9E) for a deeper dive into this
-- As of now, `resinator` can successfully compile every `.rc` file in the [Windows-classic-samples repo](https://github.com/microsoft/Windows-classic-samples) byte-for-byte identically to the Windows RC compiler when using the includes from MSVC/the Windows SDK. This is tested via [win32-samples-rc-tests](https://github.com/squeek502/win32-samples-rc-tests).
-- `resinator` has zero external dependencies at runtime (it includes the [Aro](https://github.com/Vexu/arocc) preprocessor) and can be used to cross-compile from any system out-of-the-box (if Windows system include paths are not found, a complete set of [MinGW](https://www.mingw-w64.org/) include files are extracted on-demand).
+- `resinator` can successfully compile every `.rc` file in the [Windows-classic-samples repo](https://github.com/microsoft/Windows-classic-samples) byte-for-byte identically to the Windows RC compiler when using the includes from MSVC/the Windows SDK. This is tested via [win32-samples-rc-tests](https://github.com/squeek502/win32-samples-rc-tests).
+- `resinator` has zero external dependencies at runtime (it embeds [Aro](https://github.com/Vexu/arocc) for preprocessing) and can be used to cross-compile from any system out-of-the-box (if Windows system include paths are not found, a complete set of [MinGW](https://www.mingw-w64.org/) include files are extracted on-demand).
 - [Documentation](https://squeek502.github.io/resinator/) (really just a dumping ground for documentation-adjacent stuff; to-be-improved-upon)
 
 ## Overview
