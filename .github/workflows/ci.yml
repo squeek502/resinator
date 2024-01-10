@@ -34,7 +34,7 @@ jobs:
 
       - name: Install qemu
         if: ${{ matrix.os == 'ubuntu-latest' }}
-        run: sudo apt-get install -y qemu-user-static
+        run: sudo apt-get update && sudo apt-get install -y qemu-user-static
 
       - run: zig version
       - run: zig env
