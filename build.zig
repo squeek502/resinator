@@ -125,6 +125,43 @@ pub fn build(b: *std.Build) void {
     const fuzz_winafl_compile = b.step("fuzz_winafl", "Build/install fuzz_winafl exe");
     const install_fuzz_winafl = b.addInstallArtifact(fuzz_winafl_exe, .{});
     fuzz_winafl_compile.dependOn(&install_fuzz_winafl.step);
+
+    // release step
+    {
+        const release_step = b.step("release", "Build release binaries for all supported targets");
+        const release_targets = &[_]std.Target.Query{
+            .{ .cpu_arch = .x86_64, .os_tag = .macos },
+            .{ .cpu_arch = .aarch64, .os_tag = .macos },
+            .{ .cpu_arch = .aarch64, .os_tag = .linux },
+            .{ .cpu_arch = .x86_64, .os_tag = .linux },
+            .{ .cpu_arch = .x86, .os_tag = .linux },
+            .{ .cpu_arch = .x86_64, .os_tag = .windows },
+            .{ .cpu_arch = .x86, .os_tag = .windows },
+        };
+        for (release_targets) |release_target| {
+            const resolved_release_target = b.resolveTargetQuery(release_target);
+            const release_exe = b.addExecutable(.{
+                .name = "resinator",
+                .root_source_file = .{ .path = "src/main.zig" },
+                .target = resolved_release_target,
+                .optimize = .ReleaseFast,
+                .single_threaded = true,
+                .strip = true,
+            });
+            release_exe.root_module.addImport("aro", aro_module);
+            release_exe.root_module.addImport("compressed_mingw_includes", compressed_mingw_includes_module);
+
+            const triple = release_target.zigTriple(b.allocator) catch unreachable;
+            const install_dir = b.pathJoin(&.{ "release", triple });
+            const release_install = b.addInstallArtifact(
+                release_exe,
+                .{ .dest_dir = .{
+                    .override = .{ .custom = install_dir },
+                } },
+            );
+            release_step.dependOn(&release_install.step);
+        }
+    }
 }
 
 fn addFuzzyTest(
