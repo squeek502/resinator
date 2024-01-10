@@ -79,6 +79,7 @@ fn hasAnyErrors(comp: *aro.Compilation) bool {
 pub fn appendAroArgs(arena: Allocator, argv: *std.ArrayList([]const u8), options: cli.Options, system_include_paths: []const []const u8) !void {
     try argv.appendSlice(&.{
         "-E",
+        "--comments",
         "-fuse-line-directives",
         "--target=x86_64-windows-msvc",
         "--emulate=msvc",
