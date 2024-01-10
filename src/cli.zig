@@ -1260,7 +1260,6 @@ test "parse: define and undefine" {
         defer options.deinit();
 
         const action = options.symbols.get("foo").?;
-        try std.testing.expectEqual(Options.SymbolAction.define, action);
         try std.testing.expectEqualStrings("1", action.define);
     }
     {
@@ -1268,7 +1267,6 @@ test "parse: define and undefine" {
         defer options.deinit();
 
         const action = options.symbols.get("foo").?;
-        try std.testing.expectEqual(Options.SymbolAction.define, action);
         try std.testing.expectEqualStrings("baz", action.define);
     }
     {

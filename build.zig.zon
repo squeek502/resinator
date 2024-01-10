@@ -3,8 +3,8 @@
     .version = "0.1.0",
     .dependencies = .{
         .aro = .{
-            .url = "https://github.com/squeek502/arocc/archive/01a4b0f0b5b3b29579e0315e864adf1403acb7d1.tar.gz",
-            .hash = "12202aef0780fc0f747b00ba9bb533547d89818647a1480dbaecfee641f0c480add7",
+            .url = "https://github.com/Vexu/arocc/archive/234a0ef9f827791f7642a950f13a6eb0e911c375.tar.gz",
+            .hash = "1220dbbcba8b46bc25a9004d6276a7c3cbc081efd2333646df0d9ce8257fc97bca55",
         },
         .compressed_mingw_includes = .{
             .url = "https://github.com/squeek502/compressed_mingw_includes/releases/download/1.0.0/compressed_mingw_includes.tar.gz",
