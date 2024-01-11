@@ -65,7 +65,16 @@ pub fn main() !void {
 
     const full_input = full_input: {
         if (options.preprocess != .no) {
-            const include_paths = getIncludePaths(allocator, options.auto_includes) catch |err| switch (err) {
+            var preprocessed_buf = std.ArrayList(u8).init(allocator);
+            errdefer preprocessed_buf.deinit();
+
+            // We're going to throw away everything except the final preprocessed output anyway,
+            // so we can use a scoped arena for everything else.
+            var aro_arena_state = std.heap.ArenaAllocator.init(allocator);
+            defer aro_arena_state.deinit();
+            const aro_arena = aro_arena_state.allocator();
+
+            const include_paths = getIncludePaths(aro_arena, options.auto_includes) catch |err| switch (err) {
                 error.OutOfMemory => |e| return e,
                 else => {
                     switch (err) {
@@ -84,27 +93,15 @@ pub fn main() !void {
                     std.os.exit(1);
                 },
             };
-            defer {
-                for (include_paths) |include_path| {
-                    allocator.free(include_path);
-                }
-                allocator.free(include_paths);
-            }
 
-            var comp = aro.Compilation.init(allocator);
+            var comp = aro.Compilation.init(aro_arena);
             defer comp.deinit();
-
-            var preprocessed_buf = std.ArrayList(u8).init(allocator);
-            errdefer preprocessed_buf.deinit();
 
             var argv = std.ArrayList([]const u8).init(comp.gpa);
             defer argv.deinit();
 
-            var args_arena = std.heap.ArenaAllocator.init(allocator);
-            defer args_arena.deinit();
-
             try argv.append("arocc"); // dummy command name
-            try preprocess.appendAroArgs(args_arena.allocator(), &argv, options, include_paths);
+            try preprocess.appendAroArgs(aro_arena, &argv, options, include_paths);
             try argv.append(options.input_filename);
 
             if (options.verbose) {
