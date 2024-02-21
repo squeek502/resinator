@@ -70,3 +70,9 @@ jobs:
         if: ${{ matrix.os == 'windows-latest' }}
         working-directory: ./win32-samples-rc-tests
         run: .\test.ps1 -ErrorOnAnyDiscrepancies -ErrorOnAnyLikelyPanics -IncludeWin32WillCompileErrorFiles -ExcludeLLVMRC -ExcludeWindres -ExcludeZigRC
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: win32-samples-rc-tests-results
+          path: 'win32-samples-rc-tests/results.log'
