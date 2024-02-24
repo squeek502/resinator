@@ -10,74 +10,40 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        os: [windows-latest]
 
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: true
-      - uses: goto-bus-stop/setup-zig@v2
-        with:
-          version: 0.12.0-dev.2818+97290e0bf
       - uses: ilammy/msvc-dev-cmd@v1
-        if: ${{ matrix.os == 'windows-latest' }}
         with:
           arch: x86
       - uses: actions/checkout@v4
-        if: ${{ matrix.os == 'windows-latest' }}
         with:
           repository: 'squeek502/win32-samples-rc-tests'
           submodules: true
           ref: ci-debug
           path: 'win32-samples-rc-tests'
+      - uses: actions/checkout@v4
+        with:
+          repository: 'rogerorr/NtTrace'
+          path: 'NtTrace'
 
-      - name: Install qemu
-        if: ${{ matrix.os == 'ubuntu-latest' }}
-        run: sudo apt-get update && sudo apt-get install -y qemu-user-static
+      - name: Compile NtTrace
+        working-directory: ./NtTrace
+        run: nmake /f NtTrace.mak
 
-      - run: zig version
-      - run: zig env
-
-      - name: Build
-        run: zig build
-
-      - name: Test
-        run: zig build test
-
-      - name: Test 32-bit
-        if: ${{ matrix.os != 'macos-latest' }}
-        run: zig build test -Dtarget=x86-native
-
-      - name: Test big endian (mips)
-        if: ${{ matrix.os == 'ubuntu-latest' }}
-        run: zig build test -Dtarget=mips-native -fqemu
-
-      - name: Test big endian (powerpc64)
-        if: ${{ matrix.os == 'ubuntu-latest' }}
-        run: zig build test -Dtarget=powerpc64-native -fqemu
-
-      - name: Add zig-out to PATH
-        if: ${{ matrix.os == 'windows-latest' }}
-        run: Add-Content $env:GITHUB_PATH "$env:GITHUB_WORKSPACE\zig-out\bin"
-
-      - name: Setup Win32 Samples
-        if: ${{ matrix.os == 'windows-latest' }}
-        working-directory: ./win32-samples-rc-tests
-        run: .\setup.ps1
+      - name: Add NtTrace to PATH
+        run: Add-Content $env:GITHUB_PATH "$env:GITHUB_WORKSPACE\NtTrace"
 
       - name: Test Win32 Samples
         if: ${{ matrix.os == 'windows-latest' }}
-        working-directory: ./win32-samples-rc-tests
-        run: .\test.ps1 -ErrorOnAnyDiscrepancies -ErrorOnAnyLikelyPanics -IncludeWin32WillCompileErrorFiles -ExcludeLLVMRC -ExcludeWindres -ExcludeZigRC
+        working-directory: ./win32-samples-rc-tests/Windows-classic-samples/Samples/Win7Samples/dataaccess/oledb_conformance/oledb/datalite
+        run: nttrace rc.exe /I "..\..\include" "datalite.rc" > trace.log
 
       - uses: actions/upload-artifact@v4
-        if: failure()
+        if: always()
         with:
-          name: win32-samples-rc-tests-results
-          path: 'win32-samples-rc-tests/results.log'
-
-      - uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: oledb_conformance
-          path: 'win32-samples-rc-tests/Windows-classic-samples/Samples/Win7Samples/dataaccess/oledb_conformance'
+          name: trace
+          path: 'win32-samples-rc-tests/Windows-classic-samples/Samples/Win7Samples/dataaccess/oledb_conformance/oledb/datalite/trace.log'
