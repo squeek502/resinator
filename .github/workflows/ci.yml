@@ -46,4 +46,4 @@ jobs:
         if: always()
         with:
           name: trace
-          path: 'win32-samples-rc-tests/Windows-classic-samples/Samples/Win7Samples/dataaccess/oledb_conformance/oledb/datalite/trace.log'
+          path: 'win32-samples-rc-tests/trace.log'
