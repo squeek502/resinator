@@ -37,6 +37,10 @@ jobs:
       - name: Add NtTrace to PATH
         run: Add-Content $env:GITHUB_PATH "$env:GITHUB_WORKSPACE\NtTrace"
 
+      - name: Test Win32 Sample
+        working-directory: ./win32-samples-rc-tests/Windows-classic-samples/Samples/Win7Samples/dataaccess/oledb_conformance/oledb/datalite
+        run: rc.exe /fo "datalite.expected.res" /I "..\..\include" "datalite.rc" 2>&1
+
       - name: Test Win32 Samples
         working-directory: ./win32-samples-rc-tests
         run: .\test.ps1 -ExcludeLLVMRC -ExcludeWindres -ExitOnRCFailure
