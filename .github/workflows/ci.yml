@@ -42,6 +42,7 @@ jobs:
         run: .\test.ps1 -ExcludeLLVMRC -ExcludeWindres -ExitOnRCFailure
 
       - name: Trace Win32 Samples
+        if: always()
         working-directory: ./win32-samples-rc-tests
         run: nttrace powershell ".\test.ps1" -ExcludeLLVMRC -ExcludeWindres -ExitOnRCFailure > trace.log
 
