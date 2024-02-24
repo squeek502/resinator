@@ -76,3 +76,9 @@ jobs:
         with:
           name: win32-samples-rc-tests-results
           path: 'win32-samples-rc-tests/results.log'
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: oledb_conformance
+          path: 'win32-samples-rc-tests/Windows-classic-samples/Samples/Win7Samples/dataaccess/oledb_conformance'
