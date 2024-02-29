@@ -47,7 +47,7 @@ jobs:
 
       - name: Test 32-bit
         if: ${{ matrix.os != 'macos-latest' }}
-      run: zig build test -Dtarget=x86-native
+        run: zig build test -Dtarget=x86-native
 
       - name: Test big endian (mips)
         if: ${{ matrix.os == 'ubuntu-latest' }}
