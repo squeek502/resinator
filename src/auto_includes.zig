@@ -35,8 +35,9 @@ pub fn extractMingwIncludes(allocator: Allocator, maybe_progress: ?*std.Progress
     resinator_cache_dir.deleteTree("include") catch {};
 
     var in_stream = std.io.fixedBufferStream(compressed_mingw_includes);
-    var zstd_stream = std.compress.zstd.decompressStream(allocator, in_stream.reader());
-    defer zstd_stream.deinit();
+    const zstd_window = try allocator.alloc(u8, std.compress.zstd.DecompressorOptions.default_window_buffer_len);
+    defer allocator.free(zstd_window);
+    var zstd_stream = std.compress.zstd.decompressor(in_stream.reader(), .{ .window_buffer = zstd_window });
 
     const uncompressed_tar = try zstd_stream.reader().readAllAlloc(allocator, std.math.maxInt(usize));
     defer allocator.free(uncompressed_tar);
@@ -54,7 +55,7 @@ pub fn getCachePath(allocator: Allocator, appname: []const u8) error{OutOfMemory
         .windows => {
             const local_app_data = std.process.getEnvVarOwned(allocator, "LOCALAPPDATA") catch |err| switch (err) {
                 error.EnvironmentVariableNotFound => return null,
-                error.InvalidUtf8 => unreachable,
+                error.InvalidWtf8 => unreachable,
                 else => |e| return e,
             };
             defer allocator.free(local_app_data);

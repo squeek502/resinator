@@ -20,7 +20,7 @@ jobs:
           submodules: true
       - uses: goto-bus-stop/setup-zig@v2
         with:
-          version: 0.12.0-dev.2818+97290e0bf
+          version: 0.12.0-dev.3074+ae7f3fc36
       - uses: ilammy/msvc-dev-cmd@v1
         if: ${{ matrix.os == 'windows-latest' }}
         with:
@@ -47,7 +47,7 @@ jobs:
 
       - name: Test 32-bit
         if: ${{ matrix.os != 'macos-latest' }}
-        run: zig build test -Dtarget=x86-native
+      run: zig build test -Dtarget=x86-native
 
       - name: Test big endian (mips)
         if: ${{ matrix.os == 'ubuntu-latest' }}
