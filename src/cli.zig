@@ -479,6 +479,10 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                     arg_i += 1;
                     break :next_arg;
                 };
+                if (options.depfile_path) |overwritten_path| {
+                    allocator.free(overwritten_path);
+                    options.depfile_path = null;
+                }
                 const path = try allocator.dupe(u8, value.slice);
                 errdefer allocator.free(path);
                 options.depfile_path = path;
