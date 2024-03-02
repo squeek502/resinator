@@ -11,6 +11,7 @@ pub fn preprocess(
     writer: anytype,
     /// Expects argv[0] to be the command name
     argv: []const []const u8,
+    maybe_dependencies_list: ?*std.ArrayList([]const u8),
 ) PreprocessError!void {
     try comp.addDefaultPragmaHandlers();
 
@@ -59,6 +60,16 @@ pub fn preprocess(
     if (hasAnyErrors(comp)) return error.PreprocessError;
 
     try pp.prettyPrintTokens(writer);
+
+    if (maybe_dependencies_list) |dependencies_list| {
+        for (comp.sources.values()) |comp_source| {
+            if (comp_source.id == builtin_macros.id or comp_source.id == user_macros.id) continue;
+            if (comp_source.id == .unused or comp_source.id == .generated) continue;
+            const duped_path = try dependencies_list.allocator.dupe(u8, comp_source.path);
+            errdefer dependencies_list.allocator.free(duped_path);
+            try dependencies_list.append(duped_path);
+        }
+    }
 }
 
 fn hasAnyErrors(comp: *aro.Compilation) bool {

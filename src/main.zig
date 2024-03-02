@@ -63,6 +63,15 @@ pub fn main() !void {
         try stdout_writer.writeByte('\n');
     }
 
+    var dependencies_list = std.ArrayList([]const u8).init(allocator);
+    defer {
+        for (dependencies_list.items) |item| {
+            allocator.free(item);
+        }
+        dependencies_list.deinit();
+    }
+    const maybe_dependencies_list: ?*std.ArrayList([]const u8) = if (options.depfile_path != null) &dependencies_list else null;
+
     const full_input = full_input: {
         if (options.preprocess != .no) {
             var preprocessed_buf = std.ArrayList(u8).init(allocator);
@@ -112,7 +121,7 @@ pub fn main() !void {
                 try stdout_writer.print("{s}\n\n", .{argv.items[argv.items.len - 1]});
             }
 
-            preprocess.preprocess(&comp, preprocessed_buf.writer(), argv.items) catch |err| switch (err) {
+            preprocess.preprocess(&comp, preprocessed_buf.writer(), argv.items, maybe_dependencies_list) catch |err| switch (err) {
                 error.GeneratedSourceError => {
                     // extra newline to separate this line from the aro errors
                     try renderErrorMessage(stderr.writer(), stderr_config, .err, "failed during preprocessor setup (this is always a bug):\n", .{});
@@ -154,14 +163,6 @@ pub fn main() !void {
     var mapping_results = try parseAndRemoveLineCommands(allocator, full_input, full_input, .{ .initial_filename = options.input_filename });
     defer mapping_results.mappings.deinit(allocator);
 
-    // TODO: Need to test to make sure that the parsing of the #line directives match
-    //       the initial_filename given to parseAndRemoveLineCommands.
-    // They *should* match, as the clang preprocessor inserts whatever filename
-    // you give it into the #line directives (e.g. `.\./rCDaTA.rC` for a file called
-    // `rcdata.rc` will get a `#line 1 ".\\./rCDaTA.rC"` directive), but there still
-    // may be a mismatch in how the line directive strings are parsed versus
-    // how they are escaped/written by the preprocessor.
-
     const final_input = removeComments(mapping_results.result, mapping_results.result, &mapping_results.mappings) catch |err| switch (err) {
         error.InvalidSourceMappingCollapse => {
             try renderErrorMessage(stderr.writer(), stderr_config, .err, "failed during comment removal; this is a known bug", .{});
@@ -179,14 +180,6 @@ pub fn main() !void {
 
     var diagnostics = Diagnostics.init(allocator);
     defer diagnostics.deinit();
-
-    var dependencies_list = std.ArrayList([]const u8).init(allocator);
-    defer {
-        for (dependencies_list.items) |item| {
-            allocator.free(item);
-        }
-        dependencies_list.deinit();
-    }
 
     if (options.debug) {
         std.debug.print("after preprocessor:\n------------------\n{s}\n------------------\n", .{final_input});
@@ -223,7 +216,7 @@ pub fn main() !void {
         .cwd = std.fs.cwd(),
         .diagnostics = &diagnostics,
         .source_mappings = &mapping_results.mappings,
-        .dependencies_list = if (options.debug) &dependencies_list else null,
+        .dependencies_list = maybe_dependencies_list,
         .ignore_include_env_var = options.ignore_include_env_var,
         .extra_include_paths = options.extra_include_paths.items,
         .default_language_id = options.default_language_id,
@@ -258,6 +251,31 @@ pub fn main() !void {
 
     // print any warnings/notes
     diagnostics.renderToStdErr(std.fs.cwd(), final_input, stderr_config, mapping_results.mappings);
+
+    // write the depfile
+    if (options.depfile_path) |depfile_path| {
+        var depfile = std.fs.cwd().createFile(depfile_path, .{}) catch |err| {
+            try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to create depfile '{s}': {s}", .{ depfile_path, @errorName(err) });
+            std.os.exit(1);
+        };
+        defer depfile.close();
+
+        const depfile_writer = depfile.writer();
+        var depfile_buffered_writer = std.io.bufferedWriter(depfile_writer);
+        switch (options.depfile_fmt) {
+            .json => {
+                var write_stream = std.json.writeStream(depfile_buffered_writer.writer(), .{ .whitespace = .indent_2 });
+                defer write_stream.deinit();
+
+                try write_stream.beginArray();
+                for (dependencies_list.items) |dep_path| {
+                    try write_stream.write(dep_path);
+                }
+                try write_stream.endArray();
+            },
+        }
+        try depfile_buffered_writer.flush();
+    }
 }
 
 fn getIncludePaths(allocator: std.mem.Allocator, auto_includes_option: cli.Options.AutoIncludes) ![]const []const u8 {

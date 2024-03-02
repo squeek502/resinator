@@ -52,6 +52,10 @@ pub const usage_string_after_command_name =
     \\    msvc                    Use MSVC include paths (must be present on the system)
     \\    gnu                     Use MinGW include paths (requires Zig as the preprocessor)
     \\    none                    Do not use any autodetected include paths
+    \\  /:depfile <path>          Output a file containing a list of all the files that the
+    \\                            .rc includes or otherwise depends on.
+    \\  /:depfile-fmt <value>     Output format of the depfile, if /:depfile is set.
+    \\    json                    (default) A top-level JSON array of paths
     \\
     \\Note: For compatibility reasons, all custom options start with :
     \\
@@ -140,8 +144,11 @@ pub const Options = struct {
     debug: bool = false,
     print_help_and_exit: bool = false,
     auto_includes: AutoIncludes = .any,
+    depfile_path: ?[]const u8 = null,
+    depfile_fmt: DepfileFormat = .json,
 
     pub const AutoIncludes = enum { any, msvc, gnu, none };
+    pub const DepfileFormat = enum { json };
     pub const Preprocess = enum { no, yes, only };
     pub const SymbolAction = enum { define, undefine };
     pub const SymbolValue = union(SymbolAction) {
@@ -230,6 +237,9 @@ pub const Options = struct {
             entry.value_ptr.deinit(self.allocator);
         }
         self.symbols.deinit(self.allocator);
+        if (self.depfile_path) |depfile_path| {
+            self.allocator.free(depfile_path);
+        }
     }
 
     pub fn dumpVerbose(self: *const Options, writer: anytype) !void {
@@ -424,6 +434,24 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
             if (std.ascii.startsWithIgnoreCase(arg_name, ":no-preprocess")) {
                 options.preprocess = .no;
                 arg.name_offset += ":no-preprocess".len;
+            } else if (std.ascii.startsWithIgnoreCase(arg_name, ":depfile-fmt")) {
+                const value = arg.value(":depfile-fmt".len, arg_i, args) catch {
+                    var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = arg.missingSpan() };
+                    var msg_writer = err_details.msg.writer(allocator);
+                    try msg_writer.print("missing value after {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(":depfile-fmt".len) });
+                    try diagnostics.append(err_details);
+                    arg_i += 1;
+                    break :next_arg;
+                };
+                options.depfile_fmt = std.meta.stringToEnum(Options.DepfileFormat, value.slice) orelse blk: {
+                    var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = value.argSpan(arg) };
+                    var msg_writer = err_details.msg.writer(allocator);
+                    try msg_writer.print("invalid depfile format setting: {s} ", .{value.slice});
+                    try diagnostics.append(err_details);
+                    break :blk options.depfile_fmt;
+                };
+                arg_i += value.index_increment;
+                continue :next_arg;
             } else if (std.ascii.startsWithIgnoreCase(arg_name, ":auto-includes")) {
                 const value = arg.value(":auto-includes".len, arg_i, args) catch {
                     var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = arg.missingSpan() };
@@ -440,6 +468,20 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                     try diagnostics.append(err_details);
                     break :blk options.auto_includes;
                 };
+                arg_i += value.index_increment;
+                continue :next_arg;
+            } else if (std.ascii.startsWithIgnoreCase(arg_name, ":depfile")) {
+                const value = arg.value(":depfile".len, arg_i, args) catch {
+                    var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = arg.missingSpan() };
+                    var msg_writer = err_details.msg.writer(allocator);
+                    try msg_writer.print("missing value after {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(":depfile".len) });
+                    try diagnostics.append(err_details);
+                    arg_i += 1;
+                    break :next_arg;
+                };
+                const path = try allocator.dupe(u8, value.slice);
+                errdefer allocator.free(path);
+                options.depfile_path = path;
                 arg_i += value.index_increment;
                 continue :next_arg;
             } else if (std.ascii.startsWithIgnoreCase(arg_name, "nologo")) {
