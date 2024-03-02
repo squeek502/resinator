@@ -83,7 +83,7 @@ pub fn main() !void {
             defer aro_arena_state.deinit();
             const aro_arena = aro_arena_state.allocator();
 
-            const include_paths = getIncludePaths(aro_arena, options.auto_includes) catch |err| switch (err) {
+            const include_paths = getIncludePaths(aro_arena, options.auto_includes, options.mingw_includes_dir) catch |err| switch (err) {
                 error.OutOfMemory => |e| return e,
                 else => {
                     switch (err) {
@@ -278,7 +278,7 @@ pub fn main() !void {
     }
 }
 
-fn getIncludePaths(allocator: std.mem.Allocator, auto_includes_option: cli.Options.AutoIncludes) ![]const []const u8 {
+fn getIncludePaths(allocator: std.mem.Allocator, auto_includes_option: cli.Options.AutoIncludes, maybe_mingw_includes_dir: ?[]const u8) ![]const []const u8 {
     var includes = auto_includes_option;
     if (builtin.target.os.tag != .windows) {
         switch (includes) {
@@ -311,9 +311,14 @@ fn getIncludePaths(allocator: std.mem.Allocator, auto_includes_option: cli.Optio
                 };
             },
             .gnu => {
-                var progress = std.Progress{};
-
-                const include_path = try auto_includes.extractMingwIncludes(allocator, &progress);
+                const include_path = include_path: {
+                    if (maybe_mingw_includes_dir) |mingw_includes_dir| {
+                        break :include_path try allocator.dupe(u8, mingw_includes_dir);
+                    } else {
+                        var progress = std.Progress{};
+                        break :include_path try auto_includes.extractMingwIncludes(allocator, &progress);
+                    }
+                };
                 errdefer allocator.free(include_path);
 
                 var include_paths = try allocator.alloc([]const u8, 1);

@@ -50,12 +50,14 @@ pub const usage_string_after_command_name =
     \\  /:auto-includes <value>   Set the automatic include path detection behavior.
     \\    any                     (default) Use MSVC if available, fall back to MinGW
     \\    msvc                    Use MSVC include paths (must be present on the system)
-    \\    gnu                     Use MinGW include paths (requires Zig as the preprocessor)
+    \\    gnu                     Use MinGW include paths
     \\    none                    Do not use any autodetected include paths
-    \\  /:depfile <path>          Output a file containing a list of all the files that the
-    \\                            .rc includes or otherwise depends on.
+    \\  /:depfile <path>          Output a file containing a list of all the files that
+    \\                            the .rc includes or otherwise depends on.
     \\  /:depfile-fmt <value>     Output format of the depfile, if /:depfile is set.
     \\    json                    (default) A top-level JSON array of paths
+    \\  /:mingw-includes <path>   Path to a directory containing MinGW include files. If
+    \\                            not specified, bundled MinGW include files will be used.
     \\
     \\Note: For compatibility reasons, all custom options start with :
     \\
@@ -146,6 +148,7 @@ pub const Options = struct {
     auto_includes: AutoIncludes = .any,
     depfile_path: ?[]const u8 = null,
     depfile_fmt: DepfileFormat = .json,
+    mingw_includes_dir: ?[]const u8 = null,
 
     pub const AutoIncludes = enum { any, msvc, gnu, none };
     pub const DepfileFormat = enum { json };
@@ -239,6 +242,9 @@ pub const Options = struct {
         self.symbols.deinit(self.allocator);
         if (self.depfile_path) |depfile_path| {
             self.allocator.free(depfile_path);
+        }
+        if (self.mingw_includes_dir) |mingw_includes_dir| {
+            self.allocator.free(mingw_includes_dir);
         }
     }
 
@@ -434,22 +440,22 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
             if (std.ascii.startsWithIgnoreCase(arg_name, ":no-preprocess")) {
                 options.preprocess = .no;
                 arg.name_offset += ":no-preprocess".len;
-            } else if (std.ascii.startsWithIgnoreCase(arg_name, ":depfile-fmt")) {
-                const value = arg.value(":depfile-fmt".len, arg_i, args) catch {
+            } else if (std.ascii.startsWithIgnoreCase(arg_name, ":mingw-includes")) {
+                const value = arg.value(":mingw-includes".len, arg_i, args) catch {
                     var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = arg.missingSpan() };
                     var msg_writer = err_details.msg.writer(allocator);
-                    try msg_writer.print("missing value after {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(":depfile-fmt".len) });
+                    try msg_writer.print("missing value after {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(":mingw-includes".len) });
                     try diagnostics.append(err_details);
                     arg_i += 1;
                     break :next_arg;
                 };
-                options.depfile_fmt = std.meta.stringToEnum(Options.DepfileFormat, value.slice) orelse blk: {
-                    var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = value.argSpan(arg) };
-                    var msg_writer = err_details.msg.writer(allocator);
-                    try msg_writer.print("invalid depfile format setting: {s} ", .{value.slice});
-                    try diagnostics.append(err_details);
-                    break :blk options.depfile_fmt;
-                };
+                if (options.mingw_includes_dir) |overwritten_path| {
+                    allocator.free(overwritten_path);
+                    options.mingw_includes_dir = null;
+                }
+                const path = try allocator.dupe(u8, value.slice);
+                errdefer allocator.free(path);
+                options.mingw_includes_dir = path;
                 arg_i += value.index_increment;
                 continue :next_arg;
             } else if (std.ascii.startsWithIgnoreCase(arg_name, ":auto-includes")) {
@@ -467,6 +473,24 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                     try msg_writer.print("invalid auto includes setting: {s} ", .{value.slice});
                     try diagnostics.append(err_details);
                     break :blk options.auto_includes;
+                };
+                arg_i += value.index_increment;
+                continue :next_arg;
+            } else if (std.ascii.startsWithIgnoreCase(arg_name, ":depfile-fmt")) {
+                const value = arg.value(":depfile-fmt".len, arg_i, args) catch {
+                    var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = arg.missingSpan() };
+                    var msg_writer = err_details.msg.writer(allocator);
+                    try msg_writer.print("missing value after {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(":depfile-fmt".len) });
+                    try diagnostics.append(err_details);
+                    arg_i += 1;
+                    break :next_arg;
+                };
+                options.depfile_fmt = std.meta.stringToEnum(Options.DepfileFormat, value.slice) orelse blk: {
+                    var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = value.argSpan(arg) };
+                    var msg_writer = err_details.msg.writer(allocator);
+                    try msg_writer.print("invalid depfile format setting: {s} ", .{value.slice});
+                    try diagnostics.append(err_details);
+                    break :blk options.depfile_fmt;
                 };
                 arg_i += value.index_increment;
                 continue :next_arg;
