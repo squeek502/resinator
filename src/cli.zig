@@ -410,7 +410,7 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
     var output_filename: ?[]const u8 = null;
     var output_filename_context: Arg.Context = undefined;
 
-    var arg_i: usize = 1; // start at 1 to skip past the exe name
+    var arg_i: usize = 0;
     next_arg: while (arg_i < args.len) {
         var arg = Arg.fromString(args[arg_i]) orelse break;
         if (arg.name().len == 0) {
@@ -907,7 +907,7 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
         try diagnostics.append(err_details);
 
         const last_arg = args[args.len - 1];
-        if (arg_i > 1 and last_arg.len > 0 and last_arg[0] == '/' and std.ascii.endsWithIgnoreCase(last_arg, ".rc")) {
+        if (arg_i > 0 and last_arg.len > 0 and last_arg[0] == '/' and std.ascii.endsWithIgnoreCase(last_arg, ".rc")) {
             var note_details = Diagnostics.ErrorDetails{ .type = .note, .print_args = true, .arg_index = arg_i - 1 };
             var note_writer = note_details.msg.writer(allocator);
             try note_writer.writeAll("if this argument was intended to be the input filename, then -- should be specified in front of it to exclude it from option parsing");
@@ -1186,7 +1186,7 @@ fn testParseOutput(args: []const []const u8, expected_output: []const u8) !?Opti
 }
 
 test "parse errors: basic" {
-    try testParseError(&.{ "foo.exe", "/" },
+    try testParseError(&.{"/"},
         \\<cli>: error: invalid option: /
         \\ ... /
         \\     ^
@@ -1194,7 +1194,7 @@ test "parse errors: basic" {
         \\
         \\
     );
-    try testParseError(&.{ "foo.exe", "/ln" },
+    try testParseError(&.{"/ln"},
         \\<cli>: error: missing language tag after /ln option
         \\ ... /ln
         \\     ~~~~^
@@ -1202,7 +1202,7 @@ test "parse errors: basic" {
         \\
         \\
     );
-    try testParseError(&.{ "foo.exe", "-vln" },
+    try testParseError(&.{"-vln"},
         \\<cli>: error: missing language tag after -ln option
         \\ ... -vln
         \\     ~ ~~~^
@@ -1210,7 +1210,7 @@ test "parse errors: basic" {
         \\
         \\
     );
-    try testParseError(&.{ "foo.exe", "/_not-an-option" },
+    try testParseError(&.{"/_not-an-option"},
         \\<cli>: error: invalid option: /_not-an-option
         \\ ... /_not-an-option
         \\     ~^~~~~~~~~~~~~~
@@ -1218,7 +1218,7 @@ test "parse errors: basic" {
         \\
         \\
     );
-    try testParseError(&.{ "foo.exe", "-_not-an-option" },
+    try testParseError(&.{"-_not-an-option"},
         \\<cli>: error: invalid option: -_not-an-option
         \\ ... -_not-an-option
         \\     ~^~~~~~~~~~~~~~
@@ -1226,7 +1226,7 @@ test "parse errors: basic" {
         \\
         \\
     );
-    try testParseError(&.{ "foo.exe", "--_not-an-option" },
+    try testParseError(&.{"--_not-an-option"},
         \\<cli>: error: invalid option: --_not-an-option
         \\ ... --_not-an-option
         \\     ~~^~~~~~~~~~~~~~
@@ -1234,7 +1234,7 @@ test "parse errors: basic" {
         \\
         \\
     );
-    try testParseError(&.{ "foo.exe", "/v_not-an-option" },
+    try testParseError(&.{"/v_not-an-option"},
         \\<cli>: error: invalid option: /_not-an-option
         \\ ... /v_not-an-option
         \\     ~ ^~~~~~~~~~~~~~
@@ -1242,7 +1242,7 @@ test "parse errors: basic" {
         \\
         \\
     );
-    try testParseError(&.{ "foo.exe", "-v_not-an-option" },
+    try testParseError(&.{"-v_not-an-option"},
         \\<cli>: error: invalid option: -_not-an-option
         \\ ... -v_not-an-option
         \\     ~ ^~~~~~~~~~~~~~
@@ -1250,7 +1250,7 @@ test "parse errors: basic" {
         \\
         \\
     );
-    try testParseError(&.{ "foo.exe", "--v_not-an-option" },
+    try testParseError(&.{"--v_not-an-option"},
         \\<cli>: error: invalid option: --_not-an-option
         \\ ... --v_not-an-option
         \\     ~~ ^~~~~~~~~~~~~~
@@ -1258,7 +1258,7 @@ test "parse errors: basic" {
         \\
         \\
     );
-    try testParseError(&.{ "foo.exe", "/some/absolute/path/parsed/as/an/option.rc" },
+    try testParseError(&.{"/some/absolute/path/parsed/as/an/option.rc"},
         \\<cli>: error: the /s option is unsupported
         \\ ... /some/absolute/path/parsed/as/an/option.rc
         \\     ~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1272,13 +1272,13 @@ test "parse errors: basic" {
 }
 
 test "parse errors: /ln" {
-    try testParseError(&.{ "foo.exe", "/ln", "invalid", "foo.rc" },
+    try testParseError(&.{ "/ln", "invalid", "foo.rc" },
         \\<cli>: error: invalid language tag: invalid
         \\ ... /ln invalid ...
         \\     ~~~~^~~~~~~
         \\
     );
-    try testParseError(&.{ "foo.exe", "/lninvalid", "foo.rc" },
+    try testParseError(&.{ "/lninvalid", "foo.rc" },
         \\<cli>: error: invalid language tag: invalid
         \\ ... /lninvalid ...
         \\     ~~~^~~~~~~
@@ -1288,7 +1288,7 @@ test "parse errors: /ln" {
 
 test "parse: options" {
     {
-        var options = try testParse(&.{ "foo.exe", "/v", "foo.rc" });
+        var options = try testParse(&.{ "/v", "foo.rc" });
         defer options.deinit();
 
         try std.testing.expectEqual(true, options.verbose);
@@ -1296,16 +1296,7 @@ test "parse: options" {
         try std.testing.expectEqualStrings("foo.res", options.output_filename);
     }
     {
-        var options = try testParse(&.{ "foo.exe", "/vx", "foo.rc" });
-        defer options.deinit();
-
-        try std.testing.expectEqual(true, options.verbose);
-        try std.testing.expectEqual(true, options.ignore_include_env_var);
-        try std.testing.expectEqualStrings("foo.rc", options.input_filename);
-        try std.testing.expectEqualStrings("foo.res", options.output_filename);
-    }
-    {
-        var options = try testParse(&.{ "foo.exe", "/xv", "foo.rc" });
+        var options = try testParse(&.{ "/vx", "foo.rc" });
         defer options.deinit();
 
         try std.testing.expectEqual(true, options.verbose);
@@ -1314,7 +1305,16 @@ test "parse: options" {
         try std.testing.expectEqualStrings("foo.res", options.output_filename);
     }
     {
-        var options = try testParse(&.{ "foo.exe", "/xvFObar.res", "foo.rc" });
+        var options = try testParse(&.{ "/xv", "foo.rc" });
+        defer options.deinit();
+
+        try std.testing.expectEqual(true, options.verbose);
+        try std.testing.expectEqual(true, options.ignore_include_env_var);
+        try std.testing.expectEqualStrings("foo.rc", options.input_filename);
+        try std.testing.expectEqualStrings("foo.res", options.output_filename);
+    }
+    {
+        var options = try testParse(&.{ "/xvFObar.res", "foo.rc" });
         defer options.deinit();
 
         try std.testing.expectEqual(true, options.verbose);
@@ -1326,21 +1326,21 @@ test "parse: options" {
 
 test "parse: define and undefine" {
     {
-        var options = try testParse(&.{ "foo.exe", "/dfoo", "foo.rc" });
+        var options = try testParse(&.{ "/dfoo", "foo.rc" });
         defer options.deinit();
 
         const action = options.symbols.get("foo").?;
         try std.testing.expectEqualStrings("1", action.define);
     }
     {
-        var options = try testParse(&.{ "foo.exe", "/dfoo=bar", "/dfoo=baz", "foo.rc" });
+        var options = try testParse(&.{ "/dfoo=bar", "/dfoo=baz", "foo.rc" });
         defer options.deinit();
 
         const action = options.symbols.get("foo").?;
         try std.testing.expectEqualStrings("baz", action.define);
     }
     {
-        var options = try testParse(&.{ "foo.exe", "/ufoo", "foo.rc" });
+        var options = try testParse(&.{ "/ufoo", "foo.rc" });
         defer options.deinit();
 
         const action = options.symbols.get("foo").?;
@@ -1348,7 +1348,7 @@ test "parse: define and undefine" {
     }
     {
         // Once undefined, future defines are ignored
-        var options = try testParse(&.{ "foo.exe", "/ufoo", "/dfoo", "foo.rc" });
+        var options = try testParse(&.{ "/ufoo", "/dfoo", "foo.rc" });
         defer options.deinit();
 
         const action = options.symbols.get("foo").?;
@@ -1356,7 +1356,7 @@ test "parse: define and undefine" {
     }
     {
         // Undefined always takes precedence
-        var options = try testParse(&.{ "foo.exe", "/dfoo", "/ufoo", "/dfoo", "foo.rc" });
+        var options = try testParse(&.{ "/dfoo", "/ufoo", "/dfoo", "foo.rc" });
         defer options.deinit();
 
         const action = options.symbols.get("foo").?;
@@ -1365,7 +1365,7 @@ test "parse: define and undefine" {
     {
         // Warn + ignore invalid identifiers
         var options = try testParseWarning(
-            &.{ "foo.exe", "/dfoo bar", "/u", "0leadingdigit", "foo.rc" },
+            &.{ "/dfoo bar", "/u", "0leadingdigit", "foo.rc" },
             \\<cli>: warning: symbol "foo bar" is not a valid identifier and therefore cannot be defined
             \\ ... /dfoo bar ...
             \\     ~~^~~~~~~
@@ -1382,7 +1382,7 @@ test "parse: define and undefine" {
 }
 
 test "parse: /sl" {
-    try testParseError(&.{ "foo.exe", "/sl", "0", "foo.rc" },
+    try testParseError(&.{ "/sl", "0", "foo.rc" },
         \\<cli>: error: percent out of range: 0 (parsed from '0')
         \\ ... /sl 0 ...
         \\     ~~~~^
@@ -1390,7 +1390,7 @@ test "parse: /sl" {
         \\
         \\
     );
-    try testParseError(&.{ "foo.exe", "/sl", "abcd", "foo.rc" },
+    try testParseError(&.{ "/sl", "abcd", "foo.rc" },
         \\<cli>: error: invalid percent format 'abcd'
         \\ ... /sl abcd ...
         \\     ~~~~^~~~
@@ -1399,25 +1399,25 @@ test "parse: /sl" {
         \\
     );
     {
-        var options = try testParse(&.{ "foo.exe", "foo.rc" });
+        var options = try testParse(&.{"foo.rc"});
         defer options.deinit();
 
         try std.testing.expectEqual(@as(u15, lex.default_max_string_literal_codepoints), options.max_string_literal_codepoints);
     }
     {
-        var options = try testParse(&.{ "foo.exe", "/sl100", "foo.rc" });
+        var options = try testParse(&.{ "/sl100", "foo.rc" });
         defer options.deinit();
 
         try std.testing.expectEqual(@as(u15, max_string_literal_length_100_percent), options.max_string_literal_codepoints);
     }
     {
-        var options = try testParse(&.{ "foo.exe", "-SL33", "foo.rc" });
+        var options = try testParse(&.{ "-SL33", "foo.rc" });
         defer options.deinit();
 
         try std.testing.expectEqual(@as(u15, 2703), options.max_string_literal_codepoints);
     }
     {
-        var options = try testParse(&.{ "foo.exe", "/sl15", "foo.rc" });
+        var options = try testParse(&.{ "/sl15", "foo.rc" });
         defer options.deinit();
 
         try std.testing.expectEqual(@as(u15, 1228), options.max_string_literal_codepoints);
@@ -1425,7 +1425,7 @@ test "parse: /sl" {
 }
 
 test "parse: unsupported MUI-related options" {
-    try testParseError(&.{ "foo.exe", "/q", "blah", "/g1", "-G2", "blah", "/fm", "blah", "/g", "blah", "foo.rc" },
+    try testParseError(&.{ "/q", "blah", "/g1", "-G2", "blah", "/fm", "blah", "/g", "blah", "foo.rc" },
         \\<cli>: error: the /q option is unsupported
         \\ ... /q ...
         \\     ~^
@@ -1446,7 +1446,7 @@ test "parse: unsupported MUI-related options" {
 }
 
 test "parse: unsupported LCX/LCE-related options" {
-    try testParseError(&.{ "foo.exe", "/t", "/tp:", "/tp:blah", "/tm", "/tc", "/tw", "-TEti", "/ta", "/tn", "blah", "foo.rc" },
+    try testParseError(&.{ "/t", "/tp:", "/tp:blah", "/tm", "/tc", "/tw", "-TEti", "/ta", "/tn", "blah", "foo.rc" },
         \\<cli>: error: the /t option is unsupported
         \\ ... /t ...
         \\     ~^
@@ -1488,7 +1488,7 @@ test "maybeAppendRC" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    var options = try testParse(&.{ "foo.exe", "foo" });
+    var options = try testParse(&.{"foo"});
     defer options.deinit();
     try std.testing.expectEqualStrings("foo", options.input_filename);
 

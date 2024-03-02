@@ -26,8 +26,9 @@ pub fn main() !void {
     const stderr_config = std.io.tty.detectConfig(stderr);
 
     var options = options: {
-        const args = try std.process.argsAlloc(allocator);
-        defer std.process.argsFree(allocator, args);
+        const all_args = try std.process.argsAlloc(allocator);
+        defer std.process.argsFree(allocator, all_args);
+        const args = all_args[1..]; // skip past the executable name
 
         var cli_diagnostics = cli.Diagnostics.init(allocator);
         defer cli_diagnostics.deinit();
