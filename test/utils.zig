@@ -9,11 +9,6 @@ pub fn expectSameResOutput(allocator: Allocator, source: []const u8, options: Ge
     var resinator_result = try getResinatorResultFromFile(allocator, input_filepath, options);
     defer resinator_result.deinit(allocator);
 
-    if (resinator_result.pre != null and resinator_result.pre.?.known_preprocessor_difference) {
-        std.debug.print("known preprocessor difference, skipping\n", .{});
-        return;
-    }
-
     var win32_result = try getWin32ResultFromFile(allocator, input_filepath, options);
     defer win32_result.deinit(allocator);
 
@@ -21,12 +16,6 @@ pub fn expectSameResOutput(allocator: Allocator, source: []const u8, options: Ge
 }
 
 pub fn compare(win32_result: *Win32Result, resinator_result: *ResinatorResult) !void {
-    // The preprocessor may reject things that the win32 compiler does not.
-    // This is not something we can do anything about unless we write our own compliant
-    // preprocessor, so instead we just treat it as okay and move on.
-    if (resinator_result.didPreproccessorError()) {
-        return;
-    }
     // Both erroring is fine
     if (win32_result.res == null and resinator_result.res == null) {
         return;
@@ -97,39 +86,17 @@ pub fn compare(win32_result: *Win32Result, resinator_result: *ResinatorResult) !
 pub const ResinatorResult = struct {
     res: ?[]const u8 = null,
     diagnostics: resinator.errors.Diagnostics,
-    /// Only populated if the preprocessor is not run
-    rc_data: ?[]u8 = null,
-    /// This is a slice of either pre.preprocessor.stdout or rc_data
+    rc_data: []u8,
+    /// This is a slice of rc_data
     /// so it doesn't need to be freed separately
     processed_rc: ?[]const u8 = null,
-    pre: ?PreprocessResult = null,
-
-    pub const PreprocessResult = struct {
-        preprocessor: std.ChildProcess.RunResult = undefined,
-        known_preprocessor_difference: bool = false,
-    };
 
     pub fn deinit(self: *ResinatorResult, allocator: Allocator) void {
         self.diagnostics.deinit();
         if (self.res) |res| {
             allocator.free(res);
         }
-        if (self.pre) |pre| {
-            if (!pre.known_preprocessor_difference) {
-                allocator.free(pre.preprocessor.stdout);
-                allocator.free(pre.preprocessor.stderr);
-            }
-        }
-        if (self.rc_data) |rc_data| {
-            allocator.free(rc_data);
-        }
-    }
-
-    pub fn didPreproccessorError(self: *const ResinatorResult) bool {
-        if (self.pre) |pre| {
-            return pre.preprocessor.term != .Exited or pre.preprocessor.term.Exited != 0;
-        }
-        return false;
+        allocator.free(self.rc_data);
     }
 };
 
@@ -148,13 +115,12 @@ fn inputContainsKnownPreprocessorDifference(data: []const u8) bool {
 pub const GetResultOptions = struct {
     cwd: std.fs.Dir,
     cwd_path: []const u8,
-    run_preprocessor: bool,
     /// Only used in the Win32 version
     output_path: ?[]const u8 = null,
 };
 
 pub fn getResinatorResult(allocator: Allocator, source: []const u8, options: GetResultOptions) !ResinatorResult {
-    // TODO: Bypass the intermediate file if options.run_preprocessor is false
+    // TODO: Bypass the intermediate file
     try options.cwd.writeFile("test.rc", source);
     return getResinatorResultFromFile(allocator, "test.rc", options);
 }
@@ -162,22 +128,11 @@ pub fn getResinatorResult(allocator: Allocator, source: []const u8, options: Get
 pub fn getResinatorResultFromFile(allocator: Allocator, input_filepath: []const u8, options: GetResultOptions) !ResinatorResult {
     var result = ResinatorResult{
         .diagnostics = resinator.errors.Diagnostics.init(allocator),
+        .rc_data = try options.cwd.readFileAlloc(allocator, input_filepath, std.math.maxInt(usize)),
     };
     errdefer result.deinit(allocator);
 
-    result.pre = try runPreprocessor(allocator, input_filepath, options);
-    if (result.pre) |pre| {
-        if (pre.preprocessor.term != .Exited or pre.preprocessor.term.Exited != 0) {
-            return result;
-        }
-    }
-
-    // Use the preprocessor result if it exists, otherwise we need to read the file and use its contents
-    // directly.
-    if (!options.run_preprocessor) {
-        result.rc_data = try options.cwd.readFileAlloc(allocator, input_filepath, std.math.maxInt(usize));
-    }
-    const data = result.rc_data orelse result.pre.?.preprocessor.stdout;
+    const data = result.rc_data;
 
     var mapping_results = try resinator.source_mapping.parseAndRemoveLineCommands(
         allocator,
@@ -213,52 +168,6 @@ pub fn getResinatorResultFromFile(allocator: Allocator, input_filepath: []const 
     if (!did_error) {
         result.res = try output_buf.toOwnedSlice();
     }
-    return result;
-}
-
-pub fn runPreprocessor(allocator: Allocator, input_filepath: []const u8, options: GetResultOptions) !?ResinatorResult.PreprocessResult {
-    if (!options.run_preprocessor) return null;
-
-    var result = ResinatorResult.PreprocessResult{};
-
-    const data = try options.cwd.readFileAlloc(allocator, input_filepath, std.math.maxInt(usize));
-    defer allocator.free(data);
-
-    if (inputContainsKnownPreprocessorDifference(data)) {
-        result.known_preprocessor_difference = true;
-        return result;
-    }
-
-    var argv = std.ArrayList([]const u8).init(allocator);
-    defer argv.deinit();
-
-    try argv.appendSlice(&[_][]const u8{
-        "clang",
-        "-E", // preprocessor only
-        "--comments",
-        "-fuse-line-directives", // #line <num> instead of # <num>
-        // TODO: could use --trace-includes to give info about what's included from where
-        "-xc", // output c
-        // TODO: Turn this off, check the warnings, and convert the spaces back to NUL
-        "-Werror=null-character", // error on null characters instead of converting them to spaces
-        // TODO: could remove -Werror=null-character and instead parse warnings looking for 'warning: null character ignored'
-        //       since the only real problem is when clang doesn't preserve null characters
-        //"-Werror=invalid-pp-token", // will error on unfinished string literals
-        // TODO: could use -Werror instead
-        // https://learn.microsoft.com/en-us/windows/win32/menurc/predefined-macros
-        "-DRC_INVOKED",
-    });
-    try argv.append(input_filepath);
-
-    result.preprocessor = try std.ChildProcess.run(.{
-        .allocator = allocator,
-        .argv = argv.items,
-        .max_output_bytes = std.math.maxInt(u32),
-        .cwd = options.cwd_path,
-    });
-    errdefer allocator.free(result.preprocessor.stdout);
-    errdefer allocator.free(result.preprocessor.stderr);
-
     return result;
 }
 

@@ -22,7 +22,6 @@ test "octal escapes, ascii string literal" {
         utils.expectSameResOutput(allocator, source, .{
             .cwd = tmp.dir,
             .cwd_path = tmp_path,
-            .run_preprocessor = false,
         }) catch {
             std.debug.print("difference found for {} (0o{o})\n\n", .{ value, value });
         };
@@ -50,7 +49,6 @@ test "octal escapes, wide string literal" {
         utils.expectSameResOutput(allocator, source, .{
             .cwd = tmp.dir,
             .cwd_path = tmp_path,
-            .run_preprocessor = false,
         }) catch {
             std.debug.print("difference found for {} (0o{o})\n\n", .{ value, value });
         };

@@ -42,7 +42,6 @@ fn testAllBytes(source: []u8) !void {
         utils.expectSameResOutput(allocator, source, .{
             .cwd = tmp.dir,
             .cwd_path = tmp_path,
-            .run_preprocessor = false,
         }) catch |err| {
             std.debug.print("\nfailing byte: 0x{X}\n", .{byte});
             return err;

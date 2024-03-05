@@ -25,7 +25,6 @@ test "single chars" {
         try utils.expectSameResOutput(allocator, source, .{
             .cwd = tmp.dir,
             .cwd_path = tmp_path,
-            .run_preprocessor = false,
         });
 
         if (byte == 255) break;
@@ -56,7 +55,6 @@ test "single char escapes" {
         try utils.expectSameResOutput(allocator, source, .{
             .cwd = tmp.dir,
             .cwd_path = tmp_path,
-            .run_preprocessor = false,
         });
 
         if (escaped_byte == 255) break;
@@ -93,7 +91,6 @@ test "fuzz" {
         try utils.expectSameResOutput(allocator, source, .{
             .cwd = tmp.dir,
             .cwd_path = tmp_path,
-            .run_preprocessor = false,
         });
     }
 }

@@ -35,7 +35,6 @@ test "fuzz" {
         try utils.expectSameResOutput(allocator, source, .{
             .cwd = tmp.dir,
             .cwd_path = tmp_path,
-            .run_preprocessor = false,
         });
     }
 }

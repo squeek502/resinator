@@ -47,7 +47,6 @@ test "RCDATA common resource attribute permutations" {
             try utils.expectSameResOutput(allocator, source, .{
                 .cwd = tmp.dir,
                 .cwd_path = tmp_path,
-                .run_preprocessor = false,
             });
 
             source_buffer.shrinkRetainingCapacity(0);
@@ -109,7 +108,6 @@ test "ICON common resource attribute permutations" {
             try utils.expectSameResOutput(allocator, source, .{
                 .cwd = tmp.dir,
                 .cwd_path = tmp_path,
-                .run_preprocessor = false,
             });
 
             source_buffer.shrinkRetainingCapacity(0);
