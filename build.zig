@@ -74,11 +74,21 @@ pub fn build(b: *std.Build) void {
     compiler_tests.root_module.addImport("resinator", resinator);
     const run_compiler_tests = b.addRunArtifact(compiler_tests);
 
+    const cli_test_options = b.addOptions();
+    cli_test_options.addOptionPath("cli_exe_path", exe.getEmittedBin());
+    const cli_tests = b.addTest(.{
+        .name = "cli",
+        .root_source_file = .{ .path = "test/cli.zig" },
+    });
+    cli_tests.root_module.addOptions("build_options", cli_test_options);
+    const run_cli_tests = b.addRunArtifact(cli_tests);
+
     const test_step = b.step("test", "Run library tests");
     test_step.dependOn(&run_exe_tests.step);
     test_step.dependOn(&run_reference_tests.step);
     test_step.dependOn(&run_parser_tests.step);
     test_step.dependOn(&run_compiler_tests.step);
+    test_step.dependOn(&run_cli_tests.step);
 
     // TODO: coverage across all test steps?
     const coverage = b.option(bool, "test-coverage", "Generate test coverage") orelse false;
