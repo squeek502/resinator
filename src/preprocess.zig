@@ -94,6 +94,7 @@ pub fn appendAroArgs(arena: Allocator, argv: *std.ArrayList([]const u8), options
         "-fuse-line-directives",
         "--target=x86_64-windows-msvc",
         "--emulate=msvc",
+        "-nostdinc",
         "-DRC_INVOKED",
     });
     for (options.extra_include_paths.items) |extra_include_path| {
