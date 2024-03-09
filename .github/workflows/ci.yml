@@ -71,6 +71,21 @@ jobs:
         working-directory: ./win32-samples-rc-tests
         run: .\test.ps1 -ErrorOnAnyDiscrepancies -ErrorOnAnyLikelyPanics -IncludeWin32WillCompileErrorFiles -ExcludeLLVMRC -ExcludeWindres -ExcludeZigRC
 
+      - name: Extract MinGW headers from resinator
+        if: ${{ matrix.os == 'windows-latest' }}
+        run: |
+          echo $null > tmp.rc
+          resinator /:auto-includes gnu tmp.rc
+          del tmp.rc
+          del tmp.res
+
+      - name: Test Win32 Samples With MinGW headers
+        if: ${{ matrix.os == 'windows-latest' }}
+        working-directory: ./win32-samples-rc-tests
+        run: |
+          $env:INCLUDE = $env:TEMP + "\resinator\include"
+          .\test.ps1 -MinGWCompat -ErrorOnAnyDiscrepancies -ErrorOnAnyLikelyPanics -IncludeWin32WillCompileErrorFiles -ExcludeLLVMRC -ExcludeWindres -ExcludeZigRC
+
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
