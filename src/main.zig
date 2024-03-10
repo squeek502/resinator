@@ -17,6 +17,10 @@ pub fn main() !void {
     defer std.debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
 
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
     // Set the codepage to UTF-8 unconditionally to ensure that everything renders okay
     // TODO: Reset codepage afterwards?
     if (builtin.os.tag == .windows) {
@@ -73,6 +77,26 @@ pub fn main() !void {
     }
     const maybe_dependencies_list: ?*std.ArrayList([]const u8) = if (options.depfile_path != null) &dependencies_list else null;
 
+    const include_paths = getIncludePaths(arena, options.auto_includes, options.mingw_includes_dir) catch |err| switch (err) {
+        error.OutOfMemory => |e| return e,
+        else => {
+            switch (err) {
+                error.MsvcIncludesNotFound => {
+                    try renderErrorMessage(stderr.writer(), stderr_config, .err, "MSVC include paths could not be automatically detected", .{});
+                },
+                error.CannotResolveCachePath => {
+                    try renderErrorMessage(stderr.writer(), stderr_config, .err, "could not resolve global cache path (for MinGW auto includes)", .{});
+                },
+                // All other errors are related to MinGW includes
+                else => {
+                    try renderErrorMessage(stderr.writer(), stderr_config, .err, "failed to find / extract cached MinGW includes: {s}", .{@errorName(err)});
+                },
+            }
+            try renderErrorMessage(stderr.writer(), stderr_config, .note, "to disable auto includes, use the option /:auto-includes none", .{});
+            std.os.exit(1);
+        },
+    };
+
     const full_input = full_input: {
         if (options.preprocess != .no) {
             var preprocessed_buf = std.ArrayList(u8).init(allocator);
@@ -83,26 +107,6 @@ pub fn main() !void {
             var aro_arena_state = std.heap.ArenaAllocator.init(allocator);
             defer aro_arena_state.deinit();
             const aro_arena = aro_arena_state.allocator();
-
-            const include_paths = getIncludePaths(aro_arena, options.auto_includes, options.mingw_includes_dir) catch |err| switch (err) {
-                error.OutOfMemory => |e| return e,
-                else => {
-                    switch (err) {
-                        error.MsvcIncludesNotFound => {
-                            try renderErrorMessage(stderr.writer(), stderr_config, .err, "MSVC include paths could not be automatically detected", .{});
-                        },
-                        error.CannotResolveCachePath => {
-                            try renderErrorMessage(stderr.writer(), stderr_config, .err, "could not resolve global cache path (for MinGW auto includes)", .{});
-                        },
-                        // All other errors are related to MinGW includes
-                        else => {
-                            try renderErrorMessage(stderr.writer(), stderr_config, .err, "failed to find / extract cached MinGW includes: {s}", .{@errorName(err)});
-                        },
-                    }
-                    try renderErrorMessage(stderr.writer(), stderr_config, .note, "to disable auto includes, use the option /:auto-includes none", .{});
-                    std.os.exit(1);
-                },
-            };
 
             var comp = aro.Compilation.init(aro_arena);
             defer comp.deinit();
@@ -220,6 +224,7 @@ pub fn main() !void {
         .dependencies_list = maybe_dependencies_list,
         .ignore_include_env_var = options.ignore_include_env_var,
         .extra_include_paths = options.extra_include_paths.items,
+        .system_include_paths = include_paths,
         .default_language_id = options.default_language_id,
         .default_code_page = options.default_code_page orelse .windows1252,
         .verbose = options.verbose,
