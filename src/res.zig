@@ -603,12 +603,34 @@ pub const AcceleratorModifiers = struct {
 
 const AcceleratorKeyCodepointTranslator = struct {
     string_type: literals.StringType,
+    output_code_page: CodePage,
 
     pub fn translate(self: @This(), maybe_parsed: ?literals.IterativeStringParser.ParsedCodepoint) ?u21 {
         const parsed = maybe_parsed orelse return null;
         if (parsed.codepoint == Codepoint.invalid) return 0xFFFD;
-        if (parsed.from_escaped_integer and self.string_type == .ascii) {
-            return windows1252.toCodepoint(@truncate(parsed.codepoint));
+        if (parsed.from_escaped_integer) {
+            switch (self.string_type) {
+                .ascii => {
+                    const truncated: u8 = @truncate(parsed.codepoint);
+                    switch (self.output_code_page) {
+                        .utf8 => switch (truncated) {
+                            0...0x7F => return truncated,
+                            else => return 0xFFFD,
+                        },
+                        .windows1252 => return windows1252.toCodepoint(truncated),
+                        else => unreachable, // unsupported code page
+                    }
+                },
+                .wide => {
+                    const truncated: u16 = @truncate(parsed.codepoint);
+                    return truncated;
+                },
+            }
+        }
+        if (parsed.escaped_surrogate_pair) {
+            // The codepoint of only the low surrogate
+            const low = @as(u16, @intCast(parsed.codepoint & 0x3FF)) + 0xDC00;
+            return low;
         }
         return parsed.codepoint;
     }
@@ -623,14 +645,17 @@ pub fn parseAcceleratorKeyString(bytes: SourceBytes, is_virt: bool, options: lit
     }
 
     var parser = literals.IterativeStringParser.init(bytes, options);
-    var translator = AcceleratorKeyCodepointTranslator{ .string_type = parser.declared_string_type };
+    var translator = AcceleratorKeyCodepointTranslator{
+        .string_type = parser.declared_string_type,
+        .output_code_page = options.output_code_page,
+    };
 
     const first_codepoint = translator.translate(try parser.next()) orelse return error.EmptyAccelerator;
     // 0 is treated as a terminator, so this is equivalent to an empty string
     if (first_codepoint == 0) return error.EmptyAccelerator;
 
     if (first_codepoint == '^') {
-        // Note: Emitting this warning unconditonally whenever ^ is the first character
+        // Note: Emitting this warning unconditionally whenever ^ is the first character
         //       matches the Win32 RC behavior, but it's questionable whether or not
         //       the warning should be emitted for ^^ since that results in the ASCII
         //       character ^ being written to the .res.
@@ -643,6 +668,12 @@ pub fn parseAcceleratorKeyString(bytes: SourceBytes, is_virt: bool, options: lit
         }
 
         const c = translator.translate(try parser.next()) orelse return error.InvalidControlCharacter;
+
+        const third_codepoint = translator.translate(try parser.next());
+        // 0 is treated as a terminator, so a 0 in the third position is fine but
+        // anything else is too many codepoints for an accelerator
+        if (third_codepoint != null and third_codepoint.? != 0) return error.InvalidControlCharacter;
+
         switch (c) {
             '^' => return '^', // special case
             'a'...'z', 'A'...'Z' => return std.ascii.toUpper(@intCast(c)) - 0x40,
@@ -872,6 +903,47 @@ test "accelerator keys" {
         .{ .slice = "\"\xF0\x90\x80\x80a\"", .code_page = .utf8 },
         false,
         .{},
+    ));
+
+    // Misc special cases
+    try std.testing.expectEqual(@as(u16, 0xFFFD), try parseAcceleratorKeyString(
+        .{ .slice = "\"\\777\"", .code_page = .utf8 },
+        false,
+        .{ .output_code_page = .utf8 },
+    ));
+    try std.testing.expectEqual(@as(u16, 0xFFFF), try parseAcceleratorKeyString(
+        .{ .slice = "L\"\\7777777\"", .code_page = .utf8 },
+        false,
+        .{ .output_code_page = .utf8 },
+    ));
+    try std.testing.expectEqual(@as(u16, 0x01), try parseAcceleratorKeyString(
+        .{ .slice = "L\"\\200001\"", .code_page = .utf8 },
+        false,
+        .{ .output_code_page = .utf8 },
+    ));
+    // Escape of a codepoint >= 0x10000 omits the high surrogate pair
+    try std.testing.expectEqual(@as(u16, 0xDF48), try parseAcceleratorKeyString(
+        .{ .slice = "L\"\\𐍈\"", .code_page = .utf8 },
+        false,
+        .{ .output_code_page = .utf8 },
+    ));
+    // Invalid escape code is skipped, allows for 2 codepoints afterwards
+    try std.testing.expectEqual(@as(u16, 0x7878), try parseAcceleratorKeyString(
+        .{ .slice = "L\"\\kxx\"", .code_page = .utf8 },
+        false,
+        .{ .output_code_page = .utf8 },
+    ));
+    // Escape of a codepoint >= 0x10000 allows for a codepoint afterwards
+    try std.testing.expectEqual(@as(u16, 0x4878), try parseAcceleratorKeyString(
+        .{ .slice = "L\"\\𐍈x\"", .code_page = .utf8 },
+        false,
+        .{ .output_code_page = .utf8 },
+    ));
+    // Input code page of 1252, output code page of utf-8
+    try std.testing.expectEqual(@as(u16, 0xFFFD), try parseAcceleratorKeyString(
+        .{ .slice = "\"\\270\"", .code_page = .windows1252 },
+        false,
+        .{ .output_code_page = .utf8 },
     ));
 }
 

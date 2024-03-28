@@ -23,11 +23,22 @@ test "fuzz" {
 
     var i: u64 = 0;
     while (iterations == 0 or i < iterations) : (i += 1) {
-        const num_sequences = rand.uintAtMostBiased(u16, 512);
+        const num_sequences = rand.uintAtMostBiased(u16, 3) + 1;
         const string_type: resinator.literals.StringType = if (i % 2 == 0) .wide else .ascii;
-        const literal = switch (string_type) {
-            .ascii => try utils.randomStringLiteralExact(.ascii, allocator, rand, num_sequences),
-            .wide => try utils.randomStringLiteralExact(.wide, allocator, rand, num_sequences),
+        const control = rand.boolean();
+        const literal = literal: {
+            const literal = switch (string_type) {
+                .ascii => try utils.randomStringLiteralExact(.ascii, allocator, rand, num_sequences),
+                .wide => try utils.randomStringLiteralExact(.wide, allocator, rand, num_sequences),
+            };
+            if (!control) break :literal literal;
+            defer allocator.free(literal);
+            const insert_i: usize = if (string_type == .ascii) 1 else 2;
+            const control_literal = try allocator.alloc(u8, literal.len + 1);
+            @memcpy(control_literal[0..insert_i], literal[0..insert_i]);
+            control_literal[insert_i] = '^';
+            @memcpy(control_literal[insert_i + 1 ..], literal[insert_i..]);
+            break :literal control_literal;
         };
         defer allocator.free(literal);
 
@@ -47,7 +58,7 @@ test "fuzz" {
                 .in_utf8_out_1252 => try source_writer.writeAll("#pragma code_page(65001)\n"),
                 else => {},
             }
-            try source_writer.print("1 DLGINCLUDE {s}", .{literal});
+            try source_writer.print("1 ACCELERATORS {{ {s}, 0x1 }}", .{literal});
 
             const source = source_buffer.items;
 
@@ -62,7 +73,7 @@ test "fuzz" {
                 },
             }) catch |err| {
                 cache_path_buffer.clearRetainingCapacity();
-                try cache_path_buffer.appendSlice("zig-cache/tmp/fuzzy_dlginclude_");
+                try cache_path_buffer.appendSlice("zig-cache/tmp/fuzzy_accelerators_");
                 try utils.appendNumberStr(&cache_path_buffer, i);
                 try cache_path_buffer.append('_');
                 try cache_path_buffer.appendSlice(@tagName(string_type));
@@ -78,59 +89,5 @@ test "fuzz" {
                 try std.fs.cwd().writeFile(cache_path_buffer.items, source);
             };
         }
-    }
-}
-
-test "octal escapes, ascii string literal" {
-    const allocator = std.testing.allocator;
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
-    defer allocator.free(tmp_path);
-
-    var source_buf = "1 DLGINCLUDE \"\\???\"".*;
-    var source: []u8 = &source_buf;
-    const byte_index = std.mem.indexOfScalar(u8, source, '?').?;
-    var value: u32 = 1;
-    while (true) : (value += 1) {
-        _ = std.fmt.bufPrint(source[byte_index..], "{o:0>3}", .{value}) catch unreachable;
-
-        utils.expectSameResOutput(allocator, source, .{
-            .cwd = tmp.dir,
-            .cwd_path = tmp_path,
-        }) catch {
-            std.debug.print("difference found for {} (0o{o})\n\n", .{ value, value });
-        };
-
-        if (value == 0o777) break;
-    }
-}
-
-test "octal escapes, wide string literal" {
-    const allocator = std.testing.allocator;
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
-    defer allocator.free(tmp_path);
-
-    var source_buf = "1 DLGINCLUDE L\"\\???\"".*;
-    var source: []u8 = &source_buf;
-    const byte_index = std.mem.indexOfScalar(u8, source, '?').?;
-    var value: u32 = 1;
-    while (true) : (value += 1) {
-        _ = std.fmt.bufPrint(source[byte_index..], "{o:0>3}", .{value}) catch unreachable;
-
-        utils.expectSameResOutput(allocator, source, .{
-            .cwd = tmp.dir,
-            .cwd_path = tmp_path,
-        }) catch {
-            std.debug.print("difference found for {} (0o{o})\n\n", .{ value, value });
-        };
-
-        if (value == 0o777) break;
     }
 }

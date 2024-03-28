@@ -401,19 +401,12 @@ pub const Compiler = struct {
         return first_error orelse error.FileNotFound;
     }
 
+    /// Returns a Windows-1252 encoded string regardless of the current output code page.
+    /// All codepoints are encoded as a maximum of 2 bytes, where unescaped codepoints
+    /// >= 0x10000 are encoded as `??` and everything else is encoded as 1 byte.
     pub fn parseDlgIncludeString(self: *Compiler, token: Token) ![]u8 {
-        // For the purposes of parsing, we want to strip the L prefix
-        // if it exists since we want escaped integers to be limited to
-        // their ascii string range.
-        //
-        // We keep track of whether or not there was an L prefix, though,
-        // since there's more weirdness to come.
-        var bytes = self.sourceBytesForToken(token);
-        var was_wide_string = false;
-        if (bytes.slice[0] == 'L' or bytes.slice[0] == 'l') {
-            was_wide_string = true;
-            bytes.slice = bytes.slice[1..];
-        }
+        const bytes = self.sourceBytesForToken(token);
+        const output_code_page = self.output_code_pages.getForToken(token);
 
         var buf = try std.ArrayList(u8).initCapacity(self.allocator, bytes.slice.len);
         errdefer buf.deinit();
@@ -423,34 +416,38 @@ pub const Compiler = struct {
             .diagnostics = .{ .diagnostics = self.diagnostics, .token = token },
         });
 
-        // No real idea what's going on here, but this matches the rc.exe behavior
+        // This is similar to the logic in parseQuotedString, but ends up with everything
+        // encoded as Windows-1252. This effectively consolidates the two-step process
+        // of rc.exe into one step, since rc.exe's preprocessor converts to UTF-16 (this
+        // is when invalid sequences are replaced by the replacement character (U+FFFD)),
+        // and then that's run through the parser. Our preprocessor keeps things in their
+        // original encoding, meaning we emulate the <encoding> -> UTF-16 -> Windows-1252
+        // results all at once.
         while (try iterative_parser.next()) |parsed| {
             const c = parsed.codepoint;
-            switch (was_wide_string) {
-                true => {
-                    switch (c) {
-                        0...0x7F, 0xA0...0xFF => try buf.append(@intCast(c)),
-                        0x80...0x9F => {
-                            if (windows1252.bestFitFromCodepoint(c)) |_| {
-                                try buf.append(@intCast(c));
-                            } else {
-                                try buf.append('?');
-                            }
-                        },
-                        else => {
-                            if (windows1252.bestFitFromCodepoint(c)) |best_fit| {
-                                try buf.append(best_fit);
-                            } else if (c < 0x10000 or c == code_pages.Codepoint.invalid) {
-                                try buf.append('?');
-                            } else {
-                                try buf.appendSlice("??");
-                            }
-                        },
+            switch (iterative_parser.declared_string_type) {
+                .wide => {
+                    if (windows1252.bestFitFromCodepoint(c)) |best_fit| {
+                        try buf.append(best_fit);
+                    } else if (c < 0x10000 or c == code_pages.Codepoint.invalid or parsed.escaped_surrogate_pair) {
+                        try buf.append('?');
+                    } else {
+                        try buf.appendSlice("??");
                     }
                 },
-                false => {
+                .ascii => {
                     if (parsed.from_escaped_integer) {
-                        try buf.append(@truncate(c));
+                        const truncated: u8 = @truncate(c);
+                        switch (output_code_page) {
+                            .utf8 => switch (truncated) {
+                                0...0x7F => try buf.append(truncated),
+                                else => try buf.append('?'),
+                            },
+                            .windows1252 => {
+                                try buf.append(truncated);
+                            },
+                            else => unreachable, // unsupported code page
+                        }
                     } else {
                         if (windows1252.bestFitFromCodepoint(c)) |best_fit| {
                             try buf.append(best_fit);
@@ -484,6 +481,10 @@ pub const Compiler = struct {
             const parsed_filename_terminated = std.mem.sliceTo(parsed_filename, 0);
 
             header.applyMemoryFlags(node.common_resource_attributes, self.source);
+            // This is effectively limited by `max_string_literal_codepoints` which is a u15.
+            // Each codepoint within a DLGINCLUDE string is encoded as a maximum of
+            // 2 bytes, which means that the maximum byte length of a DLGINCLUDE string is
+            // (including the NUL terminator): 32,767 * 2 + 1 = 65,535 or exactly the u16 max.
             header.data_size = @intCast(parsed_filename_terminated.len + 1);
             try header.write(writer, .{ .diagnostics = self.diagnostics, .token = node.id });
             try writer.writeAll(parsed_filename_terminated);
@@ -1298,6 +1299,7 @@ pub const Compiler = struct {
             return res.parseAcceleratorKeyString(bytes, is_virt, .{
                 .start_column = column,
                 .diagnostics = .{ .diagnostics = self.diagnostics, .token = literal.token },
+                .output_code_page = self.output_code_pages.getForToken(literal.token),
             });
         }
     }

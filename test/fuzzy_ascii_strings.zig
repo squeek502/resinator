@@ -78,7 +78,7 @@ test "fuzz" {
     var i: u64 = 0;
     while (iterations == 0 or i < iterations) : (i += 1) {
         source_buffer.shrinkRetainingCapacity(0);
-        const literal = try utils.randomAsciiStringLiteral(allocator, rand);
+        const literal = try utils.randomStringLiteral(.ascii, allocator, rand, 256);
         defer allocator.free(literal);
         var source_writer = source_buffer.writer();
         try source_writer.print("1 RCDATA {{ {s} }}", .{literal});

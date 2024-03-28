@@ -122,6 +122,8 @@ pub fn build(b: *std.Build) void {
     _ = addFuzzyTest(b, "stringtable", mode, target, resinator, all_fuzzy_tests_step, test_options);
     _ = addFuzzyTest(b, "fonts", mode, target, resinator, all_fuzzy_tests_step, test_options);
     _ = addFuzzyTest(b, "dlginclude", mode, target, resinator, all_fuzzy_tests_step, test_options);
+    _ = addFuzzyTest(b, "strings", mode, target, resinator, all_fuzzy_tests_step, test_options);
+    _ = addFuzzyTest(b, "accelerators", mode, target, resinator, all_fuzzy_tests_step, test_options);
 
     _ = addFuzzer(b, "fuzz_rc", &.{}, resinator, target);
 

@@ -98,12 +98,24 @@ pub const IterativeStringParser = struct {
 
     pub const ParsedCodepoint = struct {
         codepoint: u21,
-        /// Note: If this is true, `codepoint` will be a value with a max of maxInt(u16).
-        /// This is enforced by using saturating arithmetic, so in e.g. a wide string literal the
-        /// octal escape sequence \7777777 (2,097,151) will be parsed into the value 0xFFFF (65,535).
-        /// If the value needs to be truncated to a smaller integer (for ASCII string literals), then that
-        /// must be done by the caller.
+        /// Note: If this is true, `codepoint` will have an effective maximum value
+        /// of 0xFFFF, as `codepoint` is calculated using wrapping arithmetic on a u16.
+        /// If the value needs to be truncated to a smaller integer (e.g. for ASCII string
+        /// literals), then that must be done by the caller.
         from_escaped_integer: bool = false,
+        /// Denotes that the codepoint is:
+        /// - Escaped (has a \ in front of it), and
+        /// - Has a value >= U+10000, meaning it would be encoded as a surrogate
+        ///   pair in UTF-16, and
+        /// - Is part of a wide string literal
+        ///
+        /// Normally in wide string literals, invalid escapes are omitted
+        /// during parsing (the codepoints are not returned at all during
+        /// the `next` call), but this is a special case in which the
+        /// escape only applies to the high surrogate pair of the codepoint.
+        ///
+        /// TODO: Maybe just return the low surrogate codepoint by itself in this case.
+        escaped_surrogate_pair: bool = false,
     };
 
     pub fn next(self: *IterativeStringParser) std.mem.Allocator.Error!?ParsedCodepoint {
@@ -269,7 +281,63 @@ pub const IterativeStringParser = struct {
                                 backtrack = true;
                             },
                             else => switch (self.declared_string_type) {
-                                .wide => {}, // invalid escape sequences are skipped in wide strings
+                                .wide => {
+                                    // All invalid escape sequences are skipped in wide strings,
+                                    // but there is a special case around \<tab> where the \
+                                    // is skipped but the tab character is processed.
+                                    // It's actually a bit weirder than that, though, since
+                                    // the preprocessor is the one that does the <tab> -> spaces
+                                    // conversion, so it goes something like this:
+                                    //
+                                    // Before preprocessing: L"\<tab>"
+                                    // After preprocessing:  L"\     "
+                                    //
+                                    // So the parser only sees an escaped space character followed
+                                    // by some other number of spaces >= 0.
+                                    //
+                                    // However, our preprocessor keeps tab characters intact, so we emulate
+                                    // the above behavior by skipping the \ and then outputting one less
+                                    // space than normal for the <tab> character.
+                                    if (c == '\t') {
+                                        // Only warn about a tab getting converted to spaces once per string
+                                        if (self.diagnostics != null and !self.seen_tab) {
+                                            try self.diagnostics.?.diagnostics.append(ErrorDetails{
+                                                .err = .tab_converted_to_spaces,
+                                                .type = .warning,
+                                                .token = self.diagnostics.?.token,
+                                            });
+                                            try self.diagnostics.?.diagnostics.append(ErrorDetails{
+                                                .err = .tab_converted_to_spaces,
+                                                .type = .note,
+                                                .token = self.diagnostics.?.token,
+                                                .print_source_line = false,
+                                            });
+                                            self.seen_tab = true;
+                                        }
+
+                                        const cols = columnsUntilTabStop(self.column, 8);
+                                        // If the tab character would only be converted to a single space,
+                                        // then we can just skip both the \ and the <tab> and move on.
+                                        if (cols > 1) {
+                                            self.num_pending_spaces = @intCast(cols - 2);
+                                            self.index += codepoint.byte_len;
+                                            return .{ .codepoint = ' ' };
+                                        }
+                                    }
+                                    // There's a second special case when the codepoint would be encoded
+                                    // as a surrogate pair in UTF-16, as the escape 'applies' to the
+                                    // high surrogate pair only in this instance. This is a side-effect
+                                    // of the Win32 RC compiler preprocessor outputting UTF-16 and the
+                                    // compiler itself seemingly working on code units instead of code points
+                                    // in this particular instance.
+                                    //
+                                    // We emulate this behavior by emitting the codepoint, but with a marker
+                                    // that indicates that it needs to be handled specially.
+                                    if (c >= 0x10000 and c != code_pages.Codepoint.invalid) {
+                                        self.index += codepoint.byte_len;
+                                        return .{ .codepoint = c, .escaped_surrogate_pair = true };
+                                    }
+                                },
                                 .ascii => {
                                     // we intentionally avoid incrementing self.index
                                     // to handle the current char in the next call,
@@ -303,6 +371,9 @@ pub const IterativeStringParser = struct {
                 },
                 .escaped_octal => switch (c) {
                     '0'...'7' => {
+                        // Note: We use wrapping arithmetic on a u16 here since there's been no observed
+                        // string parsing scenario where an escaped integer with a value >= the u16
+                        // max is interpreted as anything but the truncated u16 value.
                         string_escape_n *%= 8;
                         string_escape_n +%= std.fmt.charToDigit(@intCast(c), 8) catch unreachable;
                         string_escape_i += 1;
@@ -389,46 +460,51 @@ pub fn parseQuotedString(
 
     while (try iterative_parser.next()) |parsed| {
         const c = parsed.codepoint;
-        if (parsed.from_escaped_integer) {
-            // We truncate here to get the correct behavior for ascii strings
-            try buf.append(std.mem.nativeToLittle(T, @truncate(c)));
-        } else {
-            switch (literal_type) {
-                .ascii => switch (options.output_code_page) {
-                    .windows1252 => {
-                        if (windows1252.bestFitFromCodepoint(c)) |best_fit| {
-                            try buf.append(best_fit);
-                        } else if (c < 0x10000 or c == code_pages.Codepoint.invalid) {
-                            try buf.append('?');
-                        } else {
-                            try buf.appendSlice("??");
-                        }
-                    },
-                    .utf8 => {
-                        var codepoint_to_encode = c;
-                        if (c == code_pages.Codepoint.invalid) {
-                            codepoint_to_encode = '�';
-                        }
-                        var utf8_buf: [4]u8 = undefined;
-                        const utf8_len = std.unicode.utf8Encode(codepoint_to_encode, &utf8_buf) catch unreachable;
-                        try buf.appendSlice(utf8_buf[0..utf8_len]);
-                    },
-                    else => unreachable, // Unsupported code page
-                },
-                .wide => {
-                    if (c == code_pages.Codepoint.invalid) {
-                        try buf.append(std.mem.nativeToLittle(u16, '�'));
-                    } else if (c < 0x10000) {
-                        const short: u16 = @intCast(c);
-                        try buf.append(std.mem.nativeToLittle(u16, short));
+        switch (literal_type) {
+            .ascii => switch (options.output_code_page) {
+                .windows1252 => {
+                    if (parsed.from_escaped_integer) {
+                        try buf.append(@truncate(c));
+                    } else if (windows1252.bestFitFromCodepoint(c)) |best_fit| {
+                        try buf.append(best_fit);
+                    } else if (c < 0x10000 or c == code_pages.Codepoint.invalid) {
+                        try buf.append('?');
                     } else {
-                        const high = @as(u16, @intCast((c - 0x10000) >> 10)) + 0xD800;
-                        try buf.append(std.mem.nativeToLittle(u16, high));
-                        const low = @as(u16, @intCast(c & 0x3FF)) + 0xDC00;
-                        try buf.append(std.mem.nativeToLittle(u16, low));
+                        try buf.appendSlice("??");
                     }
                 },
-            }
+                .utf8 => {
+                    var codepoint_to_encode = c;
+                    if (parsed.from_escaped_integer) {
+                        codepoint_to_encode = @as(T, @truncate(c));
+                    }
+                    const escaped_integer_outside_ascii_range = parsed.from_escaped_integer and codepoint_to_encode > 0x7F;
+                    if (escaped_integer_outside_ascii_range or c == code_pages.Codepoint.invalid) {
+                        codepoint_to_encode = '�';
+                    }
+                    var utf8_buf: [4]u8 = undefined;
+                    const utf8_len = std.unicode.utf8Encode(codepoint_to_encode, &utf8_buf) catch unreachable;
+                    try buf.appendSlice(utf8_buf[0..utf8_len]);
+                },
+                else => unreachable, // Unsupported code page
+            },
+            .wide => {
+                if (parsed.from_escaped_integer) {
+                    try buf.append(std.mem.nativeToLittle(u16, @truncate(c)));
+                } else if (c == code_pages.Codepoint.invalid) {
+                    try buf.append(std.mem.nativeToLittle(u16, '�'));
+                } else if (c < 0x10000) {
+                    const short: u16 = @intCast(c);
+                    try buf.append(std.mem.nativeToLittle(u16, short));
+                } else {
+                    if (!parsed.escaped_surrogate_pair) {
+                        const high = @as(u16, @intCast((c - 0x10000) >> 10)) + 0xD800;
+                        try buf.append(std.mem.nativeToLittle(u16, high));
+                    }
+                    const low = @as(u16, @intCast(c & 0x3FF)) + 0xDC00;
+                    try buf.append(std.mem.nativeToLittle(u16, low));
+                }
+            },
         }
     }
 
@@ -648,6 +724,18 @@ test "parse quoted ascii string with utf8 code page" {
     try std.testing.expectEqualSlices(u8, "\u{10348}", try parseQuotedAsciiString(
         arena,
         .{ .slice = "\"\\\r\n\u{10348}\"", .code_page = .utf8 },
+        .{ .output_code_page = .utf8 },
+    ));
+}
+
+test "parse quoted string with different input/output code pages" {
+    var arena_allocator = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_allocator.deinit();
+    const arena = arena_allocator.allocator();
+
+    try std.testing.expectEqualSlices(u8, "€���\x60\x7F", try parseQuotedAsciiString(
+        arena,
+        .{ .slice = "\"\x80\\x8a\\600\\612\\540\\577\"", .code_page = .windows1252 },
         .{ .output_code_page = .utf8 },
     ));
 }

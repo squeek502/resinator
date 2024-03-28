@@ -115,6 +115,7 @@ fn inputContainsKnownPreprocessorDifference(data: []const u8) bool {
 pub const GetResultOptions = struct {
     cwd: std.fs.Dir,
     cwd_path: []const u8,
+    default_code_page: enum { windows1252, utf8 } = .windows1252,
     /// Only used in the Win32 version
     output_path: ?[]const u8 = null,
 };
@@ -153,6 +154,10 @@ pub fn getResinatorResultFromFile(allocator: Allocator, input_filepath: []const 
         .cwd = options.cwd,
         .diagnostics = &result.diagnostics,
         .source_mappings = &mapping_results.mappings,
+        .default_code_page = switch (options.default_code_page) {
+            .windows1252 => .windows1252,
+            .utf8 => .utf8,
+        },
         // TODO: Make this configurable
         .ignore_include_env_var = true,
     };
@@ -196,6 +201,10 @@ pub fn getWin32ResultFromFile(allocator: Allocator, input_path: []const u8, opti
         .argv = &[_][]const u8{
             // Note: This relies on `rc.exe` being in the PATH
             "rc.exe",
+            switch (options.default_code_page) {
+                .windows1252 => "/c1252",
+                .utf8 => "/c65001",
+            },
             // TODO: Make this configurable
             "/x", // ignore INCLUDE env var
             "/fo",
@@ -319,53 +328,118 @@ pub fn randomOperator(rand: std.rand.Random) u8 {
     return dict[index];
 }
 
-pub fn randomAsciiStringLiteral(allocator: Allocator, rand: std.rand.Random) ![]const u8 {
-    // max string literal length is 4097 so this will generate some invalid string literals
-    // need at least two for the ""
-    const slice_len = rand.uintAtMostBiased(u16, 256) + 2;
-    var buf = try allocator.alloc(u8, slice_len);
-    errdefer allocator.free(buf);
-
-    buf[0] = '"';
-    var i: usize = 1;
-    while (i < slice_len - 1) : (i += 1) {
-        var byte = rand.int(u8);
-        switch (byte) {
-            // these are currently invalid within string literals, so swap them out
-            0x00, 0x1A, 0x7F => byte += 1,
-            // \r is a mess, so just change it to a space
-            // (clang's preprocessor converts \r to \n, rc skips them entirely)
-            '\r' => byte = ' ',
-            // \n within string literals are similarly fraught but they mostly expose
-            // bugs within the Windows RC compiler (where "\n\x01" causes a compile error,
-            // but "<anything besides newlines>\x01" doesn't).
-            // For sanity's sake, just don't put newlines in for now.
-            '\n' => byte = ' ',
-            '\\' => {
-                // backslash at the very end of the string leads to \" which is
-                // currently disallowed, so avoid that.
-                if (i + 1 == slice_len - 1) {
-                    byte += 1;
+pub fn appendRandomStringLiteralSequence(rand: std.rand.Random, buf: *std.ArrayList(u8), is_last: bool, comptime string_type: resinator.literals.StringType) !void {
+    const SequenceType = enum { byte, non_ascii_codepoint, octal, hex };
+    const sequence_type = rand.enumValue(SequenceType);
+    switch (sequence_type) {
+        .byte => {
+            while (true) {
+                const byte = rand.int(u8);
+                switch (byte) {
+                    // these are currently invalid within string literals
+                    0x00, 0x1A, 0x7F => continue,
+                    // \r is a mess, so just change it to a space
+                    // (clang's preprocessor converts \r to \n, rc skips them entirely)
+                    '\r' => continue,
+                    // \n within string literals are similarly fraught but they mostly expose
+                    // bugs within the Windows RC compiler (where "\n\x01" causes a compile error,
+                    // but "<anything besides newlines>\x01" doesn't).
+                    // For sanity's sake, just don't put newlines in for now.
+                    '\n' => continue,
+                    // backslash at the very end of the string leads to \" which is
+                    // currently disallowed, so avoid that.
+                    '\\' => if (is_last) continue,
+                    // Need to escape double quotes as "", but don't want to create a \"" sequence.
+                    '"' => if (buf.items.len > 0 and buf.items[buf.items.len - 1] == '\\') continue,
+                    else => {},
                 }
-            },
-            '"' => {
-                // Double quotes need to be escaped to keep this a single string literal
-                // so try to add one before this char if it'll create an escaped quote ("")
-                // but not a \"" sequence.
-                // Otherwise, just swap it out by incrementing it.
-                if (i >= 2 and buf[i - 1] != '"' and buf[i - 2] != '\\') {
-                    buf[i - 1] = '"';
-                } else {
-                    byte += 1;
+                try buf.append(byte);
+                // Escape double quotes by appending a second double quote
+                if (byte == '"') try buf.append(byte);
+                break;
+            }
+        },
+        .non_ascii_codepoint => {
+            while (true) {
+                const codepoint = rand.intRangeAtMost(u21, 0x80, 0x10FFFF);
+                if (!std.unicode.utf8ValidCodepoint(codepoint)) continue;
+                switch (codepoint) {
+                    // disallowed private use character
+                    '\u{E000}' => continue,
+                    // disallowed BOM
+                    '\u{FEFF}' => continue,
+                    else => {},
                 }
-            },
-            else => {},
-        }
-        buf[i] = byte;
+                const codepoint_sequence_length = std.unicode.utf8CodepointSequenceLength(codepoint) catch unreachable;
+                const start_index = buf.items.len;
+                try buf.resize(buf.items.len + codepoint_sequence_length);
+                _ = std.unicode.utf8Encode(codepoint, buf.items[start_index..]) catch unreachable;
+                break;
+            }
+        },
+        .octal => {
+            const max_val = switch (string_type) {
+                .ascii => 0o777,
+                .wide => 0o7777777,
+            };
+            const max_digits = switch (string_type) {
+                .ascii => 3,
+                .wide => 7,
+            };
+            const val = rand.uintAtMost(u21, max_val);
+            const width = rand.intRangeAtMost(u21, 1, max_digits);
+            try buf.ensureUnusedCapacity(max_digits + 1);
+            const unused_slice = buf.unusedCapacitySlice();
+            const written = std.fmt.bufPrint(unused_slice, "\\{o:0>[1]}", .{ val, width }) catch unreachable;
+            buf.items.len += written.len;
+        },
+        .hex => {
+            const max_val = switch (string_type) {
+                .ascii => 0xFF,
+                .wide => 0xFFFF,
+            };
+            const max_digits = switch (string_type) {
+                .ascii => 2,
+                .wide => 4,
+            };
+            const val = rand.uintAtMost(u16, max_val);
+            const width = rand.intRangeAtMost(u16, 1, max_digits);
+            try buf.ensureUnusedCapacity(max_digits + 2);
+            const unused_slice = buf.unusedCapacitySlice();
+            const written = std.fmt.bufPrint(unused_slice, "\\x{x:0>[1]}", .{ val, width }) catch unreachable;
+            buf.items.len += written.len;
+        },
     }
-    buf[slice_len - 1] = '"';
+}
 
-    return buf;
+pub fn randomStringLiteral(
+    comptime string_type: resinator.literals.StringType,
+    allocator: Allocator,
+    rand: std.rand.Random,
+    max_num_sequences: u16,
+) ![]const u8 {
+    const num_sequences = rand.uintAtMostBiased(u16, max_num_sequences);
+    return randomStringLiteralExact(string_type, allocator, rand, num_sequences);
+}
+
+pub fn randomStringLiteralExact(
+    comptime string_type: resinator.literals.StringType,
+    allocator: Allocator,
+    rand: std.rand.Random,
+    num_sequences: u16,
+) ![]const u8 {
+    var buf = try std.ArrayList(u8).initCapacity(allocator, 2 + num_sequences * 4);
+    errdefer buf.deinit();
+
+    if (string_type == .wide) try buf.append('L');
+    try buf.append('"');
+    var i: usize = 0;
+    while (i < num_sequences) : (i += 1) {
+        try appendRandomStringLiteralSequence(rand, &buf, i == num_sequences - 1, string_type);
+    }
+    try buf.append('"');
+
+    return try buf.toOwnedSlice();
 }
 
 /// Alphanumeric ASCII + any bytes >= 128
@@ -392,6 +466,15 @@ pub fn randomAlphanumExtendedBytes(allocator: Allocator, rand: std.rand.Random) 
     }
 
     return buf;
+}
+
+pub fn appendNumberStr(buf: *std.ArrayList(u8), num: anytype) !void {
+    const num_digits = if (num == 0) 1 else std.math.log10_int(num) + 1;
+    try buf.ensureUnusedCapacity(num_digits);
+    const unused_slice = buf.unusedCapacitySlice();
+    const written = std.fmt.bufPrint(unused_slice, "{}", .{num}) catch unreachable;
+    std.debug.assert(written.len == num_digits);
+    buf.items.len += num_digits;
 }
 
 /// Iterates all K-permutations of the given size `n` where k varies from (0..n),
