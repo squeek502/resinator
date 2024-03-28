@@ -62,14 +62,14 @@ pub fn getCachePath(allocator: Allocator, appname: []const u8) error{OutOfMemory
             return try std.fs.path.join(allocator, &.{ local_app_data, "Temp", "resinator" });
         },
         .macos => {
-            const home = std.os.getenv("HOME") orelse return null;
+            const home = std.posix.getenv("HOME") orelse return null;
             return try std.fs.path.join(allocator, &.{ home, "Library/Caches", appname });
         },
         else => {
-            if (std.os.getenv("XDG_CACHE_HOME")) |cache| {
+            if (std.posix.getenv("XDG_CACHE_HOME")) |cache| {
                 return try std.fs.path.join(allocator, &.{ cache, appname });
             }
-            const home = std.os.getenv("HOME") orelse return null;
+            const home = std.posix.getenv("HOME") orelse return null;
             return try std.fs.path.join(allocator, &.{ home, ".cache", appname });
         },
     }
@@ -378,7 +378,7 @@ pub const LatestMsvcToolsDir = struct {
         return findInstancesDirViaCLSID() catch |orig_err| {
             // If that can't be found, fall back to manually appending
             // `Microsoft\VisualStudio\Packages\_Instances` to %PROGRAMDATA%
-            const program_data = std.os.getenvW(L("PROGRAMDATA")) orelse return orig_err;
+            const program_data = std.process.getenvW(L("PROGRAMDATA")) orelse return orig_err;
             // Must be an absolute path
             if (!std.fs.path.isAbsoluteWindowsWTF16(program_data)) return orig_err;
 
