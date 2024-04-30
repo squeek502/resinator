@@ -3,12 +3,12 @@
     .version = "0.1.0",
     .dependencies = .{
         .aro = .{
-            .url = "https://github.com/Vexu/arocc/archive/e379e04180c37b204847faea8b471b6a37d552d8.tar.gz",
-            .hash = "12208b621cfc949f0807e220d873a9c29e15831b0bc5e12651e2401531021fd9727a",
+            .url = "https://github.com/Vexu/arocc/archive/f230f45c21becebf064faaf9a466a5a5cb79d073.tar.gz",
+            .hash = "12203d5def3f1127f50f0da353451b87c7f61313bf6d5a9b8aa4aa04c75b69e98dde",
         },
         .compressed_mingw_includes = .{
-            .url = "https://github.com/squeek502/compressed_mingw_includes/releases/download/1.0.0/compressed_mingw_includes.tar.gz",
-            .hash = "122024725c7d4a036e21dfc058790f8922b5bed7a4f4170f563410bad805f20aa761",
+            .url = "https://github.com/squeek502/compressed_mingw_includes/releases/download/1.0.1/compressed_mingw_includes.tar",
+            .hash = "1220e8f97c4078545148dc2bab756527d7eb1f8f018db11572665c53be725703feec",
         },
     },
     .paths = .{

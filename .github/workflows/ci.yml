@@ -20,7 +20,7 @@ jobs:
           submodules: true
       - uses: jethrodaniel/setup-zig@fix-caching
         with:
-          version: 0.12.0-dev.3480+9dac8db2d
+          version: 0.13.0-dev.46+3648d7df1
       - uses: ilammy/msvc-dev-cmd@v1
         if: ${{ matrix.os == 'windows-latest' }}
         with:
