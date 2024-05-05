@@ -374,7 +374,12 @@ pub const Parser = struct {
         // of projects. So, we have special compatibility for this particular case.
         const maybe_eof = try self.lookaheadToken(.whitespace_delimiter_only);
         if (maybe_eof.id == .eof) {
-            // TODO: emit warning
+            try self.addErrorDetails(.{
+                .err = .dangling_literal_at_eof,
+                .type = .warning,
+                .token = first_token,
+            });
+
             var context = try self.state.arena.alloc(Token, 2);
             context[0] = first_token;
             context[1] = maybe_eof;

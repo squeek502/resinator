@@ -321,6 +321,7 @@ pub const ErrorDetails = struct {
         close_paren_expression,
         unary_plus_expression,
         rc_could_miscompile_control_params,
+        dangling_literal_at_eof,
 
         // Compiler
         /// `string_and_language` is populated
@@ -569,6 +570,9 @@ pub const ErrorDetails = struct {
                 .err, .warning => return writer.print("this token could be erroneously skipped over by the Win32 RC compiler", .{}),
                 .note => return writer.print("to avoid the potential miscompilation, consider adding a comma after the style parameter", .{}),
                 .hint => return,
+            },
+            .dangling_literal_at_eof => {
+                try writer.writeAll("dangling literal at end-of-file; this is not a problem, but it is likely a mistake");
             },
             .string_already_defined => switch (self.type) {
                 .err, .warning => {
