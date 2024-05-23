@@ -6,9 +6,12 @@ test "including windows.h" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.writeFile("test.rc",
+    try tmp.dir.writeFile(.{
+        .sub_path = "test.rc",
+        .data =
         \\#include "windows.h"
-    );
+        ,
+    });
 
     try testExpectNoError(tmp.dir, &.{ exe_path, "test.rc" });
     try testExpectNoError(tmp.dir, &.{ exe_path, "/:auto-includes", "gnu", "test.rc" });
@@ -20,7 +23,7 @@ fn testExpectNoError(dir: std.fs.Dir, argv: []const []const u8) !void {
     const dir_path = try dir.realpathAlloc(allocator, ".");
     defer allocator.free(dir_path);
 
-    const result = try std.ChildProcess.run(.{
+    const result = try std.process.Child.run(.{
         .allocator = allocator,
         .argv = argv,
         .max_output_bytes = std.math.maxInt(u32),

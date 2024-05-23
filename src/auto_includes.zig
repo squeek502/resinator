@@ -45,7 +45,7 @@ pub fn extractMingwIncludes(allocator: Allocator, maybe_progress: ?*std.Progress
 
     try std.tar.pipeToFileSystem(resinator_cache_dir, tar_stream.reader(), .{ .mode_mode = .ignore });
     const include_ver_contents = std.fmt.comptimePrint("{}", .{include_ver});
-    try resinator_cache_dir.writeFile("include_ver", include_ver_contents);
+    try resinator_cache_dir.writeFile(.{ .sub_path = "include_ver", .data = include_ver_contents });
 
     return std.fs.path.join(allocator, &.{ resinator_cache_path, "include" });
 }
@@ -133,7 +133,7 @@ pub const LatestSdkIncludeDir = struct {
         // This is a roundabout way of doing this since we build the path, open the dir,
         // then get the path from the dir, but oh well.
 
-        var fd_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var fd_path_buf: [std.fs.max_path_bytes]u8 = undefined;
         const dir_path = std.os.getFdPath(dir.fd, &fd_path_buf) catch return error.PathNotFound;
         return allocator.dupe(u8, dir_path);
     }
@@ -165,7 +165,7 @@ pub const LatestSdkIncludeDir = struct {
 
         if (latest_version == 0) return error.PathNotFound;
 
-        var fd_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var fd_path_buf: [std.fs.max_path_bytes]u8 = undefined;
         const dir_path = std.os.getFdPath(dir.fd, &fd_path_buf) catch return error.PathNotFound;
         return std.fs.path.join(allocator, &.{ dir_path, latest_version_dir.items });
     }

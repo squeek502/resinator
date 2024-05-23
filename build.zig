@@ -19,7 +19,7 @@ pub fn build(b: *std.Build) void {
     const compressed_mingw_includes = b.dependency("compressed_mingw_includes", .{});
     const compressed_mingw_includes_module = compressed_mingw_includes.module("compressed_mingw_includes");
     const resinator = b.addModule("resinator", .{
-        .root_source_file = .{ .path = "src/resinator.zig" },
+        .root_source_file = b.path("src/resinator.zig"),
         .imports = &.{
             .{ .name = "aro", .module = aro_module },
         },
@@ -27,7 +27,7 @@ pub fn build(b: *std.Build) void {
 
     const exe = b.addExecutable(.{
         .name = "resinator",
-        .root_source_file = .{ .path = "src/main.zig" },
+        .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = mode,
     });
@@ -37,7 +37,7 @@ pub fn build(b: *std.Build) void {
 
     const test_filter = b.option([]const u8, "test-filter", "Skip tests that do not match filter");
     const exe_tests = b.addTest(.{
-        .root_source_file = .{ .path = "src/resinator.zig" },
+        .root_source_file = b.path("src/resinator.zig"),
         .target = target,
         .optimize = mode,
         .filter = test_filter,
@@ -46,7 +46,7 @@ pub fn build(b: *std.Build) void {
 
     const reference_tests = b.addTest(.{
         .name = "reference",
-        .root_source_file = .{ .path = "test/reference.zig" },
+        .root_source_file = b.path("test/reference.zig"),
         .target = target,
         .optimize = mode,
         .filter = test_filter,
@@ -56,7 +56,7 @@ pub fn build(b: *std.Build) void {
 
     const parser_tests = b.addTest(.{
         .name = "parse",
-        .root_source_file = .{ .path = "test/parse.zig" },
+        .root_source_file = b.path("test/parse.zig"),
         .target = target,
         .optimize = mode,
         .filter = test_filter,
@@ -66,7 +66,7 @@ pub fn build(b: *std.Build) void {
 
     const compiler_tests = b.addTest(.{
         .name = "compile",
-        .root_source_file = .{ .path = "test/compile.zig" },
+        .root_source_file = b.path("test/compile.zig"),
         .target = target,
         .optimize = mode,
         .filter = test_filter,
@@ -78,7 +78,7 @@ pub fn build(b: *std.Build) void {
     cli_test_options.addOptionPath("cli_exe_path", exe.getEmittedBin());
     const cli_tests = b.addTest(.{
         .name = "cli",
-        .root_source_file = .{ .path = "test/cli.zig" },
+        .root_source_file = b.path("test/cli.zig"),
     });
     cli_tests.root_module.addOptions("build_options", cli_test_options);
     const run_cli_tests = b.addRunArtifact(cli_tests);
@@ -129,7 +129,7 @@ pub fn build(b: *std.Build) void {
 
     const fuzz_winafl_exe = b.addExecutable(.{
         .name = "fuzz_winafl",
-        .root_source_file = .{ .path = "test/fuzz_winafl.zig" },
+        .root_source_file = b.path("test/fuzz_winafl.zig"),
         .target = target,
         .optimize = mode,
     });
@@ -154,7 +154,7 @@ pub fn build(b: *std.Build) void {
             const resolved_release_target = b.resolveTargetQuery(release_target);
             const release_exe = b.addExecutable(.{
                 .name = "resinator",
-                .root_source_file = .{ .path = "src/main.zig" },
+                .root_source_file = b.path("src/main.zig"),
                 .target = resolved_release_target,
                 .optimize = .ReleaseFast,
                 .single_threaded = true,
@@ -186,7 +186,7 @@ fn addFuzzyTest(
     fuzzy_options: *std.Build.Step.Options,
 ) *std.Build.Step.Compile {
     var test_step = b.addTest(.{
-        .root_source_file = .{ .path = "test/fuzzy_" ++ name ++ ".zig" },
+        .root_source_file = b.path("test/fuzzy_" ++ name ++ ".zig"),
         .target = target,
         .optimize = mode,
     });
@@ -213,7 +213,7 @@ fn addFuzzer(
     // The library
     const fuzz_lib = b.addStaticLibrary(.{
         .name = name ++ "-lib",
-        .root_source_file = .{ .path = "test/" ++ name ++ ".zig" },
+        .root_source_file = b.path("test/" ++ name ++ ".zig"),
         .target = target,
         .optimize = .Debug,
     });
@@ -224,17 +224,17 @@ fn addFuzzer(
 
     // Setup the output name
     const fuzz_executable_name = name;
-    const fuzz_exe_path = std.fs.path.join(b.allocator, &.{ b.cache_root.path.?, fuzz_executable_name }) catch unreachable;
 
     // We want `afl-clang-lto -o path/to/output path/to/library`
-    const fuzz_compile = b.addSystemCommand(&.{ "afl-clang-lto", "-o", fuzz_exe_path });
+    const fuzz_compile = b.addSystemCommand(&.{ "afl-clang-lto", "-o" });
+    const fuzz_exe_path = fuzz_compile.addOutputFileArg(name);
     // Add the path to the library file to afl-clang-lto's args
     fuzz_compile.addArtifactArg(fuzz_lib);
     // Custom args
     fuzz_compile.addArgs(afl_clang_args);
 
     // Install the cached output to the install 'bin' path
-    const fuzz_install = b.addInstallBinFile(.{ .path = fuzz_exe_path }, fuzz_executable_name);
+    const fuzz_install = b.addInstallBinFile(fuzz_exe_path, fuzz_executable_name);
     fuzz_install.step.dependOn(&fuzz_compile.step);
 
     // Add a top-level step that compiles and installs the fuzz executable
@@ -245,7 +245,7 @@ fn addFuzzer(
     // Compile a companion exe for debugging crashes
     const fuzz_debug_exe = b.addExecutable(.{
         .name = name ++ "-debug",
-        .root_source_file = .{ .path = "test/" ++ name ++ ".zig" },
+        .root_source_file = b.path("test/" ++ name ++ ".zig"),
         .target = target,
         .optimize = .Debug,
     });

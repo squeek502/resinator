@@ -14,7 +14,7 @@ test "BITMAP fuzz" {
     defer tmp.cleanup();
 
     const allocator = std.testing.allocator;
-    var random = std.rand.DefaultPrng.init(0);
+    var random = std.Random.DefaultPrng.init(0);
     var rand = random.random();
 
     var image_buffer = std.ArrayList(u8).init(allocator);
@@ -75,10 +75,10 @@ test "BITMAP fuzz" {
 
         image_buffer.items.len += random_bytes_len;
 
-        try tmp.dir.writeFile("test.bin", image_buffer.items);
+        try tmp.dir.writeFile(.{ .sub_path = "test.bin", .data = image_buffer.items });
 
         // also write it to the top-level tmp dir for debugging
-        try std.fs.cwd().writeFile("zig-cache/tmp/fuzzy_bitmaps.bin", image_buffer.items);
+        try std.fs.cwd().writeFile(.{ .sub_path = "zig-cache/tmp/fuzzy_bitmaps.bin", .data = image_buffer.items });
 
         var diagnostics = resinator.errors.Diagnostics.init(allocator);
         defer diagnostics.deinit();

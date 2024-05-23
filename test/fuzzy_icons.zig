@@ -5,7 +5,7 @@ const iterations = fuzzy_options.max_iterations;
 
 test "ICON fuzz" {
     const allocator = std.testing.allocator;
-    var random = std.rand.DefaultPrng.init(0);
+    var random = std.Random.DefaultPrng.init(0);
     var rand = random.random();
 
     var tmp = std.testing.tmpDir(.{});
@@ -76,10 +76,10 @@ test "ICON fuzz" {
 
         icon_buffer.items.len += random_bytes_len;
 
-        try tmp.dir.writeFile("test.ico", icon_buffer.items);
+        try tmp.dir.writeFile(.{ .sub_path = "test.ico", .data = icon_buffer.items });
 
         // also write it to the top-level tmp dir for debugging
-        try std.fs.cwd().writeFile("zig-cache/tmp/fuzzy_icons.ico", icon_buffer.items);
+        try std.fs.cwd().writeFile(.{ .sub_path = "zig-cache/tmp/fuzzy_icons.ico", .data = icon_buffer.items });
 
         try utils.expectSameResOutput(allocator, source, .{
             .cwd = tmp.dir,

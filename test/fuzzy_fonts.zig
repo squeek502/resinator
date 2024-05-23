@@ -5,7 +5,7 @@ const resinator = @import("resinator");
 
 test "FONT fuzz" {
     const allocator = std.testing.allocator;
-    var random = std.rand.DefaultPrng.init(0);
+    var random = std.Random.DefaultPrng.init(0);
     var rand = random.random();
 
     var tmp = std.testing.tmpDir(.{});
@@ -34,10 +34,10 @@ test "FONT fuzz" {
         rand.bytes(slice_to_fill);
         font_buffer.items.len += random_bytes_len;
 
-        try tmp.dir.writeFile("test.fnt", font_buffer.items);
+        try tmp.dir.writeFile(.{ .sub_path = "test.fnt", .data = font_buffer.items });
 
         // also write it to the top-level tmp dir for debugging
-        try std.fs.cwd().writeFile("zig-cache/tmp/fuzzy_fonts.fnt", font_buffer.items);
+        try std.fs.cwd().writeFile(.{ .sub_path = "zig-cache/tmp/fuzzy_fonts.fnt", .data = font_buffer.items });
 
         var diagnostics = resinator.errors.Diagnostics.init(allocator);
         defer diagnostics.deinit();

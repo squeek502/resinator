@@ -6,7 +6,7 @@ const iterations = fuzzy_options.max_iterations;
 
 test "fuzz" {
     const allocator = std.testing.allocator;
-    var random = std.rand.DefaultPrng.init(0);
+    var random = std.Random.DefaultPrng.init(0);
     const rand = random.random();
 
     var tmp = std.testing.tmpDir(.{});

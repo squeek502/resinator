@@ -31,7 +31,7 @@ pub fn zigMain() !void {
 
     // TODO: Better seed, maybe taking the first few bytes and interpretting as u64
     const prng_seed = data.len;
-    var prng = std.rand.DefaultPrng.init(prng_seed);
+    var prng = std.Random.DefaultPrng.init(prng_seed);
     const rand = prng.random();
 
     const stderr_config = std.io.tty.detectConfig(std.io.getStdErr());

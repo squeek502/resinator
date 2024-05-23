@@ -60,7 +60,7 @@ test "windows-1252 mappings" {
 
 test "fuzz" {
     const allocator = std.testing.allocator;
-    var random = std.rand.DefaultPrng.init(0);
+    var random = std.Random.DefaultPrng.init(0);
     const rand = random.random();
 
     var tmp = std.testing.tmpDir(.{});
@@ -112,7 +112,7 @@ test "fuzz" {
         const source = source_buffer.items;
 
         // write out the source file to disk for debugging
-        try std.fs.cwd().writeFile("zig-cache/tmp/fuzzy_code_pages.rc", source);
+        try std.fs.cwd().writeFile(.{ .sub_path = "zig-cache/tmp/fuzzy_code_pages.rc", .data = source });
 
         try utils.expectSameResOutput(allocator, source, .{
             .cwd = tmp.dir,

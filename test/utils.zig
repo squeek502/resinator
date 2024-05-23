@@ -4,7 +4,7 @@ const Allocator = std.mem.Allocator;
 
 pub fn expectSameResOutput(allocator: Allocator, source: []const u8, options: GetResultOptions) !void {
     const input_filepath = "test.rc";
-    try options.cwd.writeFile(input_filepath, source);
+    try options.cwd.writeFile(.{ .sub_path = input_filepath, .data = source });
 
     var resinator_result = try getResinatorResultFromFile(allocator, input_filepath, options);
     defer resinator_result.deinit(allocator);
@@ -122,7 +122,7 @@ pub const GetResultOptions = struct {
 
 pub fn getResinatorResult(allocator: Allocator, source: []const u8, options: GetResultOptions) !ResinatorResult {
     // TODO: Bypass the intermediate file
-    try options.cwd.writeFile("test.rc", source);
+    try options.cwd.writeFile(.{ .sub_path = "test.rc", .data = source });
     return getResinatorResultFromFile(allocator, "test.rc", options);
 }
 
@@ -178,7 +178,7 @@ pub fn getResinatorResultFromFile(allocator: Allocator, input_filepath: []const 
 
 pub const Win32Result = struct {
     res: ?[]const u8 = null,
-    exec: std.ChildProcess.RunResult,
+    exec: std.process.Child.RunResult,
 
     pub fn deinit(self: *Win32Result, allocator: Allocator) void {
         if (self.res) |res| {
@@ -190,13 +190,13 @@ pub const Win32Result = struct {
 };
 
 pub fn getWin32Result(allocator: Allocator, source: []const u8, options: GetResultOptions) !Win32Result {
-    try options.cwd.writeFile("test.rc", source);
+    try options.cwd.writeFile(.{ .sub_path = "test.rc", .data = source });
     return getWin32ResultFromFile(allocator, "test.rc", options);
 }
 
 pub fn getWin32ResultFromFile(allocator: Allocator, input_path: []const u8, options: GetResultOptions) !Win32Result {
     const output_path = options.output_path orelse "test_win32.res";
-    const exec_result = try std.ChildProcess.run(.{
+    const exec_result = try std.process.Child.run(.{
         .allocator = allocator,
         .argv = &[_][]const u8{
             // Note: This relies on `rc.exe` being in the PATH
@@ -226,7 +226,7 @@ pub fn getWin32ResultFromFile(allocator: Allocator, input_path: []const u8, opti
     return result;
 }
 
-pub fn randomNumberLiteral(allocator: Allocator, rand: std.rand.Random, comptime include_superscripts: bool) ![]const u8 {
+pub fn randomNumberLiteral(allocator: Allocator, rand: std.Random, comptime include_superscripts: bool) ![]const u8 {
     var buf = std.ArrayList(u8).init(allocator);
     errdefer buf.deinit();
 
@@ -294,41 +294,41 @@ const dicts = struct {
     const alphanumeric = digits ++ lowercase_alpha ++ uppercase_alpha;
 };
 
-pub fn randomAlpha(rand: std.rand.Random) u8 {
+pub fn randomAlpha(rand: std.Random) u8 {
     const index = rand.uintLessThanBiased(u8, dicts.alpha.len);
     return dicts.alpha[index];
 }
 
-pub fn randomAlphanumeric(rand: std.rand.Random) u8 {
+pub fn randomAlphanumeric(rand: std.Random) u8 {
     const index = rand.uintLessThanBiased(u8, dicts.alphanumeric.len);
     return dicts.alphanumeric[index];
 }
 
-pub fn randomNumeric(rand: std.rand.Random) u8 {
+pub fn randomNumeric(rand: std.Random) u8 {
     return rand.uintLessThanBiased(u8, 10) + '0';
 }
 
 /// Includes Windows-1252 encoded ¹ ² ³
-pub fn randomNumericRC(rand: std.rand.Random) u8 {
+pub fn randomNumericRC(rand: std.Random) u8 {
     const dict = dicts.digits ++ [_]u8{ '\xb2', '\xb3', '\xb9' };
     const index = rand.uintLessThanBiased(u8, dict.len);
     return dict[index];
 }
 
 /// Includes Windows-1252 encoded ¹ ² ³
-pub fn randomAlphanumericRC(rand: std.rand.Random) u8 {
+pub fn randomAlphanumericRC(rand: std.Random) u8 {
     const dict = dicts.alphanumeric ++ [_]u8{ '\xb2', '\xb3', '\xb9' };
     const index = rand.uintLessThanBiased(u8, dict.len);
     return dict[index];
 }
 
-pub fn randomOperator(rand: std.rand.Random) u8 {
+pub fn randomOperator(rand: std.Random) u8 {
     const dict = [_]u8{ '-', '+', '|', '&' };
     const index = rand.uintLessThanBiased(u8, dict.len);
     return dict[index];
 }
 
-pub fn appendRandomStringLiteralSequence(rand: std.rand.Random, buf: *std.ArrayList(u8), is_last: bool, comptime string_type: resinator.literals.StringType) !void {
+pub fn appendRandomStringLiteralSequence(rand: std.Random, buf: *std.ArrayList(u8), is_last: bool, comptime string_type: resinator.literals.StringType) !void {
     const SequenceType = enum { byte, non_ascii_codepoint, octal, hex };
     const sequence_type = rand.enumValue(SequenceType);
     switch (sequence_type) {
@@ -415,7 +415,7 @@ pub fn appendRandomStringLiteralSequence(rand: std.rand.Random, buf: *std.ArrayL
 pub fn randomStringLiteral(
     comptime string_type: resinator.literals.StringType,
     allocator: Allocator,
-    rand: std.rand.Random,
+    rand: std.Random,
     max_num_sequences: u16,
 ) ![]const u8 {
     const num_sequences = rand.uintAtMostBiased(u16, max_num_sequences);
@@ -425,7 +425,7 @@ pub fn randomStringLiteral(
 pub fn randomStringLiteralExact(
     comptime string_type: resinator.literals.StringType,
     allocator: Allocator,
-    rand: std.rand.Random,
+    rand: std.Random,
     num_sequences: u16,
 ) ![]const u8 {
     var buf = try std.ArrayList(u8).initCapacity(allocator, 2 + num_sequences * 4);
@@ -443,7 +443,7 @@ pub fn randomStringLiteralExact(
 }
 
 /// Alphanumeric ASCII + any bytes >= 128
-pub fn randomAlphanumExtendedBytes(allocator: Allocator, rand: std.rand.Random) ![]const u8 {
+pub fn randomAlphanumExtendedBytes(allocator: Allocator, rand: std.Random) ![]const u8 {
     const extended = extended: {
         var buf: [128]u8 = undefined;
         for (&buf, 0..) |*c, i| {
