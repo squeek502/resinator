@@ -329,6 +329,36 @@ pub const LatestMsvcToolsDir = struct {
         return lib_dir_buf.toOwnedSlice();
     }
 
+    fn findInstancesDirViaSetup() error{PathNotFound}!std.fs.Dir {
+        const vs_setup_key_path = L("SOFTWARE\\Microsoft\\VisualStudio\\Setup");
+        const vs_setup_key = openKey(windows.HKEY_LOCAL_MACHINE, vs_setup_key_path, .{}) catch |err| switch (err) {
+            error.KeyNotFound => return error.PathNotFound,
+        };
+        defer _ = std.os.windows.advapi32.RegCloseKey(vs_setup_key);
+
+        var path_buf = windows.PathSpace{ .data = undefined, .len = 0 };
+        // Pre-populate the NT prefix. This avoids putting a redundant PathSpace on the stack
+        // since we avoid the need to call windows.wToPrefixedFileW.
+        const nt_prefix = L("\\??\\");
+        @memcpy(path_buf.data[0..nt_prefix.len], nt_prefix);
+        path_buf.len += nt_prefix.len;
+
+        // Read into path_buf, but after the NT prefix.
+        const packages_path = getRegistryStringValue(path_buf.data[path_buf.len..], vs_setup_key, L("CachePath")) catch return error.PathNotFound;
+        path_buf.len += packages_path.len;
+
+        if (!std.fs.path.isAbsoluteWindowsWTF16(packages_path)) return error.PathNotFound;
+
+        const instances_subpath_with_preceding_sep = L("\\_Instances");
+        const has_trailing_sep = packages_path[packages_path.len - 1] == '\\' or packages_path[packages_path.len - 1] == '/';
+        const instances_subpath = if (has_trailing_sep) instances_subpath_with_preceding_sep[1.. :0] else instances_subpath_with_preceding_sep;
+        // copy over the subpath including the NUL terminator
+        @memcpy(path_buf.data[path_buf.len..][0 .. instances_subpath.len + 1], instances_subpath[0 .. instances_subpath.len + 1]);
+        path_buf.len += instances_subpath.len;
+
+        return std.fs.openDirAbsoluteW(path_buf.span(), .{ .iterate = true }) catch return error.PathNotFound;
+    }
+
     fn findInstancesDirViaCLSID() error{PathNotFound}!std.fs.Dir {
         const setup_configuration_clsid = "{177f0c4a-1cd3-4de7-a32c-71dbbb9fa36d}";
         const key_path = L("CLSID\\" ++ setup_configuration_clsid ++ "\\InprocServer32");
@@ -373,14 +403,26 @@ pub const LatestMsvcToolsDir = struct {
     }
 
     fn findInstancesDir() error{PathNotFound}!std.fs.Dir {
-        // First try to get the path from the .dll that would have been
+        // First, try getting the packages cache path from the registry.
+        // This only seems to exist when the path is different from the default.
+        method1: {
+            return findInstancesDirViaSetup() catch |err| switch (err) {
+                error.PathNotFound => break :method1,
+            };
+        }
+        // Otherwise, try to get the path from the .dll that would have been
         // loaded via COM for SetupConfiguration.
-        return findInstancesDirViaCLSID() catch |orig_err| {
-            // If that can't be found, fall back to manually appending
-            // `Microsoft\VisualStudio\Packages\_Instances` to %PROGRAMDATA%
-            const program_data = std.process.getenvW(L("PROGRAMDATA")) orelse return orig_err;
+        method2: {
+            return findInstancesDirViaCLSID() catch |err| switch (err) {
+                error.PathNotFound => break :method2,
+            };
+        }
+        // If that can't be found, fall back to manually appending
+        // `Microsoft\VisualStudio\Packages\_Instances` to %PROGRAMDATA%
+        method3: {
+            const program_data = std.process.getenvW(L("PROGRAMDATA")) orelse break :method3;
             // Must be an absolute path
-            if (!std.fs.path.isAbsoluteWindowsWTF16(program_data)) return orig_err;
+            if (!std.fs.path.isAbsoluteWindowsWTF16(program_data)) break :method3;
 
             var instances_path = windows.PathSpace{ .data = undefined, .len = 0 };
             // Pre-populate the NT prefix. This avoids putting a redundant PathSpace on the stack
@@ -400,8 +442,9 @@ pub const LatestMsvcToolsDir = struct {
             @memcpy(instances_path.data[instances_path.len..][0 .. instances_subpath.len + 1], instances_subpath[0 .. instances_subpath.len + 1]);
             instances_path.len += instances_subpath.len;
 
-            return std.fs.openDirAbsoluteW(instances_path.span(), .{ .iterate = true }) catch return orig_err;
-        };
+            return std.fs.openDirAbsoluteW(instances_path.span(), .{ .iterate = true }) catch break :method3;
+        }
+        return error.PathNotFound;
     }
 };
 
