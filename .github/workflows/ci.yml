@@ -46,7 +46,8 @@ jobs:
         run: zig build test
 
       - name: Test 32-bit
-        if: ${{ matrix.os != 'macos-latest' }}
+        # TODO: Re-enable Windows, see https://github.com/ziglang/zig/issues/20047
+        if: ${{ matrix.os != 'macos-latest' && matrix.os != 'windows-latest' }}
         run: zig build test -Dtarget=x86-native
 
       - name: Test big endian (mips)
