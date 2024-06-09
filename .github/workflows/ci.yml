@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: true
-      - uses: jethrodaniel/setup-zig@fix-caching
+      - uses: mlugg/setup-zig@v1
         with:
           version: 0.13.0-dev.249+ed75f6256
       - uses: ilammy/msvc-dev-cmd@v1
