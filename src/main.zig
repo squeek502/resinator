@@ -321,8 +321,10 @@ fn getIncludePaths(allocator: std.mem.Allocator, auto_includes_option: cli.Optio
                     if (maybe_mingw_includes_dir) |mingw_includes_dir| {
                         break :include_path try allocator.dupe(u8, mingw_includes_dir);
                     } else {
-                        var progress = std.Progress{};
-                        break :include_path try auto_includes.extractMingwIncludes(allocator, &progress);
+                        const root_node = std.Progress.start(.{
+                            .root_name = "auto includes",
+                        });
+                        break :include_path try auto_includes.extractMingwIncludes(allocator, root_node);
                     }
                 };
                 errdefer allocator.free(include_path);

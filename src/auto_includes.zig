@@ -7,7 +7,7 @@ const L = std.unicode.utf8ToUtf16LeStringLiteral;
 const compressed_mingw_includes = @import("compressed_mingw_includes").data;
 const include_ver = 2;
 
-pub fn extractMingwIncludes(allocator: Allocator, maybe_progress: ?*std.Progress) ![]const u8 {
+pub fn extractMingwIncludes(allocator: Allocator, maybe_progress: ?std.Progress.Node) ![]const u8 {
     const resinator_cache_path = try getCachePath(allocator, "resinator") orelse return error.CannotResolveCachePath;
     defer allocator.free(resinator_cache_path);
 
@@ -23,12 +23,11 @@ pub fn extractMingwIncludes(allocator: Allocator, maybe_progress: ?*std.Progress
         } else |_| {}
     }
 
-    const extract_node: ?*std.Progress.Node = if (maybe_progress) |progress|
-        progress.start("extracting MinGW includes into cache [one-time setup]", 0)
+    const extract_node: ?std.Progress.Node = if (maybe_progress) |progress|
+        progress.start("extracting MinGW includes into cache", 0)
     else
         null;
     defer if (extract_node) |node| node.end();
-    if (maybe_progress) |progress| progress.refresh();
 
     // delete any previously existing include dir since it's either out-of-date
     // or in a weird state and we should just start over.
