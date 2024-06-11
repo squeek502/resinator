@@ -357,11 +357,6 @@ pub const ErrorDetails = struct {
         /// `number` is populated and contains a string index for which the string contains
         /// the bytes of a `u64` (native endian). The `u64` contains the number of miscompiled bytes.
         rc_would_miscompile_bmp_palette_padding,
-        /// `number` is populated and contains a string index for which the string contains
-        /// the bytes of two `u64`s (native endian). The first contains the number of missing
-        /// palette bytes and the second contains the max number of missing palette bytes.
-        /// If type is `.note`, then `extra` is `none`.
-        bmp_too_many_missing_palette_bytes,
         resource_header_size_exceeds_max,
         resource_data_size_exceeds_max,
         control_extra_data_size_exceeds_max,
@@ -667,23 +662,15 @@ pub const ErrorDetails = struct {
             .bmp_missing_palette_bytes => {
                 const bytes = strings[self.extra.number];
                 const missing_bytes = std.mem.readInt(u64, bytes[0..8], native_endian);
-                try writer.print("bitmap has {d} missing color palette bytes which will be padded with zeroes", .{missing_bytes});
+                try writer.print("bitmap has {d} missing color palette bytes", .{missing_bytes});
             },
             .rc_would_miscompile_bmp_palette_padding => {
-                const bytes = strings[self.extra.number];
-                const miscompiled_bytes = std.mem.readInt(u64, bytes[0..8], native_endian);
-                try writer.print("the missing color palette bytes would be miscompiled by the Win32 RC compiler (the added padding bytes would include {d} bytes of the pixel data)", .{miscompiled_bytes});
-            },
-            .bmp_too_many_missing_palette_bytes => switch (self.type) {
-                .err, .warning => {
+                try writer.writeAll("the Win32 RC compiler would erroneously pad out the missing bytes");
+                if (self.extra.number != 0) {
                     const bytes = strings[self.extra.number];
-                    const missing_bytes = std.mem.readInt(u64, bytes[0..8], native_endian);
-                    const max_missing_bytes = std.mem.readInt(u64, bytes[8..16], native_endian);
-                    try writer.print("bitmap has {} missing color palette bytes which exceeds the maximum of {}", .{ missing_bytes, max_missing_bytes });
-                },
-                // TODO: command line option
-                .note => try writer.writeAll("the maximum number of missing color palette bytes is configurable via <<TODO command line option>>"),
-                .hint => return,
+                    const miscompiled_bytes = std.mem.readInt(u64, bytes[0..8], native_endian);
+                    try writer.print(" (and the added padding bytes would include {d} bytes of the pixel data)", .{miscompiled_bytes});
+                }
             },
             .resource_header_size_exceeds_max => {
                 try writer.print("resource's header length exceeds maximum of {} bytes", .{std.math.maxInt(u32)});

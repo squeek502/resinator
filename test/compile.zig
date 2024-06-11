@@ -383,19 +383,22 @@ test "basic bitmap" {
     //       data into the padding bytes of the color palette.
     try testCompileErrorDetailsWithDir(
         &.{
-            .{ .type = .warning, .str = "bitmap has 16 missing color palette bytes which will be padded with zeroes" },
-            .{ .type = .warning, .str = "the missing color palette bytes would be miscompiled by the Win32 RC compiler (the added padding bytes would include 6 bytes of the pixel data)" },
+            .{ .type = .err, .str = "bitmap has 16 missing color palette bytes" },
+            .{ .type = .note, .str = "the Win32 RC compiler would erroneously pad out the missing bytes (and the added padding bytes would include 6 bytes of the pixel data)" },
         },
         "1 BITMAP test_missing_palette_bytes.bmp",
-        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00>\x00\x00\x00 \x00\x00\x00\xff\xff\x02\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00(\x00\x00\x00\x01\x00\x00\x00\x01\x00\x00\x00\x01\x00\x10\x00\x00\x00\x00\x00\x06\x00\x00\x00\x12\x0b\x00\x00\x12\x0b\x00\x00\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\x7f\x00\x00\x00\x00\x00\x00",
+        null,
         tmp_dir.dir,
     );
 
     try tmp_dir.dir.writeFile(.{ .sub_path = "test_win2.0_missing_palette_bytes.bmp", .data = "BMJX\x02\x00\x00\x00\x00\x00G\x00\x00\x00\x0c\x00\x00\x00\x80\x02\xe0\x01\x01\x00\x04\x00\x00\x00\x00\x80\x00\x00\x00\x80\x00\x80\x80\x00\x00\x00\x80\x80\x00\x80\x00\x80\x80\x80\x80\x80\xcc\xcc\xcc\xff\x00\x00\x00\xff\x00\xff\xff\x00\x00\x00\xff\xff\x00\xff\x00\xff\xff" });
     try testCompileErrorDetailsWithDir(
-        &.{.{ .type = .warning, .str = "bitmap has 3 missing color palette bytes which will be padded with zeroes" }},
+        &.{
+            .{ .type = .err, .str = "bitmap has 3 missing color palette bytes" },
+            .{ .type = .note, .str = "the Win32 RC compiler would erroneously pad out the missing bytes" },
+        },
         "1 BITMAP test_win2.0_missing_palette_bytes.bmp",
-        "\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00<\x00\x00\x00 \x00\x00\x00\xff\xff\x02\x00\xff\xff\x01\x00\x00\x00\x00\x000\x00\t\x04\x00\x00\x00\x00\x00\x00\x00\x00\x0c\x00\x00\x00\x80\x02\xe0\x01\x01\x00\x04\x00\x00\x00\x00\x80\x00\x00\x00\x80\x00\x80\x80\x00\x00\x00\x80\x80\x00\x80\x00\x80\x80\x80\x80\x80\xcc\xcc\xcc\xff\x00\x00\x00\xff\x00\xff\xff\x00\x00\x00\xff\xff\x00\xff\x00\xff\xff\x00\x00\x00",
+        null,
         tmp_dir.dir,
     );
 
@@ -410,8 +413,8 @@ test "basic bitmap" {
     try tmp_dir.dir.writeFile(.{ .sub_path = "test_too_many_missing_palette_bytes.bmp", .data = "BM<\x00\x00\x00\x00\x00\x00\x006\x00\x00\x00(\x00\x00\x00\x01\x00\x00\x00\x01\x00\x00\x00\x01\x00\x20\x00\x00\x00\x00\x00\x06\x00\x00\x00\x12\x0b\x00\x00\x12\x0b\x00\x00\xff\xff\xff\xff\x00\x00\x00\x00\xff\x7f\x00\x00\x00\x00" });
     try testCompileErrorDetailsWithDir(
         &.{
-            .{ .type = .err, .str = "bitmap has 17179869180 missing color palette bytes which exceeds the maximum of 4096" },
-            .{ .type = .note, .str = "the maximum number of missing color palette bytes is configurable via <<TODO command line option>>" },
+            .{ .type = .err, .str = "bitmap has 17179869180 missing color palette bytes" },
+            .{ .type = .note, .str = "the Win32 RC compiler would erroneously pad out the missing bytes (and the added padding bytes would include 6 bytes of the pixel data)" },
         },
         "1 BITMAP test_too_many_missing_palette_bytes.bmp",
         null,

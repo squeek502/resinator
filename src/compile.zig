@@ -856,47 +856,32 @@ pub const Compiler = struct {
                     } else if (bitmap_info.getActualPaletteByteLen() < bitmap_info.getExpectedPaletteByteLen()) {
                         const num_padding_bytes = bitmap_info.getExpectedPaletteByteLen() - bitmap_info.getActualPaletteByteLen();
 
-                        // TODO: Make this configurable (command line option)
-                        const max_missing_bytes = 4096;
-                        if (num_padding_bytes > max_missing_bytes) {
-                            var numbers_as_bytes: [16]u8 = undefined;
-                            std.mem.writeInt(u64, numbers_as_bytes[0..8], num_padding_bytes, native_endian);
-                            std.mem.writeInt(u64, numbers_as_bytes[8..16], max_missing_bytes, native_endian);
-                            const values_string_index = try self.diagnostics.putString(&numbers_as_bytes);
-                            try self.addErrorDetails(.{
-                                .err = .bmp_too_many_missing_palette_bytes,
-                                .token = filename_token,
-                                .extra = .{ .number = values_string_index },
-                            });
-                            return self.addErrorDetailsAndFail(.{
-                                .err = .bmp_too_many_missing_palette_bytes,
-                                .type = .note,
-                                .print_source_line = false,
-                                .token = filename_token,
-                            });
-                        }
-
                         var number_as_bytes: [8]u8 = undefined;
                         std.mem.writeInt(u64, &number_as_bytes, num_padding_bytes, native_endian);
                         const value_string_index = try self.diagnostics.putString(&number_as_bytes);
                         try self.addErrorDetails(.{
                             .err = .bmp_missing_palette_bytes,
-                            .type = .warning,
+                            .type = .err,
                             .token = filename_token,
                             .extra = .{ .number = value_string_index },
                         });
                         const pixel_data_len = bitmap_info.getPixelDataLen(file_size);
+                        // TODO: This is a hack, but we know we have already added
+                        //       at least one entry to the diagnostics strings, so we can
+                        //       get away with using 0 to mean 'no string' here.
+                        var miscompiled_bytes_string_index: u32 = 0;
                         if (pixel_data_len > 0) {
                             const miscompiled_bytes = @min(pixel_data_len, num_padding_bytes);
                             std.mem.writeInt(u64, &number_as_bytes, miscompiled_bytes, native_endian);
-                            const miscompiled_bytes_string_index = try self.diagnostics.putString(&number_as_bytes);
-                            try self.addErrorDetails(.{
-                                .err = .rc_would_miscompile_bmp_palette_padding,
-                                .type = .warning,
-                                .token = filename_token,
-                                .extra = .{ .number = miscompiled_bytes_string_index },
-                            });
+                            miscompiled_bytes_string_index = try self.diagnostics.putString(&number_as_bytes);
                         }
+                        return self.addErrorDetailsAndFail(.{
+                            .err = .rc_would_miscompile_bmp_palette_padding,
+                            .type = .note,
+                            .print_source_line = false,
+                            .token = filename_token,
+                            .extra = .{ .number = miscompiled_bytes_string_index },
+                        });
                     }
 
                     // TODO: It might be possible that the calculation done in this function
@@ -915,12 +900,6 @@ pub const Compiler = struct {
                     }
                     if (bitmap_info.getExpectedPaletteByteLen() > 0) {
                         try writeResourceDataNoPadding(writer, file_reader, @intCast(bitmap_info.getActualPaletteByteLen()));
-                        // We know that the number of missing palette bytes is <= 4096
-                        // (see `bmp_too_many_missing_palette_bytes` error case above)
-                        const padding_bytes: usize = @intCast(bitmap_info.getMissingPaletteByteLen());
-                        if (padding_bytes > 0) {
-                            try writer.writeByteNTimes(0, padding_bytes);
-                        }
                     }
                     try file.seekTo(bitmap_info.pixel_data_offset);
                     const pixel_bytes: u32 = @intCast(file_size - bitmap_info.pixel_data_offset);
