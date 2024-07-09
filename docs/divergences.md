@@ -131,15 +131,14 @@ nav_order: 2
 ## Unavoidable divergences from the Windows RC compiler
 
 - `resinator` does not support UTF-16 encoded `.rc` files.
-  + The `clang` preprocessor does not handle UTF-16 encoded files (i.e. it will fail to parse `#include` directives, etc within UTF-16 encoded files). So, `resinator` would need a preprocessor that handles UTF-16 encoded files for UTF-16 support to be feasible.
+  + The Aro preprocessor does not handle UTF-16 encoded files (i.e. it will fail to parse `#include` directives, etc within UTF-16 encoded files). So, `resinator` would need a preprocessor that handles UTF-16 encoded files for UTF-16 support to be feasible.
 - In `resinator`, splices (`\` at the end of a line) are removed by the preprocessor before checking if any string literals are too long.
   + The Windows RC compiler includes the splice characters in the string literal length check (even though they don't show up in the string literal).
 - In `resinator`, embedded 'carriage return' characters (that are not part of a `CRLF` pair) can lead to files being parsed differently than the Windows RC compiler would parse them.
-  + The `clang` preprocessor treats carriage return characters (`'\r'`) as a line separator when unpaired, and always converts them to new lines (`'\n'`). The Windows RC tool instead seemingly ignores/skips all `\r` characters.
-  + For example, `RC<\r>DATA` will be compiled by the Windows RC tool as if it were `RCDATA`, but `clang`'s preprocessor will convert it to `RC<\n>DATA` which `resinator` will parse as separate `RC` and `DATA` tokens.
+  + The Aro preprocessor treats carriage return characters (`'\r'`) as a line separator when unpaired, and always converts them to new lines (`'\n'`). The Windows RC tool instead seemingly ignores/skips all `\r` characters.
+  + For example, `RC<\r>DATA` will be compiled by the Windows RC tool as if it were `RCDATA`, but Aro's preprocessor will convert it to `RC<\n>DATA` which `resinator` will parse as separate `RC` and `DATA` tokens.
 - `.rc` files that use splices (`\` at the end of a line) within strings that include whitespace after the splice will be handled differently.
-  + The Win32 RC compiler's preprocessor seems to collapse whitespace after a splice that's within a string, while `clang`'s preprocessor does not. An example of a file for which this behavior difference can be reproduced can be found [here](https://github.com/microsoft/Windows-classic-samples/blob/7cbd99ac1d2b4a0beffbaba29ea63d024ceff700/Samples/Win7Samples/winui/shell/appshellintegration/NonDefaultDropMenuVerb/NonDefaultDropMenuVerb.rc#L10-L20).
-- *[Cosmetic only]* The clang preprocessor will convert `CRLF` line endings within multiline comments to `CRCRLF` which can lead to incorrect lines being printed in error messages, since the line counts of the preprocessed file and the original file will not match up. This [is a Clang bug](https://github.com/llvm/llvm-project/issues/62614).
+  + The Win32 RC compiler's preprocessor seems to collapse whitespace after a splice that's within a string, while Aro's preprocessor does not. An example of a file for which this behavior difference can be reproduced can be found [here](https://github.com/microsoft/Windows-classic-samples/blob/7cbd99ac1d2b4a0beffbaba29ea63d024ceff700/Samples/Win7Samples/winui/shell/appshellintegration/NonDefaultDropMenuVerb/NonDefaultDropMenuVerb.rc#L10-L20).
 
 ## Found divergences that haven't been decided on yet
 
