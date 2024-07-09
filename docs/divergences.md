@@ -89,9 +89,7 @@ nav_order: 2
   + The Win32 RC compiler does not enforce this, but such bitmaps are definitely malformed. Even for bit depths >= 16 where '[the] bmiColors color table is used for optimizing colors used on palette-based devices', it still wouldn't make sense for the number of colors in the palette to exceed the possible number of colors used by the pixel data.
   + TODO: revisit this; [bmpsuite](https://entropymine.com/jason/bmpsuite/bmpsuite/html/bmpsuite.html) says that such bitmaps 'may be invalid', see `q/pal8oversizepal.bmp`
 - `resinator` will always error if the code page specified in a `#pragma code_page` directive would overflow a `u32`.
-  + The Win32 RC compiler has different behavior depending on whether or not the value after wrapping on overflow ends up being a known code page ID or not:
-    - If the overflowed `u32` wraps and becomes a known code page ID, then it will error/warn with "Codepage not valid:  ignored" (depending on the `/w` option)
-    - If the overflowed `u32` wraps and does not become a known code page ID, then it will error with 'constant too big' and 'Codepage not integer'
+  + The Win32 RC compiler has different behavior depending on the particular value, mostly erroring with the expected 'Codepage not valid', but occasionally something more exotic (`Codepage not integer:  )`, `MultiByteToWideChar failed.`, `constant too big`, etc)
 - `resinator` will error if any expression is a single unquoted `)` character.
   + The Win32 RC compiler treats a single `)` as a 'valid' expression that essentially evaluates to something akin to a 'skip this' instruction when parsing.
     - When used as a filename it causes strange behavior where it parses as if it were the filename but then it uses the preceding token when actually doing the filename lookup. For example, `1 RCDATA )` will give the error `file not found: RCDATA` rather than the expected `file not found: )`.
