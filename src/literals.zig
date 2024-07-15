@@ -258,8 +258,9 @@ pub const IterativeStringParser = struct {
                         switch (c) {
                             'a', 'A' => {
                                 self.index += codepoint.byte_len;
+                                // might be a bug in RC, but matches its behavior
                                 return .{ .codepoint = '\x08' };
-                            }, // might be a bug in RC, but matches its behavior
+                            },
                             'n' => {
                                 self.index += codepoint.byte_len;
                                 return .{ .codepoint = '\n' };
