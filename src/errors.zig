@@ -379,8 +379,7 @@ pub const ErrorDetails = struct {
         rc_would_miscompile_dialog_menu_or_class_id_forced_ordinal,
         rc_would_miscompile_dialog_menu_id_starts_with_digit,
         dialog_menu_id_was_uppercased,
-        /// `menu_or_class` is populated and contains the type of the parameter statement
-        duplicate_menu_or_class_skipped,
+        duplicate_optional_statement_skipped,
         invalid_digit_character_in_ordinal,
 
         // Literals
@@ -740,11 +739,8 @@ pub const ErrorDetails = struct {
                 .hint => return,
             },
             .dialog_menu_id_was_uppercased => return,
-            .duplicate_menu_or_class_skipped => {
-                return writer.print("this {s} was ignored; when multiple {s} statements are specified, only the last takes precedence", .{
-                    @tagName(self.extra.menu_or_class),
-                    @tagName(self.extra.menu_or_class),
-                });
+            .duplicate_optional_statement_skipped => {
+                return writer.writeAll("this statement was ignored; when multiple statements of the same type are specified, only the last takes precedence");
             },
             .invalid_digit_character_in_ordinal => {
                 return writer.writeAll("non-ASCII digit characters are not allowed in ordinal (number) values");

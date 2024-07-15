@@ -2178,6 +2178,46 @@ test "language with L suffixed part" {
     );
 }
 
+test "duplicate optional statements" {
+    try testParseErrorDetails(
+        &.{
+            .{ .type = .warning, .str = "this statement was ignored; when multiple statements of the same type are specified, only the last takes precedence" },
+            .{ .type = .warning, .str = "this statement was ignored; when multiple statements of the same type are specified, only the last takes precedence" },
+            .{ .type = .warning, .str = "this statement was ignored; when multiple statements of the same type are specified, only the last takes precedence" },
+            .{ .type = .warning, .str = "this statement was ignored; when multiple statements of the same type are specified, only the last takes precedence" },
+            .{ .type = .warning, .str = "this statement was ignored; when multiple statements of the same type are specified, only the last takes precedence" },
+            .{ .type = .warning, .str = "this statement was ignored; when multiple statements of the same type are specified, only the last takes precedence" },
+            .{ .type = .warning, .str = "this statement was ignored; when multiple statements of the same type are specified, only the last takes precedence" },
+            .{ .type = .warning, .str = "this statement was ignored; when multiple statements of the same type are specified, only the last takes precedence" },
+            .{ .type = .warning, .str = "this statement was ignored; when multiple statements of the same type are specified, only the last takes precedence" },
+            .{ .type = .warning, .str = "this statement was ignored; when multiple statements of the same type are specified, only the last takes precedence" },
+        },
+        \\1 DIALOGEX 1, 2, 3, 4
+        \\  CHARACTERISTICS 1
+        \\  LANGUAGE 0xFF, 0xFF
+        \\  LANGUAGE 0x09, 0x01
+        \\  CHARACTERISTICS 999
+        \\  CHARACTERISTICS 0x1234
+        \\  VERSION 999
+        \\  VERSION 1
+        \\  MENU 1
+        \\  MENU 2
+        \\  CLASS "foo"
+        \\  CLASS "bar"
+        \\  CAPTION "foo"
+        \\  CAPTION "bar"
+        \\  FONT 1, "foo"
+        \\  FONT 2, "bar"
+        \\  STYLE 1
+        \\  STYLE 2
+        \\  EXSTYLE 1
+        \\  EXSTYLE 2
+        \\{}
+    ,
+        null,
+    );
+}
+
 fn testParse(source: []const u8, expected_ast_dump: []const u8) !void {
     const allocator = std.testing.allocator;
     var diagnostics = resinator.errors.Diagnostics.init(allocator);

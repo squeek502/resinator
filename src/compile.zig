@@ -1395,8 +1395,6 @@ pub const Compiler = struct {
                 menu.deinit(self.allocator);
             }
         }
-        var skipped_menu_or_classes = std.ArrayList(*Node.SimpleStatement).init(self.allocator);
-        defer skipped_menu_or_classes.deinit();
         var last_menu: *Node.SimpleStatement = undefined;
         var last_class: *Node.SimpleStatement = undefined;
         var last_menu_would_be_forced_ordinal = false;
@@ -1426,9 +1424,6 @@ pub const Compiler = struct {
                         },
                         .class => {
                             const is_duplicate = optional_statement_values.class != null;
-                            if (is_duplicate) {
-                                try skipped_menu_or_classes.append(last_class);
-                            }
                             const forced_ordinal = is_duplicate and optional_statement_values.class.? == .ordinal;
                             // In the Win32 RC compiler, if any CLASS values that are interpreted as
                             // an ordinal exist, it affects all future CLASS statements and forces
@@ -1456,9 +1451,6 @@ pub const Compiler = struct {
                         },
                         .menu => {
                             const is_duplicate = optional_statement_values.menu != null;
-                            if (is_duplicate) {
-                                try skipped_menu_or_classes.append(last_menu);
-                            }
                             const forced_ordinal = is_duplicate and optional_statement_values.menu.? == .ordinal;
                             // In the Win32 RC compiler, if any MENU values that are interpreted as
                             // an ordinal exist, it affects all future MENU statements and forces
@@ -1542,22 +1534,6 @@ pub const Compiler = struct {
             }
         }
 
-        for (skipped_menu_or_classes.items) |simple_statement| {
-            const statement_identifier = simple_statement.identifier;
-            const statement_type = rc.OptionalStatements.dialog_map.get(statement_identifier.slice(self.source)) orelse continue;
-            try self.addErrorDetails(.{
-                .err = .duplicate_menu_or_class_skipped,
-                .type = .warning,
-                .token = simple_statement.identifier,
-                .token_span_start = simple_statement.base.getFirstToken(),
-                .token_span_end = simple_statement.base.getLastToken(),
-                .extra = .{ .menu_or_class = switch (statement_type) {
-                    .menu => .menu,
-                    .class => .class,
-                    else => unreachable,
-                } },
-            });
-        }
         // The Win32 RC compiler miscompiles the value in the following scenario:
         // Multiple CLASS parameters are specified and any of them are treated as a number, then
         // the last CLASS is always treated as a number no matter what

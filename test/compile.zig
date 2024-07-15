@@ -683,8 +683,8 @@ test "dialog, dialogex resource" {
     );
     try testCompileErrorDetailsWithDir(
         &.{
-            .{ .type = .warning, .str = "this class was ignored; when multiple class statements are specified, only the last takes precedence" },
-            .{ .type = .warning, .str = "this class was ignored; when multiple class statements are specified, only the last takes precedence" },
+            .{ .type = .warning, .str = "this statement was ignored; when multiple statements of the same type are specified, only the last takes precedence" },
+            .{ .type = .warning, .str = "this statement was ignored; when multiple statements of the same type are specified, only the last takes precedence" },
             .{ .type = .warning, .str = "this class would be miscompiled by the Win32 RC compiler" },
             .{ .type = .note, .str = "the Win32 RC compiler would evaluate it as the ordinal/number value 62790" },
             .{ .type = .note, .str = "to avoid the potential miscompilation, only specify one class per dialog resource" },

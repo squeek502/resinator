@@ -132,6 +132,11 @@ pub const Parser = struct {
     /// The returned slice is allocated by the parser's arena
     fn parseOptionalStatements(self: *Self, resource: Resource) ![]*Node {
         var optional_statements = std.ArrayListUnmanaged(*Node){};
+
+        const num_statement_types = @typeInfo(rc.OptionalStatements).Enum.fields.len;
+        var statement_type_has_duplicates = [_]bool{false} ** num_statement_types;
+        var last_statement_per_type = [_]?*Node{null} ** num_statement_types;
+
         while (true) {
             const lookahead_token = try self.lookaheadToken(.normal);
             if (lookahead_token.id != .literal) break;
@@ -141,6 +146,12 @@ pub const Parser = struct {
                 else => break,
             };
             self.nextToken(.normal) catch unreachable;
+
+            const type_i = @intFromEnum(optional_statement_type);
+            if (last_statement_per_type[type_i] != null) {
+                statement_type_has_duplicates[type_i] = true;
+            }
+
             switch (optional_statement_type) {
                 .language => {
                     const language = try self.parseLanguageStatement();
@@ -272,7 +283,42 @@ pub const Parser = struct {
                     try optional_statements.append(self.state.arena, &node.base);
                 },
             }
+
+            last_statement_per_type[type_i] = optional_statements.items[optional_statements.items.len - 1];
         }
+
+        for (optional_statements.items) |optional_statement| {
+            const type_i = type_i: {
+                switch (optional_statement.id) {
+                    .simple_statement => {
+                        const simple_statement: *Node.SimpleStatement = @alignCast(@fieldParentPtr("base", optional_statement));
+                        const statement_identifier = simple_statement.identifier;
+                        const slice = statement_identifier.slice(self.lexer.buffer);
+                        const optional_statement_type = rc.OptionalStatements.map.get(slice) orelse
+                            rc.OptionalStatements.dialog_map.get(slice).?;
+                        break :type_i @intFromEnum(optional_statement_type);
+                    },
+                    .font_statement => {
+                        break :type_i @intFromEnum(rc.OptionalStatements.font);
+                    },
+                    .language_statement => {
+                        break :type_i @intFromEnum(rc.OptionalStatements.language);
+                    },
+                    else => unreachable,
+                }
+            };
+            if (!statement_type_has_duplicates[type_i]) continue;
+            if (optional_statement == last_statement_per_type[type_i].?) continue;
+
+            try self.addErrorDetails(.{
+                .err = .duplicate_optional_statement_skipped,
+                .type = .warning,
+                .token = optional_statement.getFirstToken(),
+                .token_span_start = optional_statement.getFirstToken(),
+                .token_span_end = optional_statement.getLastToken(),
+            });
+        }
+
         return optional_statements.toOwnedSlice(self.state.arena);
     }
 
