@@ -332,6 +332,7 @@ pub const ErrorDetails = struct {
         /// `accelerator_error` is populated
         invalid_accelerator_key,
         accelerator_type_required,
+        accelerator_shift_or_control_without_virtkey,
         rc_would_miscompile_control_padding,
         rc_would_miscompile_control_class_ordinal,
         /// `icon_dir` is populated
@@ -598,7 +599,10 @@ pub const ErrorDetails = struct {
                 try writer.print("invalid accelerator key '{s}': {s}", .{ self.token.nameForErrorDisplay(source), @tagName(self.extra.accelerator_error.err) });
             },
             .accelerator_type_required => {
-                try writer.print("accelerator type [ASCII or VIRTKEY] required when key is an integer", .{});
+                try writer.writeAll("accelerator type [ASCII or VIRTKEY] required when key is an integer");
+            },
+            .accelerator_shift_or_control_without_virtkey => {
+                try writer.writeAll("SHIFT or CONTROL used without VIRTKEY");
             },
             .rc_would_miscompile_control_padding => switch (self.type) {
                 .err, .warning => return writer.print("the padding before this control would be miscompiled by the Win32 RC compiler (it would insert 2 extra bytes of padding)", .{}),

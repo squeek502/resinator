@@ -1329,6 +1329,16 @@ pub const Compiler = struct {
                 const modifier = rc.AcceleratorTypeAndOptions.map.get(type_or_option.slice(self.source)).?;
                 modifiers.apply(modifier);
             }
+            if ((modifiers.isSet(.control) or modifiers.isSet(.shift)) and !modifiers.isSet(.virtkey)) {
+                try self.addErrorDetails(.{
+                    .err = .accelerator_shift_or_control_without_virtkey,
+                    .type = .warning,
+                    // We know that one of SHIFT or CONTROL was specified, so there's at least one item
+                    // in this list.
+                    .token = accelerator.type_and_options[0],
+                    .token_span_end = accelerator.type_and_options[accelerator.type_and_options.len - 1],
+                });
+            }
             if (accelerator.event.isNumberExpression() and !modifiers.explicit_ascii_or_virtkey) {
                 return self.addErrorDetailsAndFail(.{
                     .err = .accelerator_type_required,

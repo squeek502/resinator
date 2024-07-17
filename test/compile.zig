@@ -649,6 +649,16 @@ test "accelerators resource" {
         "1 ACCELERATORS { 1, 1 }",
         null,
     );
+    try testCompileErrorDetails(
+        &.{.{ .type = .warning, .str = "SHIFT or CONTROL used without VIRTKEY" }},
+        "1 ACCELERATORS { \"c\", 1, SHIFT }",
+        null,
+    );
+    try testCompileErrorDetails(
+        &.{.{ .type = .warning, .str = "SHIFT or CONTROL used without VIRTKEY" }},
+        "1 ACCELERATORS { \"c\", 1, CONTROL }",
+        null,
+    );
 }
 
 test "dialog, dialogex resource" {
