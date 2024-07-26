@@ -385,9 +385,11 @@ pub const ErrorDetails = struct {
 
         // Literals
         /// `number` is populated
-        rc_would_miscompile_codepoint_byte_swap,
+        rc_would_miscompile_codepoint_whitespace,
         /// `number` is populated
         rc_would_miscompile_codepoint_skip,
+        /// `number` is populated
+        rc_would_miscompile_codepoint_bom,
         tab_converted_to_spaces,
 
         // General (used in various places)
@@ -749,14 +751,16 @@ pub const ErrorDetails = struct {
             .invalid_digit_character_in_ordinal => {
                 return writer.writeAll("non-ASCII digit characters are not allowed in ordinal (number) values");
             },
-            .rc_would_miscompile_codepoint_byte_swap => switch (self.type) {
-                .err, .warning => return writer.print("codepoint U+{X} within a string literal would be miscompiled by the Win32 RC compiler (the bytes of the UTF-16 code unit would be swapped)", .{self.extra.number}),
-                .note => return writer.print("to avoid the potential miscompilation, an integer escape sequence in a wide string literal could be used instead: L\"\\x{X}\"", .{self.extra.number}),
-                .hint => return,
+            .rc_would_miscompile_codepoint_whitespace => {
+                const treated_as = self.extra.number >> 8;
+                return writer.print("codepoint U+{X:0>4} within a string literal would be miscompiled by the Win32 RC compiler (it would get treated as U+{X:0>4})", .{ self.extra.number, treated_as });
             },
-            .rc_would_miscompile_codepoint_skip => switch (self.type) {
-                .err, .warning => return writer.print("codepoint U+{X} within a string literal would be miscompiled by the Win32 RC compiler (the codepoint would be missing from the compiled resource)", .{self.extra.number}),
-                .note => return writer.print("to avoid the potential miscompilation, an integer escape sequence in a wide string literal could be used instead: L\"\\x{X}\"", .{self.extra.number}),
+            .rc_would_miscompile_codepoint_skip => {
+                return writer.print("codepoint U+{X:0>4} within a string literal would be miscompiled by the Win32 RC compiler (the codepoint would be missing from the compiled resource)", .{self.extra.number});
+            },
+            .rc_would_miscompile_codepoint_bom => switch (self.type) {
+                .err, .warning => return writer.print("codepoint U+{X:0>4} within a string literal would cause the entire file to be miscompiled by the Win32 RC compiler", .{self.extra.number}),
+                .note => return writer.writeAll("the presence of this codepoint causes all non-ASCII codepoints to be byteswapped by the Win32 RC preprocessor"),
                 .hint => return,
             },
             .tab_converted_to_spaces => switch (self.type) {

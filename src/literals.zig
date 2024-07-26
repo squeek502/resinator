@@ -122,19 +122,27 @@ pub const IterativeStringParser = struct {
         const result = try self.nextUnchecked();
         if (self.diagnostics != null and result != null and !result.?.from_escaped_integer) {
             switch (result.?.codepoint) {
-                0x900, 0xA00, 0xA0D, 0x2000, 0xFFFE, 0xD00 => {
+                0x0900, 0x0A00, 0x0A0D, 0x2000, 0x0D00 => {
                     const err: ErrorDetails.Error = if (result.?.codepoint == 0xD00)
                         .rc_would_miscompile_codepoint_skip
                     else
-                        .rc_would_miscompile_codepoint_byte_swap;
+                        .rc_would_miscompile_codepoint_whitespace;
                     try self.diagnostics.?.diagnostics.append(ErrorDetails{
                         .err = err,
                         .type = .warning,
                         .token = self.diagnostics.?.token,
                         .extra = .{ .number = result.?.codepoint },
                     });
+                },
+                0xFFFE, 0xFFFF => {
                     try self.diagnostics.?.diagnostics.append(ErrorDetails{
-                        .err = err,
+                        .err = .rc_would_miscompile_codepoint_bom,
+                        .type = .warning,
+                        .token = self.diagnostics.?.token,
+                        .extra = .{ .number = result.?.codepoint },
+                    });
+                    try self.diagnostics.?.diagnostics.append(ErrorDetails{
+                        .err = .rc_would_miscompile_codepoint_bom,
                         .type = .note,
                         .token = self.diagnostics.?.token,
                         .print_source_line = false,

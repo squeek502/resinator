@@ -1371,6 +1371,48 @@ test "DLGINCLUDE wide input code page utf8, output code page windows-1252" {
     });
 }
 
+test "codepoints in string literals that would be miscompiled by the Win32 RC compiler" {
+    try testCompileErrorDetailsWithOptions(
+        &.{
+            .{ .type = .warning, .str = "codepoint U+FFFE within a string literal would cause the entire file to be miscompiled by the Win32 RC compiler" },
+            .{ .type = .note, .str = "the presence of this codepoint causes all non-ASCII codepoints to be byteswapped by the Win32 RC preprocessor" },
+        },
+        "1 RCDATA { \"\u{FFFE}\" }",
+        null,
+        .{
+            .cwd = std.fs.cwd(),
+            .default_code_page = .utf8,
+        },
+    );
+    try testCompileErrorDetailsWithOptions(
+        &.{
+            .{ .type = .warning, .str = "codepoint U+FFFF within a string literal would cause the entire file to be miscompiled by the Win32 RC compiler" },
+            .{ .type = .note, .str = "the presence of this codepoint causes all non-ASCII codepoints to be byteswapped by the Win32 RC preprocessor" },
+        },
+        "1 RCDATA { \"\u{FFFF}\" }",
+        null,
+        .{
+            .cwd = std.fs.cwd(),
+            .default_code_page = .utf8,
+        },
+    );
+    try testCompileErrorDetailsWithOptions(
+        &.{
+            .{ .type = .warning, .str = "codepoint U+0900 within a string literal would be miscompiled by the Win32 RC compiler (it would get treated as U+0009)" },
+            .{ .type = .warning, .str = "codepoint U+0A00 within a string literal would be miscompiled by the Win32 RC compiler (it would get treated as U+000A)" },
+            .{ .type = .warning, .str = "codepoint U+0A0D within a string literal would be miscompiled by the Win32 RC compiler (it would get treated as U+000A)" },
+            .{ .type = .warning, .str = "codepoint U+0D00 within a string literal would be miscompiled by the Win32 RC compiler (the codepoint would be missing from the compiled resource)" },
+            .{ .type = .warning, .str = "codepoint U+2000 within a string literal would be miscompiled by the Win32 RC compiler (it would get treated as U+0020)" },
+        },
+        "1 RCDATA { \"\u{0900}\u{0A00}\u{0A0D}\u{0D00}\u{2000}\" }",
+        null,
+        .{
+            .cwd = std.fs.cwd(),
+            .default_code_page = .utf8,
+        },
+    );
+}
+
 fn testCompileWithOutput(source: []const u8, expected_output: []const u8, cwd: std.fs.Dir) !void {
     return testCompileWithOutputAndOptions(source, expected_output, .{ .cwd = cwd });
 }

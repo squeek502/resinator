@@ -878,7 +878,7 @@ pub const Lexer = struct {
             // and miscompilations when used within string literals. We avoid the miscompilation
             // within string literals and emit a warning, but outside of string literals it makes
             // more sense to just disallow these codepoints.
-            0x900, 0xA00, 0xA0D, 0x2000, 0xFFFE, 0xD00 => if (!in_string_literal) error.IllegalCodepointOutsideStringLiterals else return,
+            0x900, 0xA00, 0xA0D, 0x2000, 0xD00, 0xFFFE, 0xFFFF => if (!in_string_literal) error.IllegalCodepointOutsideStringLiterals else return,
             else => return,
         };
         self.error_context_token = .{
