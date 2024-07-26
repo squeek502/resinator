@@ -116,7 +116,7 @@ pub const Parser = struct {
             const maybe_common_resource_attribute = try self.lookaheadToken(.normal);
             if (maybe_common_resource_attribute.id == .literal and rc.CommonResourceAttributes.map.has(maybe_common_resource_attribute.slice(self.lexer.buffer))) {
                 try common_resource_attributes.append(self.state.arena, maybe_common_resource_attribute);
-                self.nextToken(.normal) catch unreachable;
+                try self.nextToken(.normal);
             } else {
                 break;
             }
@@ -145,7 +145,7 @@ pub const Parser = struct {
                 .dialog, .dialogex => rc.OptionalStatements.dialog_map.get(slice) orelse break,
                 else => break,
             };
-            self.nextToken(.normal) catch unreachable;
+            try self.nextToken(.normal);
 
             const type_i = @intFromEnum(optional_statement_type);
             if (last_statement_per_type[type_i] != null) {
@@ -357,7 +357,7 @@ pub const Parser = struct {
                     const maybe_end_token = try self.lookaheadToken(.normal);
                     switch (maybe_end_token.id) {
                         .end => {
-                            self.nextToken(.normal) catch unreachable;
+                            try self.nextToken(.normal);
                             break;
                         },
                         .eof => {
@@ -502,7 +502,7 @@ pub const Parser = struct {
                     const lookahead = try self.lookaheadToken(.normal);
                     switch (lookahead.id) {
                         .end, .eof => {
-                            self.nextToken(.normal) catch unreachable;
+                            try self.nextToken(.normal);
                             break;
                         },
                         else => {},
@@ -790,7 +790,7 @@ pub const Parser = struct {
 
                 const maybe_begin = try self.lookaheadToken(.normal);
                 if (maybe_begin.id == .begin) {
-                    self.nextToken(.normal) catch unreachable;
+                    try self.nextToken(.normal);
 
                     if (!resource.canUseRawData()) {
                         try self.addErrorDetails(ErrorDetails{
@@ -866,11 +866,11 @@ pub const Parser = struct {
                         });
                     }
                     // otherwise just skip over commas
-                    self.nextToken(.normal) catch unreachable;
+                    try self.nextToken(.normal);
                     continue;
                 },
                 .end => {
-                    self.nextToken(.normal) catch unreachable;
+                    try self.nextToken(.normal);
                     break;
                 },
                 .eof => {
@@ -906,7 +906,7 @@ pub const Parser = struct {
     fn parseControlStatement(self: *Self, resource: Resource) Error!?*Node {
         const control_token = try self.lookaheadToken(.normal);
         const control = rc.Control.map.get(control_token.slice(self.lexer.buffer)) orelse return null;
-        self.nextToken(.normal) catch unreachable;
+        try self.nextToken(.normal);
 
         try self.skipAnyCommas();
 
@@ -1038,7 +1038,7 @@ pub const Parser = struct {
     fn parseToolbarButtonStatement(self: *Self) Error!?*Node {
         const keyword_token = try self.lookaheadToken(.normal);
         const button_type = rc.ToolbarButton.map.get(keyword_token.slice(self.lexer.buffer)) orelse return null;
-        self.nextToken(.normal) catch unreachable;
+        try self.nextToken(.normal);
 
         switch (button_type) {
             .separator => {
@@ -1068,7 +1068,7 @@ pub const Parser = struct {
     fn parseMenuItemStatement(self: *Self, resource: Resource, top_level_menu_id_token: Token, nesting_level: u32) Error!?*Node {
         const menuitem_token = try self.lookaheadToken(.normal);
         const menuitem = rc.MenuItem.map.get(menuitem_token.slice(self.lexer.buffer)) orelse return null;
-        self.nextToken(.normal) catch unreachable;
+        try self.nextToken(.normal);
 
         if (nesting_level > max_nested_menu_level) {
             try self.addErrorDetails(.{
@@ -1121,7 +1121,7 @@ pub const Parser = struct {
                             if (!rc.MenuItem.Option.map.has(option_token.slice(self.lexer.buffer))) {
                                 break;
                             }
-                            self.nextToken(.normal) catch unreachable;
+                            try self.nextToken(.normal);
                             try options.append(self.state.arena, option_token);
                             try self.skipAnyCommas();
                         }
@@ -1156,7 +1156,7 @@ pub const Parser = struct {
                         if (!rc.MenuItem.Option.map.has(option_token.slice(self.lexer.buffer))) {
                             break;
                         }
-                        self.nextToken(.normal) catch unreachable;
+                        try self.nextToken(.normal);
                         try options.append(self.state.arena, option_token);
                         try self.skipAnyCommas();
                     }
@@ -1308,7 +1308,7 @@ pub const Parser = struct {
     fn parseVersionStatement(self: *Self) Error!?*Node {
         const type_token = try self.lookaheadToken(.normal);
         const statement_type = rc.VersionInfo.map.get(type_token.slice(self.lexer.buffer)) orelse return null;
-        self.nextToken(.normal) catch unreachable;
+        try self.nextToken(.normal);
         switch (statement_type) {
             .file_version, .product_version => {
                 var parts_buffer: [4]*Node = undefined;
@@ -1352,7 +1352,7 @@ pub const Parser = struct {
     fn parseVersionBlockOrValue(self: *Self, top_level_version_id_token: Token, nesting_level: u32) Error!?*Node {
         const keyword_token = try self.lookaheadToken(.normal);
         const keyword = rc.VersionBlock.map.get(keyword_token.slice(self.lexer.buffer)) orelse return null;
-        self.nextToken(.normal) catch unreachable;
+        try self.nextToken(.normal);
 
         if (nesting_level > max_nested_version_level) {
             try self.addErrorDetails(.{
@@ -1832,7 +1832,7 @@ pub const Parser = struct {
     fn parseOptionalTokenAdvanced(self: *Self, id: Token.Id, comptime method: Lexer.LexMethod) Error!bool {
         const maybe_token = try self.lookaheadToken(method);
         if (maybe_token.id != id) return false;
-        self.nextToken(method) catch unreachable;
+        try self.nextToken(method);
         return true;
     }
 
