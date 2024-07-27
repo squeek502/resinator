@@ -1016,6 +1016,7 @@ pub const Lexer = struct {
             error.UnfinishedStringLiteral => ErrorDetails.Error.unfinished_string_literal,
             error.StringLiteralTooLong => return .{
                 .err = .string_literal_too_long,
+                .code_page = self.current_code_page,
                 .token = self.error_context_token.?,
                 .extra = .{ .number = self.max_string_literal_codepoints },
             },
@@ -1037,6 +1038,7 @@ pub const Lexer = struct {
         };
         return .{
             .err = err,
+            .code_page = self.current_code_page,
             .token = self.error_context_token.?,
         };
     }

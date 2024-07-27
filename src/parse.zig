@@ -7,6 +7,7 @@ const CodePageLookup = @import("ast.zig").CodePageLookup;
 const Resource = @import("rc.zig").Resource;
 const Allocator = std.mem.Allocator;
 const ErrorDetails = @import("errors.zig").ErrorDetails;
+const ErrorDetailsWithoutCodePage = @import("errors.zig").ErrorDetailsWithoutCodePage;
 const Diagnostics = @import("errors.zig").Diagnostics;
 const SourceBytes = @import("literals.zig").SourceBytes;
 const Compiler = @import("compile.zig").Compiler;
@@ -177,7 +178,7 @@ pub const Parser = struct {
                     try self.nextToken(.normal);
                     const value = self.state.token;
                     if (!value.isStringLiteral()) {
-                        return self.addErrorDetailsAndFail(ErrorDetails{
+                        return self.addErrorDetailsAndFail(.{
                             .err = .expected_something_else,
                             .token = value,
                             .extra = .{ .expected_types = .{
@@ -234,7 +235,7 @@ pub const Parser = struct {
                     try self.nextToken(.normal);
                     const typeface = self.state.token;
                     if (!typeface.isStringLiteral()) {
-                        return self.addErrorDetailsAndFail(ErrorDetails{
+                        return self.addErrorDetailsAndFail(.{
                             .err = .expected_something_else,
                             .token = typeface,
                             .extra = .{ .expected_types = .{
@@ -361,8 +362,9 @@ pub const Parser = struct {
                             break;
                         },
                         .eof => {
-                            return self.addErrorDetailsAndFail(ErrorDetails{
+                            return self.addErrorDetailsWithCodePageAndFail(.{
                                 .err = .unfinished_string_table_block,
+                                .code_page = self.lexer.current_code_page,
                                 .token = maybe_end_token,
                             });
                         },
@@ -374,7 +376,7 @@ pub const Parser = struct {
 
                     try self.nextToken(.normal);
                     if (self.state.token.id != .quoted_ascii_string and self.state.token.id != .quoted_wide_string) {
-                        return self.addErrorDetailsAndFail(ErrorDetails{
+                        return self.addErrorDetailsAndFail(.{
                             .err = .expected_something_else,
                             .token = self.state.token,
                             .extra = .{ .expected_types = .{ .string_literal = true } },
@@ -391,7 +393,7 @@ pub const Parser = struct {
                 }
 
                 if (strings.items.len == 0) {
-                    return self.addErrorDetailsAndFail(ErrorDetails{
+                    return self.addErrorDetailsAndFail(.{
                         .err = .expected_token, // TODO: probably a more specific error message
                         .token = self.state.token,
                         .extra = .{ .expected = .number },
@@ -464,12 +466,12 @@ pub const Parser = struct {
             if (maybe_ordinal == null) {
                 const would_be_win32_rc_ordinal = res.NameOrOrdinal.maybeNonAsciiOrdinalFromString(id_bytes);
                 if (would_be_win32_rc_ordinal) |win32_rc_ordinal| {
-                    try self.addErrorDetails(ErrorDetails{
+                    try self.addErrorDetails(.{
                         .err = .id_must_be_ordinal,
                         .token = id_token,
                         .extra = .{ .resource = resource },
                     });
-                    return self.addErrorDetailsAndFail(ErrorDetails{
+                    return self.addErrorDetailsAndFail(.{
                         .err = .win32_non_ascii_ordinal,
                         .token = id_token,
                         .type = .note,
@@ -477,7 +479,7 @@ pub const Parser = struct {
                         .extra = .{ .number = win32_rc_ordinal.ordinal },
                     });
                 } else {
-                    return self.addErrorDetailsAndFail(ErrorDetails{
+                    return self.addErrorDetailsAndFail(.{
                         .err = .id_must_be_ordinal,
                         .token = id_token,
                         .extra = .{ .resource = resource },
@@ -793,16 +795,16 @@ pub const Parser = struct {
                     try self.nextToken(.normal);
 
                     if (!resource.canUseRawData()) {
-                        try self.addErrorDetails(ErrorDetails{
+                        try self.addErrorDetails(.{
                             .err = .resource_type_cant_use_raw_data,
-                            .token = maybe_begin,
+                            .token = self.state.token,
                             .extra = .{ .resource = resource },
                         });
-                        return self.addErrorDetailsAndFail(ErrorDetails{
+                        return self.addErrorDetailsAndFail(.{
                             .err = .resource_type_cant_use_raw_data,
                             .type = .note,
                             .print_source_line = false,
-                            .token = maybe_begin,
+                            .token = self.state.token,
                         });
                     }
 
@@ -853,11 +855,12 @@ pub const Parser = struct {
             const maybe_end_token = try self.lookaheadToken(.normal);
             switch (maybe_end_token.id) {
                 .comma => {
+                    try self.nextToken(.normal);
                     // comma as the first token in a raw data block is an error
                     if (raw_data.items.len == 0) {
-                        return self.addErrorDetailsAndFail(ErrorDetails{
+                        return self.addErrorDetailsAndFail(.{
                             .err = .expected_something_else,
-                            .token = maybe_end_token,
+                            .token = self.state.token,
                             .extra = .{ .expected_types = .{
                                 .number = true,
                                 .number_expression = true,
@@ -866,7 +869,6 @@ pub const Parser = struct {
                         });
                     }
                     // otherwise just skip over commas
-                    try self.nextToken(.normal);
                     continue;
                 },
                 .end => {
@@ -874,8 +876,9 @@ pub const Parser = struct {
                     break;
                 },
                 .eof => {
-                    return self.addErrorDetailsAndFail(ErrorDetails{
+                    return self.addErrorDetailsWithCodePageAndFail(.{
                         .err = .unfinished_raw_data_block,
+                        .code_page = self.lexer.current_code_page,
                         .token = maybe_end_token,
                     });
                 },
@@ -887,10 +890,12 @@ pub const Parser = struct {
             if (expression.isNumberExpression()) {
                 const maybe_close_paren = try self.lookaheadToken(.normal);
                 if (maybe_close_paren.id == .close_paren) {
+                    // advance to ensure that the code page lookup is populated for this token
+                    try self.nextToken(.normal);
                     // <number expression>) is an error
-                    return self.addErrorDetailsAndFail(ErrorDetails{
+                    return self.addErrorDetailsAndFail(.{
                         .err = .expected_token,
-                        .token = maybe_close_paren,
+                        .token = self.state.token,
                         .extra = .{ .expected = .operator },
                     });
                 }
@@ -918,7 +923,7 @@ pub const Parser = struct {
                     text = self.state.token;
                 },
                 else => {
-                    return self.addErrorDetailsAndFail(ErrorDetails{
+                    return self.addErrorDetailsAndFail(.{
                         .err = .expected_something_else,
                         .token = self.state.token,
                         .extra = .{ .expected_types = .{
@@ -971,14 +976,16 @@ pub const Parser = struct {
             // the style parameter.
             const lookahead_token = try self.lookaheadToken(.normal);
             if (lookahead_token.id != .comma and lookahead_token.id != .eof) {
-                try self.addErrorDetails(.{
+                try self.addErrorDetailsWithCodePage(.{
                     .err = .rc_could_miscompile_control_params,
                     .type = .warning,
+                    .code_page = self.lexer.current_code_page,
                     .token = lookahead_token,
                 });
-                try self.addErrorDetails(.{
+                try self.addErrorDetailsWithCodePage(.{
                     .err = .rc_could_miscompile_control_params,
                     .type = .note,
+                    .code_page = self.lexer.current_code_page,
                     .token = style.?.getFirstToken(),
                     .token_span_end = style.?.getLastToken(),
                 });
@@ -1101,7 +1108,7 @@ pub const Parser = struct {
                     } else {
                         const text = self.state.token;
                         if (!text.isStringLiteral()) {
-                            return self.addErrorDetailsAndFail(ErrorDetails{
+                            return self.addErrorDetailsAndFail(.{
                                 .err = .expected_something_else,
                                 .token = text,
                                 .extra = .{ .expected_types = .{
@@ -1140,7 +1147,7 @@ pub const Parser = struct {
                     try self.nextToken(.normal);
                     const text = self.state.token;
                     if (!text.isStringLiteral()) {
-                        return self.addErrorDetailsAndFail(ErrorDetails{
+                        return self.addErrorDetailsAndFail(.{
                             .err = .expected_something_else,
                             .token = text,
                             .extra = .{ .expected_types = .{
@@ -1197,7 +1204,7 @@ pub const Parser = struct {
                 try self.nextToken(.normal);
                 const text = self.state.token;
                 if (!text.isStringLiteral()) {
-                    return self.addErrorDetailsAndFail(ErrorDetails{
+                    return self.addErrorDetailsAndFail(.{
                         .err = .expected_something_else,
                         .token = text,
                         .extra = .{ .expected_types = .{
@@ -1592,7 +1599,7 @@ pub const Parser = struct {
             }
         };
 
-        pub fn toErrorDetails(options: ParseExpressionOptions, token: Token) ErrorDetails {
+        pub fn toErrorDetails(options: ParseExpressionOptions, token: Token) ErrorDetailsWithoutCodePage {
             // TODO: expected_types_override interaction with is_known_to_be_number_expression?
             const expected_types = options.expected_types_override orelse ErrorDetails.ExpectedTypes{
                 .number = options.allowed_types.number,
@@ -1600,7 +1607,7 @@ pub const Parser = struct {
                 .string_literal = options.allowed_types.string and !options.is_known_to_be_number_expression,
                 .literal = options.allowed_types.literal and !options.is_known_to_be_number_expression,
             };
-            return ErrorDetails{
+            return .{
                 .err = .expected_something_else,
                 .token = token,
                 .extra = .{ .expected_types = expected_types },
@@ -1741,7 +1748,7 @@ pub const Parser = struct {
 
         try self.addErrorDetails(options.toErrorDetails(self.state.token));
         if (is_close_paren_expression) {
-            try self.addErrorDetails(ErrorDetails{
+            try self.addErrorDetails(.{
                 .err = .close_paren_expression,
                 .type = .note,
                 .token = self.state.token,
@@ -1749,7 +1756,7 @@ pub const Parser = struct {
             });
         }
         if (is_unary_plus_expression) {
-            try self.addErrorDetails(ErrorDetails{
+            try self.addErrorDetails(.{
                 .err = .unary_plus_expression,
                 .type = .note,
                 .token = self.state.token,
@@ -1790,7 +1797,7 @@ pub const Parser = struct {
             });
 
             if (!rhs_node.isNumberExpression()) {
-                return self.addErrorDetailsAndFail(ErrorDetails{
+                return self.addErrorDetailsAndFail(.{
                     .err = .expected_something_else,
                     .token = rhs_node.getFirstToken(),
                     .token_span_end = rhs_node.getLastToken(),
@@ -1836,12 +1843,35 @@ pub const Parser = struct {
         return true;
     }
 
-    fn addErrorDetails(self: *Self, details: ErrorDetails) Allocator.Error!void {
+    fn addErrorDetailsWithCodePage(self: *Self, details: ErrorDetails) Allocator.Error!void {
         try self.state.diagnostics.append(details);
     }
 
-    fn addErrorDetailsAndFail(self: *Self, details: ErrorDetails) Error {
-        try self.addErrorDetails(details);
+    fn addErrorDetailsWithCodePageAndFail(self: *Self, details: ErrorDetails) Error {
+        try self.addErrorDetailsWithCodePage(details);
+        return error.ParseError;
+    }
+
+    /// Code page is looked up in input_code_page_lookup using the token, meaning the token
+    /// must come from nextToken (i.e. it can't be a lookahead token).
+    fn addErrorDetails(self: *Self, details_without_code_page: ErrorDetailsWithoutCodePage) Allocator.Error!void {
+        const details = ErrorDetails{
+            .err = details_without_code_page.err,
+            .code_page = self.state.input_code_page_lookup.getForToken(details_without_code_page.token),
+            .token = details_without_code_page.token,
+            .token_span_start = details_without_code_page.token_span_start,
+            .token_span_end = details_without_code_page.token_span_end,
+            .type = details_without_code_page.type,
+            .print_source_line = details_without_code_page.print_source_line,
+            .extra = details_without_code_page.extra,
+        };
+        try self.addErrorDetailsWithCodePage(details);
+    }
+
+    /// Code page is looked up in input_code_page_lookup using the token, meaning the token
+    /// must come from nextToken (i.e. it can't be a lookahead token).
+    fn addErrorDetailsAndFail(self: *Self, details_without_code_page: ErrorDetailsWithoutCodePage) Error {
+        try self.addErrorDetails(details_without_code_page);
         return error.ParseError;
     }
 
@@ -1861,15 +1891,15 @@ pub const Parser = struct {
                 error.CodePagePragmaInvalidCodePage => {
                     var details = self.lexer.getErrorDetails(err);
                     if (!self.options.warn_instead_of_error_on_invalid_code_page) {
-                        return self.addErrorDetailsAndFail(details);
+                        return self.addErrorDetailsWithCodePageAndFail(details);
                     }
                     details.type = .warning;
-                    try self.addErrorDetails(details);
+                    try self.addErrorDetailsWithCodePage(details);
                     continue;
                 },
                 error.InvalidDigitCharacterInNumberLiteral => {
                     const details = self.lexer.getErrorDetails(err);
-                    try self.addErrorDetails(details);
+                    try self.addErrorDetailsWithCodePage(details);
                     return self.addErrorDetailsAndFail(.{
                         .err = details.err,
                         .type = .note,
@@ -1877,7 +1907,7 @@ pub const Parser = struct {
                         .print_source_line = false,
                     });
                 },
-                else => return self.addErrorDetailsAndFail(self.lexer.getErrorDetails(err)),
+                else => return self.addErrorDetailsWithCodePageAndFail(self.lexer.getErrorDetails(err)),
             };
             break :token token;
         };
@@ -1897,7 +1927,7 @@ pub const Parser = struct {
                 // Ignore this error and get the next valid token, we'll deal with this
                 // properly when getting the token for real
                 error.CodePagePragmaInIncludedFile => continue,
-                else => return self.addErrorDetailsAndFail(self.state.lookahead_lexer.getErrorDetails(err)),
+                else => return self.addErrorDetailsWithCodePageAndFail(self.state.lookahead_lexer.getErrorDetails(err)),
             };
         };
     }
@@ -1911,7 +1941,7 @@ pub const Parser = struct {
         switch (self.state.token.id) {
             .literal => {},
             else => {
-                return self.addErrorDetailsAndFail(ErrorDetails{
+                return self.addErrorDetailsAndFail(.{
                     .err = .expected_token,
                     .token = self.state.token,
                     .extra = .{ .expected = .literal },
@@ -1922,7 +1952,7 @@ pub const Parser = struct {
 
     fn check(self: *Self, expected_token_id: Token.Id) !void {
         if (self.state.token.id != expected_token_id) {
-            return self.addErrorDetailsAndFail(ErrorDetails{
+            return self.addErrorDetailsAndFail(.{
                 .err = .expected_token,
                 .token = self.state.token,
                 .extra = .{ .expected = expected_token_id },
@@ -1937,7 +1967,7 @@ pub const Parser = struct {
                 .code_page = self.lexer.current_code_page,
             }),
             else => {
-                return self.addErrorDetailsAndFail(ErrorDetails{
+                return self.addErrorDetailsAndFail(.{
                     .err = .expected_token,
                     .token = self.state.token,
                     .extra = .{ .expected = .literal },

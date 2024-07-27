@@ -98,6 +98,7 @@ pub fn compile(allocator: Allocator, source: []const u8, writer: anytype, option
                 .end = 0,
                 .line_number = 1,
             },
+            .code_page = .utf8,
             .print_source_line = false,
             .extra = .{ .file_open_error = .{
                 .err = ErrorDetails.FileOpenError.enumFromError(err),
@@ -213,7 +214,12 @@ pub const Compiler = struct {
             try self.addErrorDetails(.{
                 .err = .result_contains_fontdir,
                 .type = .hint,
-                .token = undefined,
+                .token = .{
+                    .id = .invalid,
+                    .start = 0,
+                    .end = 0,
+                    .line_number = 1,
+                },
             });
         }
         // once we've written every else out, we can write out the finalized STRINGTABLE resources
@@ -301,7 +307,7 @@ pub const Compiler = struct {
                         // UTF-8, we can parse either string type directly to UTF-8.
                         var parser = literals.IterativeStringParser.init(bytes, .{
                             .start_column = column,
-                            .diagnostics = .{ .diagnostics = self.diagnostics, .token = literal_node.token },
+                            .diagnostics = self.errContext(literal_node.token),
                         });
 
                         while (try parser.nextUnchecked()) |parsed| {
@@ -413,7 +419,7 @@ pub const Compiler = struct {
 
         var iterative_parser = literals.IterativeStringParser.init(bytes, .{
             .start_column = token.calculateColumn(self.source, 8, null),
-            .diagnostics = .{ .diagnostics = self.diagnostics, .token = token },
+            .diagnostics = self.errContext(token),
         });
 
         // This is similar to the logic in parseQuotedString, but ends up with everything
@@ -486,7 +492,7 @@ pub const Compiler = struct {
             // 2 bytes, which means that the maximum byte length of a DLGINCLUDE string is
             // (including the NUL terminator): 32,767 * 2 + 1 = 65,535 or exactly the u16 max.
             header.data_size = @intCast(parsed_filename_terminated.len + 1);
-            try header.write(writer, .{ .diagnostics = self.diagnostics, .token = node.id });
+            try header.write(writer, self.errContext(node.id));
             try writer.writeAll(parsed_filename_terminated);
             try writer.writeByte(0);
             try writeDataPadding(writer, header.data_size);
@@ -569,7 +575,7 @@ pub const Compiler = struct {
                         header.applyMemoryFlags(node.common_resource_attributes, self.source);
                         header.data_size = @intCast(try file.getEndPos());
 
-                        try header.write(writer, .{ .diagnostics = self.diagnostics, .token = node.id });
+                        try header.write(writer, self.errContext(node.id));
                         try file.seekTo(0);
                         try writeResourceData(writer, file.reader(), header.data_size);
                         return;
@@ -645,7 +651,7 @@ pub const Compiler = struct {
                             .version = self.state.version,
                             .characteristics = self.state.characteristics,
                         };
-                        try image_header.write(writer, .{ .diagnostics = self.diagnostics, .token = node.id });
+                        try image_header.write(writer, self.errContext(node.id));
 
                         // From https://learn.microsoft.com/en-us/windows/win32/menurc/localheader:
                         // > The LOCALHEADER structure is the first data written to the RT_CURSOR
@@ -818,7 +824,7 @@ pub const Compiler = struct {
 
                     header.data_size = icon_dir.getResDataSize();
 
-                    try header.write(writer, .{ .diagnostics = self.diagnostics, .token = node.id });
+                    try header.write(writer, self.errContext(node.id));
                     try icon_dir.writeResData(writer, first_icon_id);
                     try writeDataPadding(writer, header.data_size);
                     return;
@@ -891,7 +897,7 @@ pub const Compiler = struct {
                     const bmp_bytes_to_write: u32 = @intCast(bitmap_info.getExpectedByteLen(file_size));
 
                     header.data_size = bmp_bytes_to_write;
-                    try header.write(writer, .{ .diagnostics = self.diagnostics, .token = node.id });
+                    try header.write(writer, self.errContext(node.id));
                     try file.seekTo(bmp.file_header_len);
                     const file_reader = file.reader();
                     try writeResourceDataNoPadding(writer, file_reader, bitmap_info.dib_header_size);
@@ -912,13 +918,13 @@ pub const Compiler = struct {
                         // Add warning and skip this resource
                         // Note: The Win32 compiler prints this as an error but it doesn't fail the compilation
                         // and the duplicate resource is skipped.
-                        try self.addErrorDetails(ErrorDetails{
+                        try self.addErrorDetails(.{
                             .err = .font_id_already_defined,
                             .token = node.id,
                             .type = .warning,
                             .extra = .{ .number = header.name_value.ordinal },
                         });
-                        try self.addErrorDetails(ErrorDetails{
+                        try self.addErrorDetails(.{
                             .err = .font_id_already_defined,
                             .token = self.state.font_dir.ids.get(header.name_value.ordinal).?,
                             .type = .note,
@@ -937,7 +943,7 @@ pub const Compiler = struct {
 
                     // We now know that the data size will fit in a u32
                     header.data_size = @intCast(file_size);
-                    try header.write(writer, .{ .diagnostics = self.diagnostics, .token = node.id });
+                    try header.write(writer, self.errContext(node.id));
 
                     var header_slurping_reader = headerSlurpingReader(148, file.reader());
                     try writeResourceData(writer, header_slurping_reader.reader(), header.data_size);
@@ -978,7 +984,7 @@ pub const Compiler = struct {
         }
         // We now know that the data size will fit in a u32
         header.data_size = @intCast(data_size);
-        try header.write(writer, .{ .diagnostics = self.diagnostics, .token = node.id });
+        try header.write(writer, self.errContext(node.id));
         try writeResourceData(writer, file.reader(), header.data_size);
     }
 
@@ -1168,7 +1174,7 @@ pub const Compiler = struct {
                         };
                         const parsed = try literals.parseQuotedAsciiString(self.allocator, bytes, .{
                             .start_column = column,
-                            .diagnostics = .{ .diagnostics = self.diagnostics, .token = literal_node.token },
+                            .diagnostics = self.errContext(literal_node.token),
                             .output_code_page = self.output_code_pages.getForToken(literal_node.token),
                         });
                         errdefer self.allocator.free(parsed);
@@ -1182,7 +1188,7 @@ pub const Compiler = struct {
                         };
                         const parsed_string = try literals.parseQuotedWideString(self.allocator, bytes, .{
                             .start_column = column,
-                            .diagnostics = .{ .diagnostics = self.diagnostics, .token = literal_node.token },
+                            .diagnostics = self.errContext(literal_node.token),
                         });
                         errdefer self.allocator.free(parsed_string);
                         return .{ .wide_string = parsed_string };
@@ -1239,7 +1245,7 @@ pub const Compiler = struct {
 
         header.applyMemoryFlags(common_resource_attributes, self.source);
 
-        try header.write(writer, .{ .diagnostics = self.diagnostics, .token = id_token });
+        try header.write(writer, self.errContext(id_token));
     }
 
     pub fn writeResourceDataNoPadding(writer: anytype, data_reader: anytype, data_size: u32) !void {
@@ -1277,7 +1283,7 @@ pub const Compiler = struct {
             const column = literal.token.calculateColumn(self.source, 8, null);
             return res.parseAcceleratorKeyString(bytes, is_virt, .{
                 .start_column = column,
-                .diagnostics = .{ .diagnostics = self.diagnostics, .token = literal.token },
+                .diagnostics = self.errContext(literal.token),
                 .output_code_page = self.output_code_pages.getForToken(literal.token),
             });
         }
@@ -1313,7 +1319,7 @@ pub const Compiler = struct {
         header.applyMemoryFlags(node.common_resource_attributes, self.source);
         header.applyOptionalStatements(node.optional_statements, self.source, self.input_code_pages);
 
-        try header.write(writer, .{ .diagnostics = self.diagnostics, .token = node.id });
+        try header.write(writer, self.errContext(node.id));
 
         var data_fbs = std.io.fixedBufferStream(data_buffer.items);
         try writeResourceData(writer, data_fbs.reader(), data_size);
@@ -1706,7 +1712,7 @@ pub const Compiler = struct {
         header.applyMemoryFlags(node.common_resource_attributes, self.source);
         header.applyOptionalStatements(node.optional_statements, self.source, self.input_code_pages);
 
-        try header.write(writer, .{ .diagnostics = self.diagnostics, .token = node.id });
+        try header.write(writer, self.errContext(node.id));
 
         var data_fbs = std.io.fixedBufferStream(data_buffer.items);
         try writeResourceData(writer, data_fbs.reader(), data_size);
@@ -2020,7 +2026,7 @@ pub const Compiler = struct {
 
         header.applyMemoryFlags(node.common_resource_attributes, self.source);
 
-        try header.write(writer, .{ .diagnostics = self.diagnostics, .token = node.id });
+        try header.write(writer, self.errContext(node.id));
 
         var data_fbs = std.io.fixedBufferStream(data_buffer.items);
         try writeResourceData(writer, data_fbs.reader(), data_size);
@@ -2095,7 +2101,7 @@ pub const Compiler = struct {
         header.applyMemoryFlags(node.common_resource_attributes, self.source);
         header.applyOptionalStatements(node.optional_statements, self.source, self.input_code_pages);
 
-        try header.write(writer, .{ .diagnostics = self.diagnostics, .token = node.id });
+        try header.write(writer, self.errContext(node.id));
 
         var data_fbs = std.io.fixedBufferStream(data_buffer.items);
         try writeResourceData(writer, data_fbs.reader(), data_size);
@@ -2360,7 +2366,7 @@ pub const Compiler = struct {
 
         header.applyMemoryFlags(node.common_resource_attributes, self.source);
 
-        try header.write(writer, .{ .diagnostics = self.diagnostics, .token = node.id });
+        try header.write(writer, self.errContext(node.id));
 
         var data_fbs = std.io.fixedBufferStream(data_buffer.items);
         try writeResourceData(writer, data_fbs.reader(), data_size);
@@ -2492,14 +2498,14 @@ pub const Compiler = struct {
                     // It might be nice to have these errors point to the ids rather than the
                     // string tokens, but that would mean storing the id token of each string
                     // which doesn't seem worth it just for slightly better error messages.
-                    try self.addErrorDetails(ErrorDetails{
+                    try self.addErrorDetails(.{
                         .err = .string_already_defined,
                         .token = string.string,
                         .extra = .{ .string_and_language = .{ .id = string_id, .language = language } },
                     });
                     const existing_def_table = self.state.string_tables.tables.getPtr(language).?;
                     const existing_definition = existing_def_table.get(string_id).?;
-                    return self.addErrorDetailsAndFail(ErrorDetails{
+                    return self.addErrorDetailsAndFail(.{
                         .err = .string_already_defined,
                         .type = .note,
                         .token = existing_definition,
@@ -2666,6 +2672,7 @@ pub const Compiler = struct {
             const size_info = self.calcSize() catch {
                 try err_ctx.diagnostics.append(.{
                     .err = .resource_data_size_exceeds_max,
+                    .code_page = err_ctx.code_page,
                     .token = err_ctx.token,
                 });
                 return error.CompileError;
@@ -2830,18 +2837,42 @@ pub const Compiler = struct {
             self.sourceBytesForToken(token),
             .{
                 .start_column = token.calculateColumn(self.source, 8, null),
-                .diagnostics = .{ .diagnostics = self.diagnostics, .token = token },
+                .diagnostics = self.errContext(token),
             },
         );
     }
 
-    fn addErrorDetails(self: *Compiler, details: ErrorDetails) Allocator.Error!void {
+    fn addErrorDetailsWithCodePage(self: *Compiler, details: ErrorDetails) Allocator.Error!void {
         try self.diagnostics.append(details);
     }
 
-    fn addErrorDetailsAndFail(self: *Compiler, details: ErrorDetails) error{ CompileError, OutOfMemory } {
-        try self.addErrorDetails(details);
+    /// Code page is looked up in input_code_pages using the token
+    fn addErrorDetails(self: *Compiler, details_without_code_page: errors.ErrorDetailsWithoutCodePage) Allocator.Error!void {
+        const details = ErrorDetails{
+            .err = details_without_code_page.err,
+            .code_page = self.input_code_pages.getForToken(details_without_code_page.token),
+            .token = details_without_code_page.token,
+            .token_span_start = details_without_code_page.token_span_start,
+            .token_span_end = details_without_code_page.token_span_end,
+            .type = details_without_code_page.type,
+            .print_source_line = details_without_code_page.print_source_line,
+            .extra = details_without_code_page.extra,
+        };
+        try self.addErrorDetailsWithCodePage(details);
+    }
+
+    /// Code page is looked up in input_code_pages using the token
+    fn addErrorDetailsAndFail(self: *Compiler, details_without_code_page: errors.ErrorDetailsWithoutCodePage) error{ CompileError, OutOfMemory } {
+        try self.addErrorDetails(details_without_code_page);
         return error.CompileError;
+    }
+
+    fn errContext(self: *Compiler, token: Token) errors.DiagnosticsContext {
+        return .{
+            .diagnostics = self.diagnostics,
+            .token = token,
+            .code_page = self.input_code_pages.getForToken(token),
+        };
     }
 };
 
@@ -3214,7 +3245,7 @@ pub const StringTable = struct {
                 const bytes = SourceBytes{ .slice = slice, .code_page = code_page };
                 const utf16_string = try literals.parseQuotedStringAsWideString(compiler.allocator, bytes, .{
                     .start_column = column,
-                    .diagnostics = .{ .diagnostics = compiler.diagnostics, .token = string_token },
+                    .diagnostics = compiler.errContext(string_token),
                 });
                 defer compiler.allocator.free(utf16_string);
 

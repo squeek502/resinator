@@ -663,6 +663,7 @@ pub fn parseAcceleratorKeyString(bytes: SourceBytes, is_virt: bool, options: lit
             try options.diagnostics.?.diagnostics.append(.{
                 .err = .ascii_character_not_equivalent_to_virtual_key_code,
                 .type = .warning,
+                .code_page = bytes.code_page,
                 .token = options.diagnostics.?.token,
             });
         }

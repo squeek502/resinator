@@ -130,6 +130,7 @@ pub const IterativeStringParser = struct {
                     try self.diagnostics.?.diagnostics.append(ErrorDetails{
                         .err = err,
                         .type = .warning,
+                        .code_page = self.code_page,
                         .token = self.diagnostics.?.token,
                         .extra = .{ .number = result.?.codepoint },
                     });
@@ -138,12 +139,14 @@ pub const IterativeStringParser = struct {
                     try self.diagnostics.?.diagnostics.append(ErrorDetails{
                         .err = .rc_would_miscompile_codepoint_bom,
                         .type = .warning,
+                        .code_page = self.code_page,
                         .token = self.diagnostics.?.token,
                         .extra = .{ .number = result.?.codepoint },
                     });
                     try self.diagnostics.?.diagnostics.append(ErrorDetails{
                         .err = .rc_would_miscompile_codepoint_bom,
                         .type = .note,
+                        .code_page = self.code_page,
                         .token = self.diagnostics.?.token,
                         .print_source_line = false,
                         .extra = .{ .number = result.?.codepoint },
@@ -208,11 +211,13 @@ pub const IterativeStringParser = struct {
                             try self.diagnostics.?.diagnostics.append(ErrorDetails{
                                 .err = .tab_converted_to_spaces,
                                 .type = .warning,
+                                .code_page = self.code_page,
                                 .token = self.diagnostics.?.token,
                             });
                             try self.diagnostics.?.diagnostics.append(ErrorDetails{
                                 .err = .tab_converted_to_spaces,
                                 .type = .note,
+                                .code_page = self.code_page,
                                 .token = self.diagnostics.?.token,
                                 .print_source_line = false,
                             });
@@ -313,11 +318,13 @@ pub const IterativeStringParser = struct {
                                             try self.diagnostics.?.diagnostics.append(ErrorDetails{
                                                 .err = .tab_converted_to_spaces,
                                                 .type = .warning,
+                                                .code_page = self.code_page,
                                                 .token = self.diagnostics.?.token,
                                             });
                                             try self.diagnostics.?.diagnostics.append(ErrorDetails{
                                                 .err = .tab_converted_to_spaces,
                                                 .type = .note,
+                                                .code_page = self.code_page,
                                                 .token = self.diagnostics.?.token,
                                                 .print_source_line = false,
                                             });
