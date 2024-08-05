@@ -313,7 +313,7 @@ test "top-level statements" {
     );
     try testParseErrorDetails(
         &.{.{ .type = .err, .str = "expected number or number expression; got '<eof>'" }},
-        "LANGUAGE",
+        "CHARACTERISTICS",
         null,
     );
     try testParseErrorDetails(
