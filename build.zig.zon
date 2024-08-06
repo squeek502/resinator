@@ -3,8 +3,8 @@
     .version = "0.1.0",
     .dependencies = .{
         .aro = .{
-            .url = "https://github.com/squeek502/preresinator/archive/b07529eb77fbf9f7ea93aae295b1f916751498f0.tar.gz",
-            .hash = "1220bfbc79cb02a4a7bb83c65528864032d324a7afcd26d1343f5b529c68fbbb5903",
+            .url = "https://github.com/squeek502/preresinator/archive/bb4d91001dc69d127a6328b97afcc112aaf8aceb.tar.gz",
+            .hash = "1220218abbce9f0be5ab0cc9ce534ee66c4606ca72228dcfbcf7ce50d9fe5382c0e4",
         },
         .compressed_mingw_includes = .{
             .url = "https://github.com/squeek502/compressed_mingw_includes/releases/download/1.0.2/compressed_mingw_includes.tar",
