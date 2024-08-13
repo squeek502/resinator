@@ -357,6 +357,10 @@ pub const Lexer = struct {
         }
 
         result.end = self.index;
+
+        // EOF tokens must have their start index match the end index
+        std.debug.assert(result.id != .eof or result.start == result.end);
+
         return result;
     }
 
@@ -834,6 +838,9 @@ pub const Lexer = struct {
                 return LexError.StringLiteralTooLong;
             }
         }
+
+        // EOF tokens must have their start index match the end index
+        std.debug.assert(result.id != .eof or result.start == result.end);
 
         return result;
     }
