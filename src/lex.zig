@@ -305,12 +305,8 @@ pub const Lexer = struct {
                         }
                         self.at_start_of_line = false;
                     },
-                    // Semi-colon acts as a line-terminator, but in this lexing mode
-                    // that's only true if it's at the start of a line.
                     ';' => {
-                        if (self.at_start_of_line) {
-                            state = .semicolon;
-                        }
+                        state = .semicolon;
                         self.at_start_of_line = false;
                     },
                     else => {
@@ -345,7 +341,11 @@ pub const Lexer = struct {
             }
         } else { // got EOF
             switch (state) {
-                .start, .semicolon => {},
+                .start => {},
+                .semicolon => {
+                    // Skip past everything up to the EOF
+                    result.start = self.index;
+                },
                 .literal => {
                     result.id = .literal;
                 },

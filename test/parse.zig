@@ -1717,7 +1717,7 @@ test "semicolons" {
         \\1; RC;DATA {
         \\  1;100
         \\  2
-        \\}
+        \\} ; this is ignored
         \\; This is basically a comment
         \\
     ,
@@ -1731,6 +1731,17 @@ test "semicolons" {
         \\ resource_raw_data 1; RC;DATA [0 common_resource_attributes] raw data: 2
         \\  literal 1
         \\  literal 2
+        \\
+    );
+    try testParse(
+        \\1 RCDATA { "foo" } 2 ;RCDATA { "bar" }
+    ,
+        \\root
+        \\ resource_raw_data 1 RCDATA [0 common_resource_attributes] raw data: 1
+        \\  literal "foo"
+        \\ invalid context.len: 2
+        \\  literal:2
+        \\  eof:
         \\
     );
 }
