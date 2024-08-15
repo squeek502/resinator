@@ -615,7 +615,7 @@ pub const ErrorDetails = struct {
             },
             .rc_would_miscompile_control_padding => switch (self.type) {
                 .err, .warning => return writer.print("the padding before this control would be miscompiled by the Win32 RC compiler (it would insert 2 extra bytes of padding)", .{}),
-                .note => return writer.print("to avoid the potential miscompilation, consider removing any 'control data' blocks from the controls in this dialog", .{}),
+                .note => return writer.print("to avoid the potential miscompilation, consider adding one more byte to the control data of the control preceding this one", .{}),
                 .hint => return,
             },
             .rc_would_miscompile_control_class_ordinal => switch (self.type) {
