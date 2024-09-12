@@ -1879,13 +1879,11 @@ pub const Parser = struct {
         self.state.token = token: while (true) {
             const token = self.lexer.next(method) catch |err| switch (err) {
                 error.CodePagePragmaInIncludedFile => {
-                    // The Win32 RC compiler silently ignores such `#pragma code_point` directives,
+                    // The Win32 RC compiler silently ignores such `#pragma code_page` directives,
                     // but we want to both ignore them *and* emit a warning
-                    try self.addErrorDetails(.{
-                        .err = .code_page_pragma_in_included_file,
-                        .type = .warning,
-                        .token = self.lexer.error_context_token.?,
-                    });
+                    var details = self.lexer.getErrorDetails(err);
+                    details.type = .warning;
+                    try self.addErrorDetailsWithCodePage(details);
                     continue;
                 },
                 error.CodePagePragmaInvalidCodePage => {
