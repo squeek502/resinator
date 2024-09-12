@@ -800,7 +800,11 @@ pub const Lexer = struct {
             }
         } else { // got EOF
             switch (state) {
-                .start, .semicolon => {},
+                .start => {},
+                .semicolon => {
+                    // Skip past everything up to the EOF
+                    result.start = self.index;
+                },
                 .literal_or_quoted_wide_string, .literal, .e, .en, .b, .be, .beg, .begi => {
                     result.id = .literal;
                 },

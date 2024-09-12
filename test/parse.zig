@@ -1744,6 +1744,11 @@ test "semicolons" {
         \\  eof:
         \\
     );
+    try testParseErrorDetails(
+        &.{.{ .type = .err, .str = "unfinished raw data block at '<eof>', expected closing '}' or 'END'" }},
+        "1 RCDATA { ;blah",
+        null,
+    );
 }
 
 test "parse errors" {
