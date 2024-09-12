@@ -21,7 +21,13 @@ pub fn zigMain() !void {
     var mapping_results = try resinator.source_mapping.parseAndRemoveLineCommands(allocator, data, data, .{ .initial_filename = dummy_filename });
     defer mapping_results.mappings.deinit(allocator);
 
-    const final_input = try resinator.comments.removeComments(mapping_results.result, mapping_results.result, &mapping_results.mappings);
+    const final_input = resinator.comments.removeComments(mapping_results.result, mapping_results.result, &mapping_results.mappings) catch |err| switch (err) {
+        error.InvalidSourceMappingCollapse => {
+            std.debug.print("TODO: Make parseAndRemoveLineCommands comment-aware\n", .{});
+            return;
+        },
+        else => |e| return e,
+    };
 
     var diagnostics = resinator.errors.Diagnostics.init(allocator);
     defer diagnostics.deinit();
