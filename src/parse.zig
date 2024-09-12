@@ -1898,9 +1898,10 @@ pub const Parser = struct {
                 error.InvalidDigitCharacterInNumberLiteral => {
                     const details = self.lexer.getErrorDetails(err);
                     try self.addErrorDetailsWithCodePage(details);
-                    return self.addErrorDetailsAndFail(.{
+                    return self.addErrorDetailsWithCodePageAndFail(.{
                         .err = details.err,
                         .type = .note,
+                        .code_page = self.lexer.current_code_page,
                         .token = details.token,
                         .print_source_line = false,
                     });
