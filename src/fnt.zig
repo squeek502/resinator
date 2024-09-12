@@ -25,7 +25,7 @@ pub fn read(allocator: std.mem.Allocator, reader: anytype, max_size: u64) ReadEr
     // Some Reader implementations have an empty ReadError error set which would
     // cause 'unreachable else' if we tried to use an else in the switch, so we
     // need to detect this case and not try to translate to ReadError
-    const empty_reader_errorset = @typeInfo(@TypeOf(reader).Error).ErrorSet == null or @typeInfo(@TypeOf(reader).Error).ErrorSet.?.len == 0;
+    const empty_reader_errorset = @typeInfo(@TypeOf(reader).Error).error_set == null or @typeInfo(@TypeOf(reader).Error).error_set.?.len == 0;
     if (empty_reader_errorset) {
         return readAnyError(allocator, reader, max_size) catch |err| switch (err) {
             error.EndOfStream, error.StreamTooLong => error.UnexpectedEOF,
@@ -178,7 +178,7 @@ pub const FontDirEntry = struct {
 
     pub const len = len: {
         var val: comptime_int = 0;
-        for (@typeInfo(FontDirEntry).Struct.fields) |field| {
+        for (@typeInfo(FontDirEntry).@"struct".fields) |field| {
             val += @sizeOf(field.type);
         }
         break :len val;
@@ -186,7 +186,7 @@ pub const FontDirEntry = struct {
 
     pub fn read(reader: anytype) !FontDirEntry {
         var entry: FontDirEntry = undefined;
-        inline for (@typeInfo(FontDirEntry).Struct.fields) |field| {
+        inline for (@typeInfo(FontDirEntry).@"struct".fields) |field| {
             switch (field.type) {
                 u8 => @field(entry, field.name) = try reader.readByte(),
                 u16, u32 => @field(entry, field.name) = try reader.readInt(field.type, .little),
@@ -198,7 +198,7 @@ pub const FontDirEntry = struct {
     }
 
     pub fn write(entry: FontDirEntry, writer: anytype) !void {
-        inline for (@typeInfo(FontDirEntry).Struct.fields) |field| {
+        inline for (@typeInfo(FontDirEntry).@"struct".fields) |field| {
             switch (field.type) {
                 u8 => try writer.writeByte(@field(entry, field.name)),
                 u16, u32 => try writer.writeInt(field.type, @field(entry, field.name), .little),

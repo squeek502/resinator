@@ -257,7 +257,7 @@ pub const ErrorDetails = struct {
         });
 
         pub fn writeCommaSeparated(self: ExpectedTypes, writer: anytype) !void {
-            const struct_info = @typeInfo(ExpectedTypes).Struct;
+            const struct_info = @typeInfo(ExpectedTypes).@"struct";
             const num_real_fields = struct_info.fields.len - 1;
             const num_padding_bits = @bitSizeOf(ExpectedTypes) - num_real_fields;
             const mask = std.math.maxInt(struct_info.backing_integer.?) >> num_padding_bits;
@@ -826,7 +826,7 @@ pub const ErrorDetails = struct {
 /// Convenience struct only useful when the code page can be inferred from the token
 pub const ErrorDetailsWithoutCodePage = blk: {
     const details_info = @typeInfo(ErrorDetails);
-    const fields = details_info.Struct.fields;
+    const fields = details_info.@"struct".fields;
     var fields_without_codepage: [fields.len - 1]std.builtin.Type.StructField = undefined;
     var i: usize = 0;
     for (fields) |field| {
@@ -835,7 +835,7 @@ pub const ErrorDetailsWithoutCodePage = blk: {
         i += 1;
     }
     std.debug.assert(i == fields_without_codepage.len);
-    break :blk @Type(.{ .Struct = .{
+    break :blk @Type(.{ .@"struct" = .{
         .layout = .auto,
         .fields = &fields_without_codepage,
         .decls = &.{},

@@ -14,7 +14,6 @@ var tmp_dir_len: usize = 0;
 // time as well (and it's not terribly useful anyway for this particular
 // fuzzing setup).
 pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, ret_addr: ?usize) noreturn {
-    @setCold(true);
     _ = error_return_trace;
     _ = ret_addr;
 
