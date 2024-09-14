@@ -165,16 +165,17 @@ pub fn main() !void {
     // Note: We still want to run this when no-preprocess is set because:
     //   1. We want to print accurate line numbers after removing multiline comments
     //   2. We want to be able to handle an already-preprocessed input with #line commands in it
-    var mapping_results = try parseAndRemoveLineCommands(allocator, full_input, full_input, .{ .initial_filename = options.input_filename });
-    defer mapping_results.mappings.deinit(allocator);
-
-    const final_input = removeComments(mapping_results.result, mapping_results.result, &mapping_results.mappings) catch |err| switch (err) {
-        error.InvalidSourceMappingCollapse => {
-            try renderErrorMessage(stderr.writer(), stderr_config, .err, "failed during comment removal; this is a known bug", .{});
+    var mapping_results = parseAndRemoveLineCommands(allocator, full_input, full_input, .{ .initial_filename = options.input_filename }) catch |err| switch (err) {
+        error.InvalidLineCommand => {
+            // TODO: Better error message
+            try renderErrorMessage(stderr.writer(), stderr_config, .err, "invalid line command in the preprocessed source", .{});
             std.process.exit(1);
         },
-        else => |e| return e,
+        error.OutOfMemory => |e| return e,
     };
+    defer mapping_results.mappings.deinit(allocator);
+
+    const final_input = try removeComments(mapping_results.result, mapping_results.result, &mapping_results.mappings);
 
     var output_file = std.fs.cwd().createFile(options.output_filename, .{}) catch |err| {
         try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to create output file '{s}': {s}", .{ options.output_filename, @errorName(err) });
