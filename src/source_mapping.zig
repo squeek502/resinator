@@ -95,8 +95,8 @@ pub fn parseAndRemoveLineCommands(allocator: Allocator, source: []const u8, buf:
     var preprocessor_start: usize = 0;
     var line_number: usize = 1;
     while (index < source.len) : (index += 1) {
-        const c = source[index];
-        switch (state) {
+        var c = source[index];
+        state: switch (state) {
             .line_start => switch (c) {
                 '#' => {
                     preprocessor_start = index;
@@ -368,21 +368,25 @@ pub fn parseAndRemoveLineCommands(allocator: Allocator, source: []const u8, buf:
                 '\r', '\n' => {
                     // Now that we have the full line we can decide what to do with it
                     const preprocessor_str = source[preprocessor_start..index];
-                    const is_crlf = formsLineEndingPair(source, c, index + 1);
                     if (std.mem.startsWith(u8, preprocessor_str, "#line")) {
                         try handleLineCommand(allocator, preprocessor_str, &current_mapping);
+                        const is_crlf = formsLineEndingPair(source, c, index + 1);
+                        if (is_crlf) index += 1;
+                        state = .line_start;
+                        pending_start = null;
                     } else {
-                        if (!current_mapping.ignore_contents) {
-                            try handleLineEnd(allocator, line_number, &parse_result.mappings, &current_mapping);
-
-                            const line_ending_len: usize = if (is_crlf) 2 else 1;
-                            result.writeSlice(source[pending_start.? .. index + line_ending_len]);
-                            line_number += 1;
-                        }
+                        // Backtrack and reparse the line in the non_preprocessor state,
+                        // since it's possible that this line contains a multiline comment
+                        // start, etc.
+                        state = .non_preprocessor;
+                        index = pending_start.?;
+                        pending_start = null;
+                        // TODO: This is a hacky way to implement this, c needs to be
+                        //       updated since we're using continue :state here
+                        c = source[index];
+                        // continue to avoid the index += 1 of the while loop
+                        continue :state .non_preprocessor;
                     }
-                    if (is_crlf) index += 1;
-                    state = .line_start;
-                    pending_start = null;
                 },
                 else => {},
             },
@@ -1096,6 +1100,22 @@ test "line command within a multiline comment" {
         \\/*
         \\#line 1 "irrelevant.rc"
         \\
+        \\
+        \\*/
+    , .{ .initial_filename = "blah.rc" });
+}
+
+test "preprocessor line with a multiline comment after" {
+    try testParseAndRemoveLineCommands(
+        \\#pragma test /*
+        \\
+        \\*/
+    , &[_]ExpectedSourceSpan{
+        .{ .start_line = 1, .end_line = 1, .filename = "blah.rc" },
+        .{ .start_line = 2, .end_line = 2, .filename = "blah.rc" },
+        .{ .start_line = 3, .end_line = 3, .filename = "blah.rc" },
+    },
+        \\#pragma test /*
         \\
         \\*/
     , .{ .initial_filename = "blah.rc" });
