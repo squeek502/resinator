@@ -20,6 +20,7 @@ pub fn zigMain() !void {
 
     var mapping_results = resinator.source_mapping.parseAndRemoveLineCommands(allocator, data, data, .{ .initial_filename = dummy_filename }) catch |err| switch (err) {
         error.InvalidLineCommand => return,
+        error.LineNumberOverflow => return,
         else => |e| return e,
     };
     defer mapping_results.mappings.deinit(allocator);

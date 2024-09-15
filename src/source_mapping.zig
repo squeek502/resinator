@@ -38,7 +38,7 @@ pub const ParseAndRemoveLineCommandsOptions = struct {
 ///
 /// If `options.initial_filename` is provided, that filename is guaranteed to be
 /// within the `mappings.files` table and `root_filename_offset` will be set appropriately.
-pub fn parseAndRemoveLineCommands(allocator: Allocator, source: []const u8, buf: []u8, options: ParseAndRemoveLineCommandsOptions) error{ OutOfMemory, InvalidLineCommand }!ParseLineCommandsResult {
+pub fn parseAndRemoveLineCommands(allocator: Allocator, source: []const u8, buf: []u8, options: ParseAndRemoveLineCommandsOptions) error{ OutOfMemory, InvalidLineCommand, LineNumberOverflow }!ParseLineCommandsResult {
     var parse_result = ParseLineCommandsResult{
         .result = undefined,
         .mappings = .{},
@@ -495,7 +495,7 @@ pub fn handleLineEnd(allocator: Allocator, post_processed_line_number: usize, ma
 
     try mapping.set(post_processed_line_number, current_mapping.line_num, filename_offset);
 
-    current_mapping.line_num += 1;
+    current_mapping.line_num = std.math.add(usize, current_mapping.line_num, 1) catch return error.LineNumberOverflow;
     current_mapping.pending = false;
 }
 
@@ -782,8 +782,12 @@ pub const SourceMappings = struct {
                 if (node.key.filename_offset != filename_offset) {
                     break :need_new_node true;
                 }
-                const exist_delta = @as(i64, @intCast(node.key.corresponding_start_line)) - @as(i64, @intCast(node.key.start_line));
-                const cur_delta = @as(i64, @intCast(corresponding_line_num)) - @as(i64, @intCast(line_num));
+                // TODO: These use i65 to avoid truncation when any of the line number values
+                //       use all 64 bits of the usize. In reality, line numbers can't really
+                //       get that large so limiting the line number and using a smaller iX
+                //       type here might be a better solution.
+                const exist_delta = @as(i65, @intCast(node.key.corresponding_start_line)) - @as(i65, @intCast(node.key.start_line));
+                const cur_delta = @as(i65, @intCast(corresponding_line_num)) - @as(i65, @intCast(line_num));
                 if (exist_delta != cur_delta) {
                     break :need_new_node true;
                 }
@@ -1124,4 +1128,30 @@ test "preprocessor line with a multiline comment after" {
 test "comment after line command" {
     var mut_source = "#line 1 \"blah.rc\" /*".*;
     try std.testing.expectError(error.InvalidLineCommand, parseAndRemoveLineCommands(std.testing.allocator, &mut_source, &mut_source, .{}));
+}
+
+test "line number limits" {
+    // TODO: Avoid usize for line numbers
+    if (@sizeOf(usize) != 8) return error.SkipZigTest;
+
+    // greater than i64 max
+    try testParseAndRemoveLineCommands(
+        \\
+    , &[_]ExpectedSourceSpan{
+        .{ .start_line = 11111111111111111111, .end_line = 11111111111111111111, .filename = "blah.rc" },
+    },
+        \\#line 11111111111111111111 "blah.rc"
+    , .{ .initial_filename = "blah.rc" });
+
+    // equal to u64 max, overflows on line number increment
+    {
+        var mut_source = "#line 18446744073709551615 \"blah.rc\"".*;
+        try std.testing.expectError(error.LineNumberOverflow, parseAndRemoveLineCommands(std.testing.allocator, &mut_source, &mut_source, .{}));
+    }
+
+    // greater than u64 max
+    {
+        var mut_source = "#line 18446744073709551616 \"blah.rc\"".*;
+        try std.testing.expectError(error.InvalidLineCommand, parseAndRemoveLineCommands(std.testing.allocator, &mut_source, &mut_source, .{}));
+    }
 }

@@ -171,6 +171,11 @@ pub fn main() !void {
             try renderErrorMessage(stderr.writer(), stderr_config, .err, "invalid line command in the preprocessed source", .{});
             std.process.exit(1);
         },
+        error.LineNumberOverflow => {
+            // TODO: Better error message
+            try renderErrorMessage(stderr.writer(), stderr_config, .err, "line number count exceeded maximum of {}", .{std.math.maxInt(usize)});
+            std.process.exit(1);
+        },
         error.OutOfMemory => |e| return e,
     };
     defer mapping_results.mappings.deinit(allocator);
