@@ -1156,11 +1156,12 @@ const CorrespondingLines = struct {
                 },
                 else => {
                     if (self.line_num == line_num) {
-                        writer.writeByte(byte) catch |err| switch (err) {
+                        if (writer.writeByte(byte)) {
+                            self.line_len += 1;
+                        } else |err| switch (err) {
                             error.NoSpaceLeft => {},
                             else => |e| return e,
-                        };
-                        self.line_len += 1;
+                        }
                     }
                 },
             }
