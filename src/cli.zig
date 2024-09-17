@@ -900,18 +900,20 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
 
     const positionals = args[arg_i..];
 
-    if (positionals.len < 1) {
+    if (positionals.len == 0) {
         var err_details = Diagnostics.ErrorDetails{ .print_args = false, .arg_index = arg_i };
         var msg_writer = err_details.msg.writer(allocator);
         try msg_writer.writeAll("missing input filename");
         try diagnostics.append(err_details);
 
-        const last_arg = args[args.len - 1];
-        if (arg_i > 0 and last_arg.len > 0 and last_arg[0] == '/' and std.ascii.endsWithIgnoreCase(last_arg, ".rc")) {
-            var note_details = Diagnostics.ErrorDetails{ .type = .note, .print_args = true, .arg_index = arg_i - 1 };
-            var note_writer = note_details.msg.writer(allocator);
-            try note_writer.writeAll("if this argument was intended to be the input filename, then -- should be specified in front of it to exclude it from option parsing");
-            try diagnostics.append(note_details);
+        if (args.len > 0) {
+            const last_arg = args[args.len - 1];
+            if (arg_i > 0 and last_arg.len > 0 and last_arg[0] == '/' and std.ascii.endsWithIgnoreCase(last_arg, ".rc")) {
+                var note_details = Diagnostics.ErrorDetails{ .type = .note, .print_args = true, .arg_index = arg_i - 1 };
+                var note_writer = note_details.msg.writer(allocator);
+                try note_writer.writeAll("if this argument was intended to be the input filename, then -- should be specified in front of it to exclude it from option parsing");
+                try diagnostics.append(note_details);
+            }
         }
 
         // This is a fatal enough problem to justify an early return, since
