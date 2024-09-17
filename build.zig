@@ -74,21 +74,14 @@ pub fn build(b: *std.Build) void {
     compiler_tests.root_module.addImport("resinator", resinator);
     const run_compiler_tests = b.addRunArtifact(compiler_tests);
 
-    const cli_test_options = b.addOptions();
-    cli_test_options.addOptionPath("cli_exe_path", exe.getEmittedBin());
-    const cli_tests = b.addTest(.{
-        .name = "cli",
-        .root_source_file = b.path("test/cli.zig"),
-    });
-    cli_tests.root_module.addOptions("build_options", cli_test_options);
-    const run_cli_tests = b.addRunArtifact(cli_tests);
+    const run_cli_tests_step = addCliTests(b, exe);
 
-    const test_step = b.step("test", "Run library tests");
+    const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&run_exe_tests.step);
     test_step.dependOn(&run_reference_tests.step);
     test_step.dependOn(&run_parser_tests.step);
     test_step.dependOn(&run_compiler_tests.step);
-    test_step.dependOn(&run_cli_tests.step);
+    test_step.dependOn(run_cli_tests_step);
 
     const fuzzy_max_iterations = b.option(u64, "fuzzy-iterations", "The max iterations for fuzzy tests (default: 1000)") orelse 1000;
 
@@ -161,6 +154,84 @@ pub fn build(b: *std.Build) void {
             release_step.dependOn(&release_install.step);
         }
     }
+}
+
+fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile) *std.Build.Step {
+    const step = b.step("test-cli", "Test the command line interface");
+
+    const test_rcs = b.addWriteFiles();
+
+    const windows_h = test_rcs.add("windows-h.rc",
+        \\#include "windows.h"
+    );
+    {
+        const run = b.addRunArtifact(exe);
+        run.addArg("--");
+        run.addFileArg(windows_h);
+        _ = run.addOutputFileArg("output.res");
+        run.expectStdOutEqual("");
+        run.expectStdErrEqual("");
+        step.dependOn(&run.step);
+    }
+    {
+        const run = b.addRunArtifact(exe);
+        run.addArgs(&.{ "/:auto-includes", "gnu" });
+        run.addArg("--");
+        run.addFileArg(windows_h);
+        _ = run.addOutputFileArg("output.res");
+        run.expectStdOutEqual("");
+        run.expectStdErrEqual("");
+        step.dependOn(&run.step);
+    }
+
+    const predefined_macros = test_rcs.add("predefined-macros.rc",
+        \\1 RCDATA { RC_INVOKED, _WIN32 }
+    );
+    {
+        const run = b.addRunArtifact(exe);
+        run.addArg("--");
+        run.addFileArg(predefined_macros);
+        _ = run.addOutputFileArg("output.res");
+        run.expectStdOutEqual("");
+        run.expectStdErrEqual("");
+        step.dependOn(&run.step);
+    }
+    // case sensitive, so this doesn't undef RC_INVOKED
+    {
+        const run = b.addRunArtifact(exe);
+        run.addArgs(&.{ "/u", "rc_invoked" });
+        run.addArg("--");
+        run.addFileArg(predefined_macros);
+        _ = run.addOutputFileArg("output.res");
+        run.expectStdOutEqual("");
+        run.expectStdErrEqual("");
+        step.dependOn(&run.step);
+    }
+    // undefing predefined macros works
+    {
+        const run = b.addRunArtifact(exe);
+        run.addArgs(&.{ "/u", "RC_INVOKED" });
+        run.addArg("--");
+        run.addFileArg(predefined_macros);
+        _ = run.addOutputFileArg("output.res");
+        run.expectExitCode(1);
+        run.addCheck(.{ .expect_stderr_match = b.dupe("got 'RC_INVOKED'") });
+        run.expectStdOutEqual("");
+        step.dependOn(&run.step);
+    }
+    {
+        const run = b.addRunArtifact(exe);
+        run.addArgs(&.{ "/u", "_WIN32" });
+        run.addArg("--");
+        run.addFileArg(predefined_macros);
+        _ = run.addOutputFileArg("output.res");
+        run.expectExitCode(1);
+        run.addCheck(.{ .expect_stderr_match = b.dupe("got '_WIN32'") });
+        run.expectStdOutEqual("");
+        step.dependOn(&run.step);
+    }
+
+    return step;
 }
 
 fn addFuzzyTest(
