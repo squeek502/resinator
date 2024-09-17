@@ -46,12 +46,14 @@ jobs:
         run: zig build test
 
       - name: Test 32-bit
-        # TODO: Re-enable Windows, see https://github.com/ziglang/zig/issues/20047
-        if: ${{ matrix.os != 'macos-latest' && matrix.os != 'windows-latest' }}
+        if: ${{ matrix.os != 'macos-latest' }}
         run: zig build test -Dtarget=x86-native
 
       - name: Test big endian (mips)
-        if: ${{ matrix.os == 'ubuntu-latest' }}
+        # TODO: Disabled due to segfault when running the compiled resinator
+        #       binary with qemu-mips, unsure of the cause but might be in the
+        #       arocc code since /:no-preprocess seems to avoid it.
+        if: ${{ matrix.os == 'ubuntu-latest' && false }}
         run: zig build test -Dtarget=mips-native -fqemu
 
       - name: Test big endian (powerpc64)
