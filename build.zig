@@ -161,6 +161,28 @@ fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile) *std.Build.Step {
 
     const test_rcs = b.addWriteFiles();
 
+    // Avoid errors from multiple processes trying to extract
+    // MinGW headers at the same time by having tests that use
+    // /:auto-includes depend on this cache warming step.
+    //
+    // TODO: Make extraction from multiple processes at the same
+    //       time work (e.g. one does the extraction while the
+    //       others wait, or something like that).
+    const empty_rc = test_rcs.add("empty.rc",
+        \\
+    );
+    const warm_mingw_cache = blk: {
+        const run = b.addRunArtifact(exe);
+        run.addArgs(&.{ "/:auto-includes", "gnu" });
+        run.addArg("--");
+        run.addFileArg(empty_rc);
+        _ = run.addOutputFileArg("output.res");
+        run.expectStdOutEqual("");
+        run.expectStdErrEqual("");
+        step.dependOn(&run.step);
+        break :blk run;
+    };
+
     const windows_h = test_rcs.add("windows-h.rc",
         \\#include "windows.h"
     );
@@ -171,7 +193,7 @@ fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile) *std.Build.Step {
         _ = run.addOutputFileArg("output.res");
         run.expectStdOutEqual("");
         run.expectStdErrEqual("");
-        step.dependOn(&run.step);
+        step.dependOn(&warm_mingw_cache.step);
     }
     {
         const run = b.addRunArtifact(exe);
@@ -181,7 +203,7 @@ fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile) *std.Build.Step {
         _ = run.addOutputFileArg("output.res");
         run.expectStdOutEqual("");
         run.expectStdErrEqual("");
-        step.dependOn(&run.step);
+        step.dependOn(&warm_mingw_cache.step);
     }
 
     const predefined_macros = test_rcs.add("predefined-macros.rc",
@@ -189,6 +211,7 @@ fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile) *std.Build.Step {
     );
     {
         const run = b.addRunArtifact(exe);
+        run.addArgs(&.{ "/:auto-includes", "none" });
         run.addArg("--");
         run.addFileArg(predefined_macros);
         _ = run.addOutputFileArg("output.res");
@@ -200,6 +223,7 @@ fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile) *std.Build.Step {
     {
         const run = b.addRunArtifact(exe);
         run.addArgs(&.{ "/u", "rc_invoked" });
+        run.addArgs(&.{ "/:auto-includes", "none" });
         run.addArg("--");
         run.addFileArg(predefined_macros);
         _ = run.addOutputFileArg("output.res");
@@ -211,6 +235,7 @@ fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile) *std.Build.Step {
     {
         const run = b.addRunArtifact(exe);
         run.addArgs(&.{ "/u", "RC_INVOKED" });
+        run.addArgs(&.{ "/:auto-includes", "none" });
         run.addArg("--");
         run.addFileArg(predefined_macros);
         _ = run.addOutputFileArg("output.res");
@@ -222,6 +247,7 @@ fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile) *std.Build.Step {
     {
         const run = b.addRunArtifact(exe);
         run.addArgs(&.{ "/u", "_WIN32" });
+        run.addArgs(&.{ "/:auto-includes", "none" });
         run.addArg("--");
         run.addFileArg(predefined_macros);
         _ = run.addOutputFileArg("output.res");
