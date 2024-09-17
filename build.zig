@@ -90,19 +90,6 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_compiler_tests.step);
     test_step.dependOn(&run_cli_tests.step);
 
-    // TODO: coverage across all test steps?
-    const coverage = b.option(bool, "test-coverage", "Generate test coverage") orelse false;
-    if (coverage) {
-        // with kcov
-        exe_tests.setExecCmd(&[_]?[]const u8{
-            "kcov",
-            //"--path-strip-level=3", // any kcov flags can be specified here
-            "--include-pattern=resinator",
-            "kcov-output", // output dir for kcov
-            null, // to get zig to use the --test-cmd-bin flag
-        });
-    }
-
     const fuzzy_max_iterations = b.option(u64, "fuzzy-iterations", "The max iterations for fuzzy tests (default: 1000)") orelse 1000;
 
     const test_options = b.addOptions();
