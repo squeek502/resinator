@@ -507,6 +507,7 @@ pub fn handleLineCommand(allocator: Allocator, line_command: []const u8, current
     if (!std.mem.eql(u8, line_directive, "#line")) return error.InvalidLineCommand;
     const linenum_str = tokenizer.next() orelse return error.InvalidLineCommand;
     const linenum = std.fmt.parseUnsigned(usize, linenum_str, 10) catch return error.InvalidLineCommand;
+    if (linenum == 0) return error.InvalidLineCommand;
 
     var filename_literal = tokenizer.rest();
     while (filename_literal.len > 0 and std.ascii.isWhitespace(filename_literal[filename_literal.len - 1])) {
@@ -1127,6 +1128,11 @@ test "preprocessor line with a multiline comment after" {
 
 test "comment after line command" {
     var mut_source = "#line 1 \"blah.rc\" /*".*;
+    try std.testing.expectError(error.InvalidLineCommand, parseAndRemoveLineCommands(std.testing.allocator, &mut_source, &mut_source, .{}));
+}
+
+test "line command with 0 as line number" {
+    var mut_source = "#line 0 \"blah.rc\"".*;
     try std.testing.expectError(error.InvalidLineCommand, parseAndRemoveLineCommands(std.testing.allocator, &mut_source, &mut_source, .{}));
 }
 
