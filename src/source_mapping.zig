@@ -256,6 +256,7 @@ pub fn parseAndRemoveLineCommands(allocator: Allocator, source: []const u8, buf:
                     if (!current_mapping.ignore_contents) {
                         result.write(c);
                     }
+                    state = .multiline_comment;
                 },
             },
             .single_quoted => switch (c) {
@@ -1106,6 +1107,21 @@ test "line command within a multiline comment" {
         \\#line 1 "irrelevant.rc"
         \\
         \\
+        \\*/
+    , .{ .initial_filename = "blah.rc" });
+
+    // * but without / directly after
+    try testParseAndRemoveLineCommands(
+        \\/** /
+        \\#line 1 "irrelevant.rc"
+        \\*/
+    , &[_]ExpectedSourceSpan{
+        .{ .start_line = 1, .end_line = 1, .filename = "blah.rc" },
+        .{ .start_line = 2, .end_line = 2, .filename = "blah.rc" },
+        .{ .start_line = 3, .end_line = 3, .filename = "blah.rc" },
+    },
+        \\/** /
+        \\#line 1 "irrelevant.rc"
         \\*/
     , .{ .initial_filename = "blah.rc" });
 }
