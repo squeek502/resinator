@@ -829,7 +829,21 @@ pub const Compiler = struct {
                     try writeDataPadding(writer, header.data_size);
                     return;
                 },
-                .RCDATA, .HTML, .MANIFEST, .MESSAGETABLE, .DLGINIT, .PLUGPLAY => {
+                .RCDATA,
+                .HTML,
+                .MESSAGETABLE,
+                .DLGINIT,
+                .PLUGPLAY,
+                .VXD,
+                // Note: All of the below can only be specified by using a number
+                //       as the resource type.
+                .MANIFEST,
+                .CURSOR,
+                .ICON,
+                .ANICURSOR,
+                .ANIICON,
+                .FONTDIR,
+                => {
                     header.applyMemoryFlags(node.common_resource_attributes, self.source);
                 },
                 .BITMAP => {
@@ -954,19 +968,13 @@ pub const Compiler = struct {
                     }, node.id);
                     return;
                 },
-                .ACCELERATOR,
-                .ANICURSOR,
-                .ANIICON,
-                .CURSOR,
-                .DIALOG,
-                .DLGINCLUDE,
-                .FONTDIR,
-                .ICON,
-                .MENU,
-                .STRING,
-                .TOOLBAR,
-                .VERSION,
-                .VXD,
+                .ACCELERATOR, // Cannot use an external file, enforced by the parser
+                .DIALOG, // Cannot use an external file, enforced by the parser
+                .DLGINCLUDE, // Handled specially above
+                .MENU, // Cannot use an external file, enforced by the parser
+                .STRING, // Parser error if this resource is specified as a number
+                .TOOLBAR, // Cannot use an external file, enforced by the parser
+                .VERSION, // Cannot use an external file, enforced by the parser
                 => unreachable,
                 _ => unreachable,
             }
