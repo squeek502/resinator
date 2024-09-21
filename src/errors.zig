@@ -418,7 +418,7 @@ pub const ErrorDetails = struct {
         _ = options;
 
         switch (ctx.token.id) {
-            .eof => try writer.writeAll(ctx.token.id.nameForErrorDisplay()),
+            .eof => return writer.writeAll(ctx.token.id.nameForErrorDisplay()),
             else => {},
         }
 
