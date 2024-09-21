@@ -167,8 +167,13 @@ pub fn main() !void {
     //   2. We want to be able to handle an already-preprocessed input with #line commands in it
     var mapping_results = parseAndRemoveLineCommands(allocator, full_input, full_input, .{ .initial_filename = options.input_filename }) catch |err| switch (err) {
         error.InvalidLineCommand => {
-            // TODO: Better error message
+            // TODO: Maybe output the invalid line command
             try renderErrorMessage(stderr.writer(), stderr_config, .err, "invalid line command in the preprocessed source", .{});
+            if (options.preprocess == .no) {
+                try renderErrorMessage(stderr.writer(), stderr_config, .note, "line commands must be of the format: #line <num> \"<path>\"", .{});
+            } else {
+                try renderErrorMessage(stderr.writer(), stderr_config, .note, "this is likely to be a bug, please report it", .{});
+            }
             std.process.exit(1);
         },
         error.LineNumberOverflow => {
