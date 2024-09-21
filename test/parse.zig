@@ -2234,6 +2234,26 @@ test "duplicate optional statements" {
     );
 }
 
+test "code page of printed tokens in errors" {
+    try testParseErrorDetails(
+        &.{
+            .{ .type = .err, .str = "expected number, number expression, or quoted string literal; got 'Ó'" },
+        },
+        // Ó is encoded as 0xD3 in Windows-1252
+        "#pragma code_page(1252)\n1 RCDATA { \xD3",
+        null,
+    );
+    try testParseErrorDetails(
+        &.{
+            .{ .type = .err, .str = "expected number, number expression, or quoted string literal; got 'Ó'" },
+        },
+        \\#pragma code_page(65001)
+        \\1 RCDATA { Ó
+    ,
+        null,
+    );
+}
+
 fn testParse(source: []const u8, expected_ast_dump: []const u8) !void {
     const allocator = std.testing.allocator;
     var diagnostics = resinator.errors.Diagnostics.init(allocator);

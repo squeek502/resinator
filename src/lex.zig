@@ -62,13 +62,6 @@ pub const Token = struct {
         return buffer[self.start..self.end];
     }
 
-    pub fn nameForErrorDisplay(self: Token, buffer: []const u8) []const u8 {
-        return switch (self.id) {
-            .eof => self.id.nameForErrorDisplay(),
-            else => self.slice(buffer),
-        };
-    }
-
     /// Returns 0-based column
     pub fn calculateColumn(token: Token, source: []const u8, tab_columns: usize, maybe_line_start: ?usize) usize {
         const line_start = maybe_line_start orelse token.getLineStartForColumnCalc(source);

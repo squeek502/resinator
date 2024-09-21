@@ -408,10 +408,50 @@ pub const ErrorDetails = struct {
         failed_to_open_cwd,
     };
 
+    fn formatToken(
+        ctx: TokenFormatContext,
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = fmt;
+        _ = options;
+
+        switch (ctx.token.id) {
+            .eof => try writer.writeAll(ctx.token.id.nameForErrorDisplay()),
+            else => {},
+        }
+
+        const slice = ctx.token.slice(ctx.source);
+        var src_i: usize = 0;
+        while (src_i < slice.len) {
+            const codepoint = ctx.code_page.codepointAt(src_i, slice) orelse break;
+            defer src_i += codepoint.byte_len;
+            const display_codepoint = codepointForDisplay(codepoint) orelse continue;
+            var buf: [4]u8 = undefined;
+            const utf8_len = std.unicode.utf8Encode(display_codepoint, &buf) catch unreachable;
+            try writer.writeAll(buf[0..utf8_len]);
+        }
+    }
+
+    const TokenFormatContext = struct {
+        token: Token,
+        source: []const u8,
+        code_page: CodePage,
+    };
+
+    fn fmtToken(self: ErrorDetails, source: []const u8) std.fmt.Formatter(formatToken) {
+        return .{ .data = .{
+            .token = self.token,
+            .code_page = self.code_page,
+            .source = source,
+        } };
+    }
+
     pub fn render(self: ErrorDetails, writer: anytype, source: []const u8, strings: []const []const u8) !void {
         switch (self.err) {
             .unfinished_string_literal => {
-                return writer.print("unfinished string literal at '{s}', expected closing '\"'", .{self.token.nameForErrorDisplay(source)});
+                return writer.print("unfinished string literal at '{s}', expected closing '\"'", .{self.fmtToken(source)});
             },
             .string_literal_too_long => {
                 return writer.print("string literal too long (max is currently {} characters)", .{self.extra.number});
@@ -486,26 +526,26 @@ pub const ErrorDetails = struct {
                 return writer.print("unsupported code page '{s} (id={})' in #pragma code_page", .{ @tagName(code_page), number });
             },
             .unfinished_raw_data_block => {
-                return writer.print("unfinished raw data block at '{s}', expected closing '}}' or 'END'", .{self.token.nameForErrorDisplay(source)});
+                return writer.print("unfinished raw data block at '{s}', expected closing '}}' or 'END'", .{self.fmtToken(source)});
             },
             .unfinished_string_table_block => {
-                return writer.print("unfinished STRINGTABLE block at '{s}', expected closing '}}' or 'END'", .{self.token.nameForErrorDisplay(source)});
+                return writer.print("unfinished STRINGTABLE block at '{s}', expected closing '}}' or 'END'", .{self.fmtToken(source)});
             },
             .expected_token => {
-                return writer.print("expected '{s}', got '{s}'", .{ self.extra.expected.nameForErrorDisplay(), self.token.nameForErrorDisplay(source) });
+                return writer.print("expected '{s}', got '{s}'", .{ self.extra.expected.nameForErrorDisplay(), self.fmtToken(source) });
             },
             .expected_something_else => {
                 try writer.writeAll("expected ");
                 try self.extra.expected_types.writeCommaSeparated(writer);
-                return writer.print("; got '{s}'", .{self.token.nameForErrorDisplay(source)});
+                return writer.print("; got '{s}'", .{self.fmtToken(source)});
             },
             .resource_type_cant_use_raw_data => switch (self.type) {
-                .err, .warning => try writer.print("expected '<filename>', found '{s}' (resource type '{s}' can't use raw data)", .{ self.token.nameForErrorDisplay(source), self.extra.resource.nameForErrorDisplay() }),
-                .note => try writer.print("if '{s}' is intended to be a filename, it must be specified as a quoted string literal", .{self.token.nameForErrorDisplay(source)}),
+                .err, .warning => try writer.print("expected '<filename>', found '{s}' (resource type '{s}' can't use raw data)", .{ self.fmtToken(source), self.extra.resource.nameForErrorDisplay() }),
+                .note => try writer.print("if '{s}' is intended to be a filename, it must be specified as a quoted string literal", .{self.fmtToken(source)}),
                 .hint => return,
             },
             .id_must_be_ordinal => {
-                try writer.print("id of resource type '{s}' must be an ordinal (u16), got '{s}'", .{ self.extra.resource.nameForErrorDisplay(), self.token.nameForErrorDisplay(source) });
+                try writer.print("id of resource type '{s}' must be an ordinal (u16), got '{s}'", .{ self.extra.resource.nameForErrorDisplay(), self.fmtToken(source) });
             },
             .name_or_id_not_allowed => {
                 try writer.print("name or id is not allowed for resource type '{s}'", .{self.extra.resource.nameForErrorDisplay()});
@@ -521,7 +561,7 @@ pub const ErrorDetails = struct {
                 try writer.writeAll("ASCII character not equivalent to virtual key code");
             },
             .empty_menu_not_allowed => {
-                try writer.print("empty menu of type '{s}' not allowed", .{self.token.nameForErrorDisplay(source)});
+                try writer.print("empty menu of type '{s}' not allowed", .{self.fmtToken(source)});
             },
             .rc_would_miscompile_version_value_padding => switch (self.type) {
                 .err, .warning => return writer.print("the padding before this quoted string value would be miscompiled by the Win32 RC compiler", .{}),
@@ -605,7 +645,7 @@ pub const ErrorDetails = struct {
                 try writer.print("unable to open file '{s}': {s}", .{ strings[self.extra.file_open_error.filename_string_index], @tagName(self.extra.file_open_error.err) });
             },
             .invalid_accelerator_key => {
-                try writer.print("invalid accelerator key '{s}': {s}", .{ self.token.nameForErrorDisplay(source), @tagName(self.extra.accelerator_error.err) });
+                try writer.print("invalid accelerator key '{s}': {s}", .{ self.fmtToken(source), @tagName(self.extra.accelerator_error.err) });
             },
             .accelerator_type_required => {
                 try writer.writeAll("accelerator type [ASCII or VIRTKEY] required when key is an integer");
