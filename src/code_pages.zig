@@ -21,17 +21,6 @@ pub const SupportedCodePage = enum(u16) {
             },
         }
     }
-
-    pub fn getByIdentifier(identifier: u16) !SupportedCodePage {
-        // There's probably a more efficient way to do this (e.g. ComptimeHashMap?) but
-        // this should be fine, especially since this function likely won't be called much.
-        inline for (@typeInfo(SupportedCodePage).@"enum".fields) |enumField| {
-            if (identifier == enumField.value) {
-                return @field(SupportedCodePage, enumField.name);
-            }
-        }
-        return error.InvalidCodePage;
-    }
 };
 
 /// https://learn.microsoft.com/en-us/windows/win32/intl/code-page-identifiers
