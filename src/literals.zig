@@ -505,6 +505,8 @@ pub fn parseQuotedString(
                 else => unreachable, // Unsupported code page
             },
             .wide => {
+                // Parsing any string type as a wide string is handled separately, see parseQuotedStringAsWideString
+                std.debug.assert(iterative_parser.declared_string_type == .wide);
                 if (parsed.from_escaped_integer) {
                     try buf.append(std.mem.nativeToLittle(u16, @truncate(c)));
                 } else if (c == code_pages.Codepoint.invalid) {
@@ -541,9 +543,60 @@ pub fn parseQuotedWideString(allocator: std.mem.Allocator, bytes: SourceBytes, o
     return parseQuotedString(.wide, allocator, bytes, options);
 }
 
+/// Parses any string type into a wide string.
+/// If the string is declared as a wide string (L""), then it is handled normally.
+/// Otherwise, things are fairly normal with the exception of escaped integers.
+/// Escaped integers are handled by:
+/// - Truncating the escape to a u8
+/// - Reinterpeting the u8 as a byte from the *output* code page
+/// - Outputting the codepoint that corresponds to the interpreted byte, or � if no such
+///   interpretation is possible
+/// For example, if the code page is UTF-8, then while \x80 is a valid start byte, it's
+/// interpreted as a single byte, so it ends up being seen as invalid and � is outputted.
+/// If the code page is Windows-1252, then \x80 is interpreted to be € which has the
+/// codepoint U+20AC, so the UTF-16 encoding of U+20AC is outputted.
 pub fn parseQuotedStringAsWideString(allocator: std.mem.Allocator, bytes: SourceBytes, options: StringParseOptions) ![:0]u16 {
     std.debug.assert(bytes.slice.len >= 2); // ""
-    return parseQuotedString(.wide, allocator, bytes, options);
+
+    if (bytes.slice[0] == 'l' or bytes.slice[0] == 'L') {
+        return parseQuotedWideString(allocator, bytes, options);
+    }
+
+    // Note: We're only handling the case of parsing an ASCII string into a wide string from here on out.
+    // TODO: The logic below is similar to that in AcceleratorKeyCodepointTranslator, might be worth merging the two
+
+    var buf = try std.ArrayList(u16).initCapacity(allocator, bytes.slice.len);
+    errdefer buf.deinit();
+
+    var iterative_parser = IterativeStringParser.init(bytes, options);
+
+    while (try iterative_parser.next()) |parsed| {
+        const c = parsed.codepoint;
+        if (parsed.from_escaped_integer) {
+            std.debug.assert(c != code_pages.Codepoint.invalid);
+            const byte_to_interpret: u8 = @truncate(c);
+            const code_unit_to_encode: u16 = switch (options.output_code_page) {
+                .windows1252 => windows1252.toCodepoint(byte_to_interpret),
+                .utf8 => if (byte_to_interpret > 0x7F) '�' else byte_to_interpret,
+                else => unreachable, // Unsupported code page
+            };
+            try buf.append(std.mem.nativeToLittle(u16, code_unit_to_encode));
+        } else if (c == code_pages.Codepoint.invalid) {
+            try buf.append(std.mem.nativeToLittle(u16, '�'));
+        } else if (c < 0x10000) {
+            const short: u16 = @intCast(c);
+            try buf.append(std.mem.nativeToLittle(u16, short));
+        } else {
+            if (!parsed.escaped_surrogate_pair) {
+                const high = @as(u16, @intCast((c - 0x10000) >> 10)) + 0xD800;
+                try buf.append(std.mem.nativeToLittle(u16, high));
+            }
+            const low = @as(u16, @intCast(c & 0x3FF)) + 0xDC00;
+            try buf.append(std.mem.nativeToLittle(u16, low));
+        }
+    }
+
+    return buf.toOwnedSliceSentinel(0);
 }
 
 test "parse quoted ascii string" {
