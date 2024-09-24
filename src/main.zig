@@ -10,6 +10,7 @@ const lex = @import("lex.zig");
 const preprocess = @import("preprocess.zig");
 const renderErrorMessage = @import("utils.zig").renderErrorMessage;
 const auto_includes = @import("auto_includes.zig");
+const hasDisjointCodePage = @import("disjoint_code_page.zig").hasDisjointCodePage;
 const aro = @import("aro");
 
 pub fn main() !void {
@@ -185,6 +186,9 @@ pub fn main() !void {
     };
     defer mapping_results.mappings.deinit(allocator);
 
+    const default_code_page = options.default_code_page orelse .windows1252;
+    const has_disjoint_code_page = hasDisjointCodePage(mapping_results.result, &mapping_results.mappings, default_code_page);
+
     const final_input = try removeComments(mapping_results.result, mapping_results.result, &mapping_results.mappings);
 
     var output_file = std.fs.cwd().createFile(options.output_filename, .{}) catch |err| {
@@ -198,6 +202,7 @@ pub fn main() !void {
     defer diagnostics.deinit();
 
     if (options.debug) {
+        std.debug.print("disjoint code page detected: {}\n", .{has_disjoint_code_page});
         std.debug.print("after preprocessor:\n------------------\n{s}\n------------------\n", .{final_input});
         std.debug.print("\nmappings:\n", .{});
         var it = mapping_results.mappings.sources.inorderIterator();
@@ -237,7 +242,8 @@ pub fn main() !void {
         .extra_include_paths = options.extra_include_paths.items,
         .system_include_paths = include_paths,
         .default_language_id = options.default_language_id,
-        .default_code_page = options.default_code_page orelse .windows1252,
+        .default_code_page = default_code_page,
+        .disjoint_code_page = has_disjoint_code_page,
         .verbose = options.verbose,
         .null_terminate_string_table_strings = options.null_terminate_string_table_strings,
         .max_string_literal_codepoints = options.max_string_literal_codepoints,

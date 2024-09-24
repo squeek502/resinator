@@ -31,6 +31,7 @@ pub const Parser = struct {
 
     pub const Options = struct {
         warn_instead_of_error_on_invalid_code_page: bool = false,
+        disjoint_code_page: bool = false,
     };
 
     pub fn init(lexer: *Lexer, options: Options) Parser {
@@ -1915,7 +1916,11 @@ pub const Parser = struct {
         // But only set the output code page to the current code page if we are past the first code_page pragma in the file.
         // Otherwise, we want to fill the lookup using the default code page so that lookups still work for lines that
         // don't have an explicit output code page set.
-        const output_code_page = if (self.lexer.seen_pragma_code_pages > 1) self.lexer.current_code_page else self.state.output_code_page_lookup.default_code_page;
+        const output_code_page = if (self.options.disjoint_code_page)
+            if (self.lexer.seen_pragma_code_pages > 1) self.lexer.current_code_page else self.state.output_code_page_lookup.default_code_page
+        else
+            self.lexer.current_code_page;
+
         try self.state.output_code_page_lookup.setForToken(self.state.token, output_code_page);
     }
 

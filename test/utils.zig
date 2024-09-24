@@ -144,6 +144,12 @@ pub fn getResinatorResultFromFile(allocator: Allocator, input_filepath: []const 
     );
     defer mapping_results.mappings.deinit(allocator);
 
+    const default_code_page: resinator.code_pages.CodePage = switch (options.default_code_page) {
+        .windows1252 => .windows1252,
+        .utf8 => .utf8,
+    };
+    const has_disjoint_code_page = resinator.disjoint_code_page.hasDisjointCodePage(mapping_results.result, &mapping_results.mappings, default_code_page);
+
     const final_input = try resinator.comments.removeComments(mapping_results.result, mapping_results.result, &mapping_results.mappings);
     result.processed_rc = final_input;
 
@@ -155,10 +161,8 @@ pub fn getResinatorResultFromFile(allocator: Allocator, input_filepath: []const 
         .cwd = options.cwd,
         .diagnostics = &result.diagnostics,
         .source_mappings = &mapping_results.mappings,
-        .default_code_page = switch (options.default_code_page) {
-            .windows1252 => .windows1252,
-            .utf8 => .utf8,
-        },
+        .default_code_page = default_code_page,
+        .disjoint_code_page = has_disjoint_code_page,
         // TODO: Make this configurable
         .ignore_include_env_var = true,
     };

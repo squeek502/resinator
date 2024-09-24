@@ -523,7 +523,12 @@ pub fn handleLineCommand(allocator: Allocator, line_command: []const u8, current
     if (filename_literal.len < 2) return error.InvalidLineCommand;
     const is_quoted = filename_literal[0] == '"' and filename_literal[filename_literal.len - 1] == '"';
     if (!is_quoted) return error.InvalidLineCommand;
-    const filename = parseFilename(allocator, filename_literal[1 .. filename_literal.len - 1]) catch |err| switch (err) {
+    const unquoted_filename = filename_literal[1 .. filename_literal.len - 1];
+
+    // Ignore <builtin> and <command line>
+    if (std.mem.eql(u8, unquoted_filename, "<builtin>") or std.mem.eql(u8, unquoted_filename, "<command line>")) return;
+
+    const filename = parseFilename(allocator, unquoted_filename) catch |err| switch (err) {
         error.OutOfMemory => |e| return e,
         else => return error.InvalidLineCommand,
     };
@@ -887,7 +892,7 @@ pub const SourceMappings = struct {
 
     /// Returns true if the line is from the main/root file (i.e. not a file that has been
     /// `#include`d).
-    pub fn isRootFile(self: *SourceMappings, line_num: usize) bool {
+    pub fn isRootFile(self: *const SourceMappings, line_num: usize) bool {
         const source = self.get(line_num) orelse return false;
         return source.filename_offset == self.root_filename_offset;
     }

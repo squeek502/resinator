@@ -40,6 +40,9 @@ pub const CompileOptions = struct {
     /// TODO: Maybe a dedicated struct for this purpose so that it's a bit nicer to work with.
     dependencies_list: ?*std.ArrayList([]const u8) = null,
     default_code_page: CodePage = .windows1252,
+    /// If true, the first #pragma code_page directive only sets the input code page, but not the output code page.
+    /// This check must be done before comments are removed from the file.
+    disjoint_code_page: bool = false,
     ignore_include_env_var: bool = false,
     extra_include_paths: []const []const u8 = &.{},
     /// This is just an API convenience to allow separately passing 'system' (i.e. those
@@ -66,6 +69,7 @@ pub fn compile(allocator: Allocator, source: []const u8, writer: anytype, option
     });
     var parser = Parser.init(&lexer, .{
         .warn_instead_of_error_on_invalid_code_page = options.warn_instead_of_error_on_invalid_code_page,
+        .disjoint_code_page = options.disjoint_code_page,
     });
     var tree = try parser.parse(allocator, options.diagnostics);
     defer tree.deinit();

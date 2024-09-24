@@ -1469,10 +1469,12 @@ fn testCompileWithOutputAndOptions(source: []const u8, expected_output: []const 
     var diagnostics = resinator.errors.Diagnostics.init(std.testing.allocator);
     defer diagnostics.deinit();
 
+    const disjoint_code_page = resinator.disjoint_code_page.hasDisjointCodePage(source, null, options.default_code_page);
     resinator.compile.compile(std.testing.allocator, source, buffer.writer(), .{
         .cwd = options.cwd,
         .diagnostics = &diagnostics,
         .default_code_page = options.default_code_page,
+        .disjoint_code_page = disjoint_code_page,
         .ignore_include_env_var = options.ignore_include_env_var,
         .extra_include_paths = options.extra_include_paths,
     }) catch |err| switch (err) {
@@ -1522,10 +1524,12 @@ fn testCompileErrorDetailsWithOptions(expected_details: []const ExpectedErrorDet
     } else false;
 
     const did_fail = did_fail: {
+        const disjoint_code_page = resinator.disjoint_code_page.hasDisjointCodePage(source, null, options.default_code_page);
         resinator.compile.compile(std.testing.allocator, source, buffer.writer(), .{
             .cwd = options.cwd,
             .diagnostics = &diagnostics,
             .default_code_page = options.default_code_page,
+            .disjoint_code_page = disjoint_code_page,
             .ignore_include_env_var = options.ignore_include_env_var,
             .extra_include_paths = options.extra_include_paths,
         }) catch |err| switch (err) {

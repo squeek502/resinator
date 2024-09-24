@@ -903,90 +903,11 @@ pub const Lexer = struct {
         };
         errdefer self.error_context_token = token;
         const full_command = self.buffer[start..end];
-        var command = full_command;
 
-        // Anything besides exactly this is ignored by the Windows RC implementation
-        const expected_directive = "#pragma";
-        if (!std.mem.startsWith(u8, command, expected_directive)) return;
-        command = command[expected_directive.len..];
-
-        if (command.len == 0 or !std.ascii.isWhitespace(command[0])) return;
-        while (command.len > 0 and std.ascii.isWhitespace(command[0])) {
-            command = command[1..];
-        }
-
-        // Note: CoDe_PaGeZ is also treated as "code_page" by the Windows RC implementation,
-        //       and it will error with 'Missing left parenthesis in code_page #pragma'
-        const expected_extension = "code_page";
-        if (!std.ascii.startsWithIgnoreCase(command, expected_extension)) return;
-        command = command[expected_extension.len..];
-
-        while (command.len > 0 and std.ascii.isWhitespace(command[0])) {
-            command = command[1..];
-        }
-
-        if (command.len == 0 or command[0] != '(') {
-            return error.CodePagePragmaMissingLeftParen;
-        }
-        command = command[1..];
-
-        while (command.len > 0 and std.ascii.isWhitespace(command[0])) {
-            command = command[1..];
-        }
-
-        var num_str: []u8 = command[0..0];
-        while (command.len > 0 and (command[0] != ')' and !std.ascii.isWhitespace(command[0]))) {
-            command = command[1..];
-            num_str.len += 1;
-        }
-
-        if (num_str.len == 0) {
-            return error.CodePagePragmaNotInteger;
-        }
-
-        while (command.len > 0 and std.ascii.isWhitespace(command[0])) {
-            command = command[1..];
-        }
-
-        if (command.len == 0 or command[0] != ')') {
-            return error.CodePagePragmaMissingRightParen;
-        }
-
-        const code_page = code_page: {
-            if (std.ascii.eqlIgnoreCase("DEFAULT", num_str)) {
-                break :code_page self.default_code_page;
-            }
-
-            // The Win32 compiler behaves fairly strangely around maxInt(u32):
-            // - If the overflowed u32 wraps and becomes a known code page ID, then
-            //   it will error/warn with "Codepage not valid:  ignored" (depending on /w)
-            // - If the overflowed u32 wraps and does not become a known code page ID,
-            //   then it will error with 'constant too big' and 'Codepage not integer'
-            //
-            // Instead of that, we just have a separate error specifically for overflow.
-            const num = parseCodePageNum(num_str) catch |err| switch (err) {
-                error.InvalidCharacter => return error.CodePagePragmaNotInteger,
-                error.Overflow => return error.CodePagePragmaOverflow,
-            };
-
-            // Anything that starts with 0 but does not resolve to 0 is treated as invalid, e.g. 01252
-            if (num_str[0] == '0' and num != 0) {
-                return error.CodePagePragmaInvalidCodePage;
-            }
-            // Anything that resolves to 0 is treated as 'not an integer' by the Win32 implementation.
-            else if (num == 0) {
-                return error.CodePagePragmaNotInteger;
-            }
-            // Anything above u16 max is not going to be found since our CodePage enum is backed by a u16.
-            if (num > std.math.maxInt(u16)) {
-                return error.CodePagePragmaInvalidCodePage;
-            }
-
-            break :code_page code_pages.CodePage.getByIdentifierEnsureSupported(@intCast(num)) catch |err| switch (err) {
-                error.InvalidCodePage => return error.CodePagePragmaInvalidCodePage,
-                error.UnsupportedCodePage => return error.CodePagePragmaUnsupportedCodePage,
-            };
-        };
+        const code_page = (parsePragmaCodePage(full_command) catch |err| switch (err) {
+            error.NotPragma, error.NotCodePagePragma => return,
+            else => |e| return e,
+        }) orelse self.default_code_page;
 
         // https://learn.microsoft.com/en-us/windows/win32/menurc/pragma-directives
         // > This pragma is not supported in an included resource file (.rc)
@@ -1003,16 +924,6 @@ pub const Lexer = struct {
 
         self.seen_pragma_code_pages +|= 1;
         self.current_code_page = code_page;
-    }
-
-    fn parseCodePageNum(str: []const u8) !u32 {
-        var x: u32 = 0;
-        for (str) |c| {
-            const digit = try std.fmt.charToDigit(c, 10);
-            if (x != 0) x = try std.math.mul(u32, x, 10);
-            x = try std.math.add(u32, x, digit);
-        }
-        return x;
     }
 
     pub fn getErrorDetails(self: Self, lex_err: LexError) ErrorDetails {
@@ -1047,6 +958,106 @@ pub const Lexer = struct {
         };
     }
 };
+
+fn parseCodePageNum(str: []const u8) !u32 {
+    var x: u32 = 0;
+    for (str) |c| {
+        const digit = try std.fmt.charToDigit(c, 10);
+        if (x != 0) x = try std.math.mul(u32, x, 10);
+        x = try std.math.add(u32, x, digit);
+    }
+    return x;
+}
+
+/// Returns `null` when the code_page is set to DEFAULT
+pub fn parsePragmaCodePage(full_command: []const u8) !?CodePage {
+    var command = full_command;
+
+    // Anything besides exactly this is ignored by the Windows RC implementation
+    const expected_directive = "#pragma";
+    if (!std.mem.startsWith(u8, command, expected_directive)) return error.NotPragma;
+    command = command[expected_directive.len..];
+
+    if (command.len == 0 or !std.ascii.isWhitespace(command[0])) return error.NotCodePagePragma;
+    while (command.len > 0 and std.ascii.isWhitespace(command[0])) {
+        command = command[1..];
+    }
+
+    // Note: CoDe_PaGeZ is also treated as "code_page" by the Windows RC implementation,
+    //       and it will error with 'Missing left parenthesis in code_page #pragma'
+    const expected_extension = "code_page";
+    if (!std.ascii.startsWithIgnoreCase(command, expected_extension)) return error.NotCodePagePragma;
+    command = command[expected_extension.len..];
+
+    while (command.len > 0 and std.ascii.isWhitespace(command[0])) {
+        command = command[1..];
+    }
+
+    if (command.len == 0 or command[0] != '(') {
+        return error.CodePagePragmaMissingLeftParen;
+    }
+    command = command[1..];
+
+    while (command.len > 0 and std.ascii.isWhitespace(command[0])) {
+        command = command[1..];
+    }
+
+    var num_str: []u8 = command[0..0];
+    while (command.len > 0 and (command[0] != ')' and !std.ascii.isWhitespace(command[0]))) {
+        command = command[1..];
+        num_str.len += 1;
+    }
+
+    if (num_str.len == 0) {
+        return error.CodePagePragmaNotInteger;
+    }
+
+    while (command.len > 0 and std.ascii.isWhitespace(command[0])) {
+        command = command[1..];
+    }
+
+    if (command.len == 0 or command[0] != ')') {
+        return error.CodePagePragmaMissingRightParen;
+    }
+
+    const code_page: ?CodePage = code_page: {
+        if (std.ascii.eqlIgnoreCase("DEFAULT", num_str)) {
+            break :code_page null;
+        }
+
+        // The Win32 compiler behaves fairly strangely around maxInt(u32):
+        // - If the overflowed u32 wraps and becomes a known code page ID, then
+        //   it will error/warn with "Codepage not valid:  ignored" (depending on /w)
+        // - If the overflowed u32 wraps and does not become a known code page ID,
+        //   then it will error with 'constant too big' and 'Codepage not integer'
+        //
+        // Instead of that, we just have a separate error specifically for overflow.
+        const num = parseCodePageNum(num_str) catch |err| switch (err) {
+            error.InvalidCharacter => return error.CodePagePragmaNotInteger,
+            error.Overflow => return error.CodePagePragmaOverflow,
+        };
+
+        // Anything that starts with 0 but does not resolve to 0 is treated as invalid, e.g. 01252
+        if (num_str[0] == '0' and num != 0) {
+            return error.CodePagePragmaInvalidCodePage;
+        }
+        // Anything that resolves to 0 is treated as 'not an integer' by the Win32 implementation.
+        else if (num == 0) {
+            return error.CodePagePragmaNotInteger;
+        }
+        // Anything above u16 max is not going to be found since our CodePage enum is backed by a u16.
+        if (num > std.math.maxInt(u16)) {
+            return error.CodePagePragmaInvalidCodePage;
+        }
+
+        break :code_page code_pages.CodePage.getByIdentifierEnsureSupported(@intCast(num)) catch |err| switch (err) {
+            error.InvalidCodePage => return error.CodePagePragmaInvalidCodePage,
+            error.UnsupportedCodePage => return error.CodePagePragmaUnsupportedCodePage,
+        };
+    };
+
+    return code_page;
+}
 
 fn testLexNormal(source: []const u8, expected_tokens: []const Token.Id) !void {
     var lexer = Lexer.init(source, .{});
