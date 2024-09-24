@@ -1,6 +1,6 @@
 const std = @import("std");
 const code_pages = @import("code_pages.zig");
-const CodePage = code_pages.CodePage;
+const SupportedCodePage = code_pages.SupportedCodePage;
 const windows1252 = @import("windows1252.zig");
 const ErrorDetails = @import("errors.zig").ErrorDetails;
 const DiagnosticsContext = @import("errors.zig").DiagnosticsContext;
@@ -18,7 +18,7 @@ pub fn isValidNumberDataLiteral(str: []const u8) bool {
 
 pub const SourceBytes = struct {
     slice: []const u8,
-    code_page: CodePage,
+    code_page: SupportedCodePage,
 };
 
 pub const StringType = enum { ascii, wide };
@@ -53,7 +53,7 @@ pub const StringType = enum { ascii, wide };
 ///       branches should never actually be hit during this function.
 pub const IterativeStringParser = struct {
     source: []const u8,
-    code_page: CodePage,
+    code_page: SupportedCodePage,
     /// The type of the string inferred by the prefix (L"" or "")
     /// This is what matters for things like the maximum digits in an
     /// escape sequence, whether or not invalid escape sequences are skipped, etc.
@@ -454,7 +454,7 @@ pub const IterativeStringParser = struct {
 pub const StringParseOptions = struct {
     start_column: usize = 0,
     diagnostics: ?DiagnosticsContext = null,
-    output_code_page: CodePage,
+    output_code_page: SupportedCodePage,
 };
 
 pub fn parseQuotedString(
@@ -502,7 +502,6 @@ pub fn parseQuotedString(
                     const utf8_len = std.unicode.utf8Encode(codepoint_to_encode, &utf8_buf) catch unreachable;
                     try buf.appendSlice(utf8_buf[0..utf8_len]);
                 },
-                else => unreachable, // Unsupported code page
             },
             .wide => {
                 // Parsing any string type as a wide string is handled separately, see parseQuotedStringAsWideString
@@ -578,7 +577,6 @@ pub fn parseQuotedStringAsWideString(allocator: std.mem.Allocator, bytes: Source
             const code_unit_to_encode: u16 = switch (options.output_code_page) {
                 .windows1252 => windows1252.toCodepoint(byte_to_interpret),
                 .utf8 => if (byte_to_interpret > 0x7F) '�' else byte_to_interpret,
-                else => unreachable, // Unsupported code page
             };
             try buf.append(std.mem.nativeToLittle(u16, code_unit_to_encode));
         } else if (c == code_pages.Codepoint.invalid) {

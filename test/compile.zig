@@ -1505,7 +1505,7 @@ fn testCompileErrorDetailsWithDir(expected_details: []const ExpectedErrorDetails
 
 const TestCompileOptions = struct {
     cwd: std.fs.Dir,
-    default_code_page: resinator.code_pages.CodePage = .windows1252,
+    default_code_page: resinator.code_pages.SupportedCodePage = .windows1252,
     ignore_include_env_var: bool = false,
     extra_include_paths: []const []const u8 = &.{},
 };

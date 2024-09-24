@@ -1,7 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Token = @import("lex.zig").Token;
-const CodePage = @import("code_pages.zig").CodePage;
+const SupportedCodePage = @import("code_pages.zig").SupportedCodePage;
 
 pub const Tree = struct {
     node: *Node,
@@ -28,11 +28,11 @@ pub const Tree = struct {
 };
 
 pub const CodePageLookup = struct {
-    lookup: std.ArrayListUnmanaged(CodePage) = .{},
+    lookup: std.ArrayListUnmanaged(SupportedCodePage) = .{},
     allocator: Allocator,
-    default_code_page: CodePage,
+    default_code_page: SupportedCodePage,
 
-    pub fn init(allocator: Allocator, default_code_page: CodePage) CodePageLookup {
+    pub fn init(allocator: Allocator, default_code_page: SupportedCodePage) CodePageLookup {
         return .{
             .allocator = allocator,
             .default_code_page = default_code_page,
@@ -44,7 +44,7 @@ pub const CodePageLookup = struct {
     }
 
     /// line_num is 1-indexed
-    pub fn setForLineNum(self: *CodePageLookup, line_num: usize, code_page: CodePage) !void {
+    pub fn setForLineNum(self: *CodePageLookup, line_num: usize, code_page: SupportedCodePage) !void {
         const index = line_num - 1;
         if (index >= self.lookup.items.len) {
             const new_size = line_num;
@@ -66,16 +66,16 @@ pub const CodePageLookup = struct {
         self.lookup.items[index] = code_page;
     }
 
-    pub fn setForToken(self: *CodePageLookup, token: Token, code_page: CodePage) !void {
+    pub fn setForToken(self: *CodePageLookup, token: Token, code_page: SupportedCodePage) !void {
         return self.setForLineNum(token.line_number, code_page);
     }
 
     /// line_num is 1-indexed
-    pub fn getForLineNum(self: CodePageLookup, line_num: usize) CodePage {
+    pub fn getForLineNum(self: CodePageLookup, line_num: usize) SupportedCodePage {
         return self.lookup.items[line_num - 1];
     }
 
-    pub fn getForToken(self: CodePageLookup, token: Token) CodePage {
+    pub fn getForToken(self: CodePageLookup, token: Token) SupportedCodePage {
         return self.getForLineNum(token.line_number);
     }
 };
@@ -85,21 +85,21 @@ test "CodePageLookup" {
     defer lookup.deinit();
 
     try lookup.setForLineNum(5, .utf8);
-    try std.testing.expectEqual(CodePage.windows1252, lookup.getForLineNum(1));
-    try std.testing.expectEqual(CodePage.windows1252, lookup.getForLineNum(2));
-    try std.testing.expectEqual(CodePage.windows1252, lookup.getForLineNum(3));
-    try std.testing.expectEqual(CodePage.windows1252, lookup.getForLineNum(4));
-    try std.testing.expectEqual(CodePage.utf8, lookup.getForLineNum(5));
+    try std.testing.expectEqual(SupportedCodePage.windows1252, lookup.getForLineNum(1));
+    try std.testing.expectEqual(SupportedCodePage.windows1252, lookup.getForLineNum(2));
+    try std.testing.expectEqual(SupportedCodePage.windows1252, lookup.getForLineNum(3));
+    try std.testing.expectEqual(SupportedCodePage.windows1252, lookup.getForLineNum(4));
+    try std.testing.expectEqual(SupportedCodePage.utf8, lookup.getForLineNum(5));
     try std.testing.expectEqual(@as(usize, 5), lookup.lookup.items.len);
 
     try lookup.setForLineNum(7, .windows1252);
-    try std.testing.expectEqual(CodePage.windows1252, lookup.getForLineNum(1));
-    try std.testing.expectEqual(CodePage.windows1252, lookup.getForLineNum(2));
-    try std.testing.expectEqual(CodePage.windows1252, lookup.getForLineNum(3));
-    try std.testing.expectEqual(CodePage.windows1252, lookup.getForLineNum(4));
-    try std.testing.expectEqual(CodePage.utf8, lookup.getForLineNum(5));
-    try std.testing.expectEqual(CodePage.utf8, lookup.getForLineNum(6));
-    try std.testing.expectEqual(CodePage.windows1252, lookup.getForLineNum(7));
+    try std.testing.expectEqual(SupportedCodePage.windows1252, lookup.getForLineNum(1));
+    try std.testing.expectEqual(SupportedCodePage.windows1252, lookup.getForLineNum(2));
+    try std.testing.expectEqual(SupportedCodePage.windows1252, lookup.getForLineNum(3));
+    try std.testing.expectEqual(SupportedCodePage.windows1252, lookup.getForLineNum(4));
+    try std.testing.expectEqual(SupportedCodePage.utf8, lookup.getForLineNum(5));
+    try std.testing.expectEqual(SupportedCodePage.utf8, lookup.getForLineNum(6));
+    try std.testing.expectEqual(SupportedCodePage.windows1252, lookup.getForLineNum(7));
     try std.testing.expectEqual(@as(usize, 7), lookup.lookup.items.len);
 }
 

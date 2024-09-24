@@ -2,12 +2,40 @@ const std = @import("std");
 const windows1252 = @import("windows1252.zig");
 
 /// https://learn.microsoft.com/en-us/windows/win32/intl/code-page-identifiers
-pub const CodePage = enum(u16) {
-    // supported
+pub const SupportedCodePage = enum(u16) {
     windows1252 = 1252, // windows-1252    ANSI Latin 1; Western European (Windows)
     utf8 = 65001, // utf-8    Unicode (UTF-8)
 
-    // unsupported but valid
+    pub fn codepointAt(code_page: SupportedCodePage, index: usize, bytes: []const u8) ?Codepoint {
+        if (index >= bytes.len) return null;
+        switch (code_page) {
+            .windows1252 => {
+                // All byte values have a representation, so just convert the byte
+                return Codepoint{
+                    .value = windows1252.toCodepoint(bytes[index]),
+                    .byte_len = 1,
+                };
+            },
+            .utf8 => {
+                return Utf8.WellFormedDecoder.decode(bytes[index..]);
+            },
+        }
+    }
+
+    pub fn getByIdentifier(identifier: u16) !SupportedCodePage {
+        // There's probably a more efficient way to do this (e.g. ComptimeHashMap?) but
+        // this should be fine, especially since this function likely won't be called much.
+        inline for (@typeInfo(SupportedCodePage).@"enum".fields) |enumField| {
+            if (identifier == enumField.value) {
+                return @field(SupportedCodePage, enumField.name);
+            }
+        }
+        return error.InvalidCodePage;
+    }
+};
+
+/// https://learn.microsoft.com/en-us/windows/win32/intl/code-page-identifiers
+pub const UnsupportedCodePage = enum(u16) {
     ibm037 = 37, // IBM037    IBM EBCDIC US-Canada
     ibm437 = 437, // IBM437    OEM United States
     ibm500 = 500, // IBM500    IBM EBCDIC International
@@ -158,50 +186,45 @@ pub const CodePage = enum(u16) {
     x_iscii_gu = 57010, // x-iscii-gu    ISCII Gujarati
     x_iscii_pa = 57011, // x-iscii-pa    ISCII Punjabi
     utf7 = 65000, // utf-7    Unicode (UTF-7)
-
-    pub fn codepointAt(code_page: CodePage, index: usize, bytes: []const u8) ?Codepoint {
-        if (index >= bytes.len) return null;
-        switch (code_page) {
-            .windows1252 => {
-                // All byte values have a representation, so just convert the byte
-                return Codepoint{
-                    .value = windows1252.toCodepoint(bytes[index]),
-                    .byte_len = 1,
-                };
-            },
-            .utf8 => {
-                return Utf8.WellFormedDecoder.decode(bytes[index..]);
-            },
-            else => unreachable,
-        }
-    }
-
-    pub fn isSupported(code_page: CodePage) bool {
-        return switch (code_page) {
-            .windows1252, .utf8 => true,
-            else => false,
-        };
-    }
-
-    pub fn getByIdentifier(identifier: u16) !CodePage {
-        // There's probably a more efficient way to do this (e.g. ComptimeHashMap?) but
-        // this should be fine, especially since this function likely won't be called much.
-        inline for (@typeInfo(CodePage).@"enum".fields) |enumField| {
-            if (identifier == enumField.value) {
-                return @field(CodePage, enumField.name);
-            }
-        }
-        return error.InvalidCodePage;
-    }
-
-    pub fn getByIdentifierEnsureSupported(identifier: u16) !CodePage {
-        const code_page = try getByIdentifier(identifier);
-        switch (isSupported(code_page)) {
-            true => return code_page,
-            false => return error.UnsupportedCodePage,
-        }
-    }
 };
+
+pub const CodePage = blk: {
+    const fields = @typeInfo(SupportedCodePage).@"enum".fields ++ @typeInfo(UnsupportedCodePage).@"enum".fields;
+    break :blk @Type(.{ .@"enum" = .{
+        .tag_type = u16,
+        .decls = &.{},
+        .fields = fields,
+        .is_exhaustive = true,
+    } });
+};
+
+pub fn isSupported(code_page: CodePage) bool {
+    inline for (@typeInfo(SupportedCodePage).@"enum".fields) |enumField| {
+        if (@intFromEnum(code_page) == @intFromEnum(@field(SupportedCodePage, enumField.name))) {
+            return true;
+        }
+    }
+    return false;
+}
+
+pub fn getByIdentifier(identifier: u16) !CodePage {
+    // There's probably a more efficient way to do this (e.g. ComptimeHashMap?) but
+    // this should be fine, especially since this function likely won't be called much.
+    inline for (@typeInfo(CodePage).@"enum".fields) |enumField| {
+        if (identifier == enumField.value) {
+            return @field(CodePage, enumField.name);
+        }
+    }
+    return error.InvalidCodePage;
+}
+
+pub fn getByIdentifierEnsureSupported(identifier: u16) !SupportedCodePage {
+    const code_page = try getByIdentifier(identifier);
+    return if (isSupported(code_page))
+        @enumFromInt(@intFromEnum(code_page))
+    else
+        error.UnsupportedCodePage;
+}
 
 pub const Utf8 = struct {
     /// Implements decoding with rejection of ill-formed UTF-8 sequences based on section
@@ -305,20 +328,20 @@ test "codepointAt invalid utf8" {
         try std.testing.expectEqual(Codepoint{
             .value = Codepoint.invalid,
             .byte_len = 1,
-        }, CodePage.utf8.codepointAt(0, invalid_utf8).?);
+        }, SupportedCodePage.utf8.codepointAt(0, invalid_utf8).?);
         try std.testing.expectEqual(Codepoint{
             .value = Codepoint.invalid,
             .byte_len = 2,
-        }, CodePage.utf8.codepointAt(1, invalid_utf8).?);
+        }, SupportedCodePage.utf8.codepointAt(1, invalid_utf8).?);
         try std.testing.expectEqual(Codepoint{
             .value = Codepoint.invalid,
             .byte_len = 1,
-        }, CodePage.utf8.codepointAt(3, invalid_utf8).?);
+        }, SupportedCodePage.utf8.codepointAt(3, invalid_utf8).?);
         try std.testing.expectEqual(Codepoint{
             .value = Codepoint.invalid,
             .byte_len = 1,
-        }, CodePage.utf8.codepointAt(4, invalid_utf8).?);
-        try std.testing.expectEqual(@as(?Codepoint, null), CodePage.windows1252.codepointAt(5, invalid_utf8));
+        }, SupportedCodePage.utf8.codepointAt(4, invalid_utf8).?);
+        try std.testing.expectEqual(@as(?Codepoint, null), SupportedCodePage.windows1252.codepointAt(5, invalid_utf8));
     }
 
     {
@@ -326,12 +349,12 @@ test "codepointAt invalid utf8" {
         try std.testing.expectEqual(Codepoint{
             .value = Codepoint.invalid,
             .byte_len = 2,
-        }, CodePage.utf8.codepointAt(0, invalid_utf8).?);
+        }, SupportedCodePage.utf8.codepointAt(0, invalid_utf8).?);
         try std.testing.expectEqual(Codepoint{
             .value = Codepoint.invalid,
             .byte_len = 1,
-        }, CodePage.utf8.codepointAt(2, invalid_utf8).?);
-        try std.testing.expectEqual(@as(?Codepoint, null), CodePage.windows1252.codepointAt(3, invalid_utf8));
+        }, SupportedCodePage.utf8.codepointAt(2, invalid_utf8).?);
+        try std.testing.expectEqual(@as(?Codepoint, null), SupportedCodePage.windows1252.codepointAt(3, invalid_utf8));
     }
 
     {
@@ -339,8 +362,8 @@ test "codepointAt invalid utf8" {
         try std.testing.expectEqual(Codepoint{
             .value = Codepoint.invalid,
             .byte_len = 1,
-        }, CodePage.utf8.codepointAt(0, invalid_utf8).?);
-        try std.testing.expectEqual(@as(?Codepoint, null), CodePage.windows1252.codepointAt(1, invalid_utf8));
+        }, SupportedCodePage.utf8.codepointAt(0, invalid_utf8).?);
+        try std.testing.expectEqual(@as(?Codepoint, null), SupportedCodePage.windows1252.codepointAt(1, invalid_utf8));
     }
 
     {
@@ -348,8 +371,8 @@ test "codepointAt invalid utf8" {
         try std.testing.expectEqual(Codepoint{
             .value = Codepoint.invalid,
             .byte_len = 2,
-        }, CodePage.utf8.codepointAt(0, invalid_utf8).?);
-        try std.testing.expectEqual(@as(?Codepoint, null), CodePage.windows1252.codepointAt(2, invalid_utf8));
+        }, SupportedCodePage.utf8.codepointAt(0, invalid_utf8).?);
+        try std.testing.expectEqual(@as(?Codepoint, null), SupportedCodePage.windows1252.codepointAt(2, invalid_utf8));
     }
 
     {
@@ -357,12 +380,12 @@ test "codepointAt invalid utf8" {
         try std.testing.expectEqual(Codepoint{
             .value = Codepoint.invalid,
             .byte_len = 1,
-        }, CodePage.utf8.codepointAt(0, invalid_utf8).?);
+        }, SupportedCodePage.utf8.codepointAt(0, invalid_utf8).?);
         try std.testing.expectEqual(Codepoint{
             .value = Codepoint.invalid,
             .byte_len = 1,
-        }, CodePage.utf8.codepointAt(1, invalid_utf8).?);
-        try std.testing.expectEqual(@as(?Codepoint, null), CodePage.windows1252.codepointAt(2, invalid_utf8));
+        }, SupportedCodePage.utf8.codepointAt(1, invalid_utf8).?);
+        try std.testing.expectEqual(@as(?Codepoint, null), SupportedCodePage.windows1252.codepointAt(2, invalid_utf8));
     }
 
     {
@@ -371,11 +394,11 @@ test "codepointAt invalid utf8" {
         try std.testing.expectEqual(Codepoint{
             .value = Codepoint.invalid,
             .byte_len = 2,
-        }, CodePage.utf8.codepointAt(0, invalid_utf8).?);
+        }, SupportedCodePage.utf8.codepointAt(0, invalid_utf8).?);
         try std.testing.expectEqual(Codepoint{
             .value = Codepoint.invalid,
             .byte_len = 1,
-        }, CodePage.utf8.codepointAt(2, invalid_utf8).?);
+        }, SupportedCodePage.utf8.codepointAt(2, invalid_utf8).?);
     }
 }
 
@@ -386,19 +409,19 @@ test "codepointAt utf8 encoded" {
     try std.testing.expectEqual(Codepoint{
         .value = '²',
         .byte_len = 2,
-    }, CodePage.utf8.codepointAt(0, utf8_encoded).?);
-    try std.testing.expectEqual(@as(?Codepoint, null), CodePage.utf8.codepointAt(2, utf8_encoded));
+    }, SupportedCodePage.utf8.codepointAt(0, utf8_encoded).?);
+    try std.testing.expectEqual(@as(?Codepoint, null), SupportedCodePage.utf8.codepointAt(2, utf8_encoded));
 
     // with code page windows1252
     try std.testing.expectEqual(Codepoint{
         .value = '\xC2',
         .byte_len = 1,
-    }, CodePage.windows1252.codepointAt(0, utf8_encoded).?);
+    }, SupportedCodePage.windows1252.codepointAt(0, utf8_encoded).?);
     try std.testing.expectEqual(Codepoint{
         .value = '\xB2',
         .byte_len = 1,
-    }, CodePage.windows1252.codepointAt(1, utf8_encoded).?);
-    try std.testing.expectEqual(@as(?Codepoint, null), CodePage.windows1252.codepointAt(2, utf8_encoded));
+    }, SupportedCodePage.windows1252.codepointAt(1, utf8_encoded).?);
+    try std.testing.expectEqual(@as(?Codepoint, null), SupportedCodePage.windows1252.codepointAt(2, utf8_encoded));
 }
 
 test "codepointAt windows1252 encoded" {
@@ -408,15 +431,15 @@ test "codepointAt windows1252 encoded" {
     try std.testing.expectEqual(Codepoint{
         .value = Codepoint.invalid,
         .byte_len = 1,
-    }, CodePage.utf8.codepointAt(0, windows1252_encoded).?);
-    try std.testing.expectEqual(@as(?Codepoint, null), CodePage.utf8.codepointAt(2, windows1252_encoded));
+    }, SupportedCodePage.utf8.codepointAt(0, windows1252_encoded).?);
+    try std.testing.expectEqual(@as(?Codepoint, null), SupportedCodePage.utf8.codepointAt(2, windows1252_encoded));
 
     // with code page windows1252
     try std.testing.expectEqual(Codepoint{
         .value = '\xB2',
         .byte_len = 1,
-    }, CodePage.windows1252.codepointAt(0, windows1252_encoded).?);
-    try std.testing.expectEqual(@as(?Codepoint, null), CodePage.windows1252.codepointAt(1, windows1252_encoded));
+    }, SupportedCodePage.windows1252.codepointAt(0, windows1252_encoded).?);
+    try std.testing.expectEqual(@as(?Codepoint, null), SupportedCodePage.windows1252.codepointAt(1, windows1252_encoded));
 }
 
 pub const Codepoint = struct {

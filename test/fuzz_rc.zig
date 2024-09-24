@@ -41,7 +41,7 @@ pub fn zigMain() !void {
     const stderr_config = std.io.tty.detectConfig(std.io.getStdErr());
 
     const language_id = rand.int(u16);
-    const code_page: resinator.code_pages.CodePage = if (rand.boolean()) .utf8 else .windows1252;
+    const code_page: resinator.code_pages.SupportedCodePage = if (rand.boolean()) .utf8 else .windows1252;
     const null_terminate_string_table_strings = rand.boolean();
     const max_string_literal_codepoints = rand.int(u15);
     const warn_instead_of_error_on_invalid_code_page = rand.boolean();

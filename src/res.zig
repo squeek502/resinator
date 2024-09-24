@@ -4,7 +4,7 @@ const Resource = rc.Resource;
 const CommonResourceAttributes = rc.CommonResourceAttributes;
 const Allocator = std.mem.Allocator;
 const windows1252 = @import("windows1252.zig");
-const CodePage = @import("code_pages.zig").CodePage;
+const SupportedCodePage = @import("code_pages.zig").SupportedCodePage;
 const literals = @import("literals.zig");
 const SourceBytes = literals.SourceBytes;
 const Codepoint = @import("code_pages.zig").Codepoint;
@@ -603,7 +603,7 @@ pub const AcceleratorModifiers = struct {
 
 const AcceleratorKeyCodepointTranslator = struct {
     string_type: literals.StringType,
-    output_code_page: CodePage,
+    output_code_page: SupportedCodePage,
 
     pub fn translate(self: @This(), maybe_parsed: ?literals.IterativeStringParser.ParsedCodepoint) ?u21 {
         const parsed = maybe_parsed orelse return null;
@@ -618,7 +618,6 @@ const AcceleratorKeyCodepointTranslator = struct {
                             else => return 0xFFFD,
                         },
                         .windows1252 => return windows1252.toCodepoint(truncated),
-                        else => unreachable, // unsupported code page
                     }
                 },
                 .wide => {

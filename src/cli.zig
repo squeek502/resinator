@@ -1,5 +1,6 @@
 const std = @import("std");
-const CodePage = @import("code_pages.zig").CodePage;
+const code_pages = @import("code_pages.zig");
+const SupportedCodePage = code_pages.SupportedCodePage;
 const lang = @import("lang.zig");
 const res = @import("res.zig");
 const Allocator = std.mem.Allocator;
@@ -136,7 +137,7 @@ pub const Options = struct {
     ignore_include_env_var: bool = false,
     preprocess: Preprocess = .yes,
     default_language_id: ?u16 = null,
-    default_code_page: ?CodePage = null,
+    default_code_page: ?SupportedCodePage = null,
     verbose: bool = false,
     symbols: std.StringArrayHashMapUnmanaged(SymbolValue) = .{},
     null_terminate_string_table_strings: bool = false,
@@ -769,7 +770,7 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                     arg_i += value.index_increment;
                     continue :next_arg;
                 };
-                options.default_code_page = CodePage.getByIdentifierEnsureSupported(code_page_id) catch |err| switch (err) {
+                options.default_code_page = code_pages.getByIdentifierEnsureSupported(code_page_id) catch |err| switch (err) {
                     error.InvalidCodePage => {
                         var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = value.argSpan(arg) };
                         var msg_writer = err_details.msg.writer(allocator);
@@ -782,7 +783,7 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                         var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = value.argSpan(arg) };
                         var msg_writer = err_details.msg.writer(allocator);
                         try msg_writer.print("unsupported code page: {s} (id={})", .{
-                            @tagName(CodePage.getByIdentifier(code_page_id) catch unreachable),
+                            @tagName(code_pages.getByIdentifier(code_page_id) catch unreachable),
                             code_page_id,
                         });
                         try diagnostics.append(err_details);

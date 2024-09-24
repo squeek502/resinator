@@ -8,7 +8,7 @@ const std = @import("std");
 const ErrorDetails = @import("errors.zig").ErrorDetails;
 const columnWidth = @import("literals.zig").columnWidth;
 const code_pages = @import("code_pages.zig");
-const CodePage = code_pages.CodePage;
+const SupportedCodePage = code_pages.SupportedCodePage;
 const SourceMappings = @import("source_mapping.zig").SourceMappings;
 const isNonAsciiDigit = @import("utils.zig").isNonAsciiDigit;
 
@@ -207,8 +207,8 @@ pub const Lexer = struct {
     line_handler: LineHandler,
     at_start_of_line: bool = true,
     error_context_token: ?Token = null,
-    current_code_page: CodePage,
-    default_code_page: CodePage,
+    current_code_page: SupportedCodePage,
+    default_code_page: SupportedCodePage,
     source_mappings: ?*SourceMappings,
     max_string_literal_codepoints: u15,
     /// Needed to determine whether or not the output code page should
@@ -218,7 +218,7 @@ pub const Lexer = struct {
     pub const Error = LexError;
 
     pub const LexerOptions = struct {
-        default_code_page: CodePage = .windows1252,
+        default_code_page: SupportedCodePage = .windows1252,
         source_mappings: ?*SourceMappings = null,
         max_string_literal_codepoints: u15 = default_max_string_literal_codepoints,
     };
@@ -970,7 +970,7 @@ fn parseCodePageNum(str: []const u8) !u32 {
 }
 
 /// Returns `null` when the code_page is set to DEFAULT
-pub fn parsePragmaCodePage(full_command: []const u8) !?CodePage {
+pub fn parsePragmaCodePage(full_command: []const u8) !?SupportedCodePage {
     var command = full_command;
 
     // Anything besides exactly this is ignored by the Windows RC implementation
@@ -1020,7 +1020,7 @@ pub fn parsePragmaCodePage(full_command: []const u8) !?CodePage {
         return error.CodePagePragmaMissingRightParen;
     }
 
-    const code_page: ?CodePage = code_page: {
+    const code_page: ?SupportedCodePage = code_page: {
         if (std.ascii.eqlIgnoreCase("DEFAULT", num_str)) {
             break :code_page null;
         }
@@ -1050,7 +1050,7 @@ pub fn parsePragmaCodePage(full_command: []const u8) !?CodePage {
             return error.CodePagePragmaInvalidCodePage;
         }
 
-        break :code_page code_pages.CodePage.getByIdentifierEnsureSupported(@intCast(num)) catch |err| switch (err) {
+        break :code_page code_pages.getByIdentifierEnsureSupported(@intCast(num)) catch |err| switch (err) {
             error.InvalidCodePage => return error.CodePagePragmaInvalidCodePage,
             error.UnsupportedCodePage => return error.CodePagePragmaUnsupportedCodePage,
         };
@@ -1091,7 +1091,7 @@ test "normal: string literals" {
 
 test "superscript chars and code pages" {
     const firstToken = struct {
-        pub fn firstToken(source: []const u8, default_code_page: CodePage, comptime lex_method: Lexer.LexMethod) LexError!Token {
+        pub fn firstToken(source: []const u8, default_code_page: SupportedCodePage, comptime lex_method: Lexer.LexMethod) LexError!Token {
             var lexer = Lexer.init(source, .{ .default_code_page = default_code_page });
             return lexer.next(lex_method);
         }

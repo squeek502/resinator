@@ -9,7 +9,7 @@ const bmp = @import("bmp.zig");
 const parse = @import("parse.zig");
 const lang = @import("lang.zig");
 const code_pages = @import("code_pages.zig");
-const CodePage = code_pages.CodePage;
+const SupportedCodePage = code_pages.SupportedCodePage;
 const builtin = @import("builtin");
 const native_endian = builtin.cpu.arch.endian();
 
@@ -96,14 +96,14 @@ pub const DiagnosticsContext = struct {
     diagnostics: *Diagnostics,
     token: Token,
     /// Code page of the source file at the token location
-    code_page: CodePage,
+    code_page: SupportedCodePage,
 };
 
 pub const ErrorDetails = struct {
     err: Error,
     token: Token,
     /// Code page of the source file at the token location
-    code_page: CodePage,
+    code_page: SupportedCodePage,
     /// If non-null, should be before `token`. If null, `token` is assumed to be the start.
     token_span_start: ?Token = null,
     /// If non-null, should be after `token`. If null, `token` is assumed to be the end.
@@ -437,7 +437,7 @@ pub const ErrorDetails = struct {
     const TokenFormatContext = struct {
         token: Token,
         source: []const u8,
-        code_page: CodePage,
+        code_page: SupportedCodePage,
     };
 
     fn fmtToken(self: ErrorDetails, source: []const u8) std.fmt.Formatter(formatToken) {
@@ -519,7 +519,7 @@ pub const ErrorDetails = struct {
                     number_slice.len += 1;
                 }
                 const number = std.fmt.parseUnsigned(u16, number_slice, 10) catch unreachable;
-                const code_page = CodePage.getByIdentifier(number) catch unreachable;
+                const code_page = code_pages.getByIdentifier(number) catch unreachable;
                 // TODO: Improve or maybe add a note making it more clear that the code page
                 //       is valid and that the code page is unsupported purely due to a limitation
                 //       in this compiler.
@@ -883,7 +883,7 @@ pub const ErrorDetailsWithoutCodePage = blk: {
     } });
 };
 
-fn cellCount(code_page: CodePage, source: []const u8, start_index: usize, end_index: usize) usize {
+fn cellCount(code_page: SupportedCodePage, source: []const u8, start_index: usize, end_index: usize) usize {
     // Note: This is an imperfect solution. A proper implementation here would
     //       involve full grapheme cluster awareness + grapheme width data, but oh well.
     var codepoint_count: usize = 0;
@@ -1086,7 +1086,7 @@ const CorrespondingLines = struct {
     span: SourceMappings.CorrespondingSpan,
     file: std.fs.File,
     buffered_reader: BufferedReaderType,
-    code_page: CodePage,
+    code_page: SupportedCodePage,
 
     const BufferedReaderType = std.io.BufferedReader(512, std.fs.File.Reader);
 
@@ -1227,7 +1227,7 @@ const CorrespondingLines = struct {
 const max_source_line_codepoints = 120;
 const max_source_line_bytes = max_source_line_codepoints * 4;
 
-fn writeSourceSlice(buf: []u8, slice: []const u8, code_page: CodePage) VisualLine {
+fn writeSourceSlice(buf: []u8, slice: []const u8, code_page: SupportedCodePage) VisualLine {
     var src_i: usize = 0;
     var dest_i: usize = 0;
     var codepoint_count: usize = 0;

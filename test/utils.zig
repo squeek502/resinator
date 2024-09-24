@@ -144,7 +144,7 @@ pub fn getResinatorResultFromFile(allocator: Allocator, input_filepath: []const 
     );
     defer mapping_results.mappings.deinit(allocator);
 
-    const default_code_page: resinator.code_pages.CodePage = switch (options.default_code_page) {
+    const default_code_page: resinator.code_pages.SupportedCodePage = switch (options.default_code_page) {
         .windows1252 => .windows1252,
         .utf8 => .utf8,
     };

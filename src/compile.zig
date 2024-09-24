@@ -21,7 +21,7 @@ const WORD = std.os.windows.WORD;
 const DWORD = std.os.windows.DWORD;
 const utils = @import("utils.zig");
 const NameOrOrdinal = res.NameOrOrdinal;
-const CodePage = @import("code_pages.zig").CodePage;
+const SupportedCodePage = @import("code_pages.zig").SupportedCodePage;
 const CodePageLookup = @import("ast.zig").CodePageLookup;
 const SourceMappings = @import("source_mapping.zig").SourceMappings;
 const windows1252 = @import("windows1252.zig");
@@ -39,7 +39,7 @@ pub const CompileOptions = struct {
     /// freed by the caller.
     /// TODO: Maybe a dedicated struct for this purpose so that it's a bit nicer to work with.
     dependencies_list: ?*std.ArrayList([]const u8) = null,
-    default_code_page: CodePage = .windows1252,
+    default_code_page: SupportedCodePage = .windows1252,
     /// If true, the first #pragma code_page directive only sets the input code page, but not the output code page.
     /// This check must be done before comments are removed from the file.
     disjoint_code_page: bool = false,
@@ -462,7 +462,6 @@ pub const Compiler = struct {
                             .windows1252 => {
                                 try buf.append(truncated);
                             },
-                            else => unreachable, // unsupported code page
                         }
                     } else {
                         if (windows1252.bestFitFromCodepoint(c)) |best_fit| {
