@@ -731,44 +731,44 @@ test "accelerator keys" {
     try std.testing.expectEqual(@as(u16, 1), try parseAcceleratorKeyString(
         .{ .slice = "\"^a\"", .code_page = .windows1252 },
         false,
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     try std.testing.expectEqual(@as(u16, 1), try parseAcceleratorKeyString(
         .{ .slice = "\"^A\"", .code_page = .windows1252 },
         false,
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     try std.testing.expectEqual(@as(u16, 26), try parseAcceleratorKeyString(
         .{ .slice = "\"^Z\"", .code_page = .windows1252 },
         false,
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     try std.testing.expectEqual(@as(u16, '^'), try parseAcceleratorKeyString(
         .{ .slice = "\"^^\"", .code_page = .windows1252 },
         false,
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
 
     try std.testing.expectEqual(@as(u16, 'a'), try parseAcceleratorKeyString(
         .{ .slice = "\"a\"", .code_page = .windows1252 },
         false,
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     try std.testing.expectEqual(@as(u16, 0x6162), try parseAcceleratorKeyString(
         .{ .slice = "\"ab\"", .code_page = .windows1252 },
         false,
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
 
     try std.testing.expectEqual(@as(u16, 'C'), try parseAcceleratorKeyString(
         .{ .slice = "\"c\"", .code_page = .windows1252 },
         true,
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     try std.testing.expectEqual(@as(u16, 0x6363), try parseAcceleratorKeyString(
         .{ .slice = "\"cc\"", .code_page = .windows1252 },
         true,
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
 
     // \x00 or any escape that evaluates to zero acts as a terminator, everything past it
@@ -776,93 +776,93 @@ test "accelerator keys" {
     try std.testing.expectEqual(@as(u16, 'a'), try parseAcceleratorKeyString(
         .{ .slice = "\"a\\0bcdef\"", .code_page = .windows1252 },
         false,
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
 
     // \x80 is € in Windows-1252, which is Unicode codepoint 20AC
     try std.testing.expectEqual(@as(u16, 0x20AC), try parseAcceleratorKeyString(
         .{ .slice = "\"\x80\"", .code_page = .windows1252 },
         false,
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     // This depends on the code page, though, with codepage 65001, \x80
     // on its own is invalid UTF-8 so it gets converted to the replacement character
     try std.testing.expectEqual(@as(u16, 0xFFFD), try parseAcceleratorKeyString(
         .{ .slice = "\"\x80\"", .code_page = .utf8 },
         false,
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     try std.testing.expectEqual(@as(u16, 0xCCAC), try parseAcceleratorKeyString(
         .{ .slice = "\"\x80\x80\"", .code_page = .windows1252 },
         false,
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     // This also behaves the same with escaped characters
     try std.testing.expectEqual(@as(u16, 0x20AC), try parseAcceleratorKeyString(
         .{ .slice = "\"\\x80\"", .code_page = .windows1252 },
         false,
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     // Even with utf8 code page
     try std.testing.expectEqual(@as(u16, 0x20AC), try parseAcceleratorKeyString(
         .{ .slice = "\"\\x80\"", .code_page = .utf8 },
         false,
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     try std.testing.expectEqual(@as(u16, 0xCCAC), try parseAcceleratorKeyString(
         .{ .slice = "\"\\x80\\x80\"", .code_page = .windows1252 },
         false,
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     // Wide string with the actual characters behaves like the ASCII string version
     try std.testing.expectEqual(@as(u16, 0xCCAC), try parseAcceleratorKeyString(
         .{ .slice = "L\"\x80\x80\"", .code_page = .windows1252 },
         false,
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     // But wide string with escapes behaves differently
     try std.testing.expectEqual(@as(u16, 0x8080), try parseAcceleratorKeyString(
         .{ .slice = "L\"\\x80\\x80\"", .code_page = .windows1252 },
         false,
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     // and invalid escapes within wide strings get skipped
     try std.testing.expectEqual(@as(u16, 'z'), try parseAcceleratorKeyString(
         .{ .slice = "L\"\\Hz\"", .code_page = .windows1252 },
         false,
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
 
     // any non-A-Z codepoints are illegal
     try std.testing.expectError(error.ControlCharacterOutOfRange, parseAcceleratorKeyString(
         .{ .slice = "\"^\x83\"", .code_page = .windows1252 },
         false,
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     try std.testing.expectError(error.ControlCharacterOutOfRange, parseAcceleratorKeyString(
         .{ .slice = "\"^1\"", .code_page = .windows1252 },
         false,
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     try std.testing.expectError(error.InvalidControlCharacter, parseAcceleratorKeyString(
         .{ .slice = "\"^\"", .code_page = .windows1252 },
         false,
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     try std.testing.expectError(error.EmptyAccelerator, parseAcceleratorKeyString(
         .{ .slice = "\"\"", .code_page = .windows1252 },
         false,
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     try std.testing.expectError(error.AcceleratorTooLong, parseAcceleratorKeyString(
         .{ .slice = "\"hello\"", .code_page = .windows1252 },
         false,
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     try std.testing.expectError(error.ControlCharacterOutOfRange, parseAcceleratorKeyString(
         .{ .slice = "\"^\x80\"", .code_page = .windows1252 },
         false,
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
 
     // Invalid UTF-8 gets converted to 0xFFFD, multiple invalids get shifted and added together
@@ -870,40 +870,40 @@ test "accelerator keys" {
     try std.testing.expectEqual(@as(u16, 0xFCFD), try parseAcceleratorKeyString(
         .{ .slice = "\"\x80\x80\"", .code_page = .utf8 },
         false,
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     try std.testing.expectEqual(@as(u16, 0xFCFD), try parseAcceleratorKeyString(
         .{ .slice = "L\"\x80\x80\"", .code_page = .utf8 },
         false,
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
 
     // Codepoints >= 0x10000
     try std.testing.expectEqual(@as(u16, 0xDD00), try parseAcceleratorKeyString(
         .{ .slice = "\"\xF0\x90\x84\x80\"", .code_page = .utf8 },
         false,
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     try std.testing.expectEqual(@as(u16, 0xDD00), try parseAcceleratorKeyString(
         .{ .slice = "L\"\xF0\x90\x84\x80\"", .code_page = .utf8 },
         false,
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     try std.testing.expectEqual(@as(u16, 0x9C01), try parseAcceleratorKeyString(
         .{ .slice = "\"\xF4\x80\x80\x81\"", .code_page = .utf8 },
         false,
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     // anything before or after a codepoint >= 0x10000 causes an error
     try std.testing.expectError(error.AcceleratorTooLong, parseAcceleratorKeyString(
         .{ .slice = "\"a\xF0\x90\x80\x80\"", .code_page = .utf8 },
         false,
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     try std.testing.expectError(error.AcceleratorTooLong, parseAcceleratorKeyString(
         .{ .slice = "\"\xF0\x90\x80\x80a\"", .code_page = .utf8 },
         false,
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
 
     // Misc special cases

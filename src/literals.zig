@@ -454,7 +454,7 @@ pub const IterativeStringParser = struct {
 pub const StringParseOptions = struct {
     start_column: usize = 0,
     diagnostics: ?DiagnosticsContext = null,
-    output_code_page: CodePage = .windows1252,
+    output_code_page: CodePage,
 };
 
 pub fn parseQuotedString(
@@ -556,133 +556,155 @@ test "parse quoted ascii string" {
         \\"hello"
         ,
         .code_page = .windows1252,
-    }, .{}));
+    }, .{
+        .output_code_page = .windows1252,
+    }));
     // hex with 0 digits
     try std.testing.expectEqualSlices(u8, "\x00", try parseQuotedAsciiString(arena, .{
         .slice =
         \\"\x"
         ,
         .code_page = .windows1252,
-    }, .{}));
+    }, .{
+        .output_code_page = .windows1252,
+    }));
     // hex max of 2 digits
     try std.testing.expectEqualSlices(u8, "\xFFf", try parseQuotedAsciiString(arena, .{
         .slice =
         \\"\XfFf"
         ,
         .code_page = .windows1252,
-    }, .{}));
+    }, .{
+        .output_code_page = .windows1252,
+    }));
     // octal with invalid octal digit
     try std.testing.expectEqualSlices(u8, "\x019", try parseQuotedAsciiString(arena, .{
         .slice =
         \\"\19"
         ,
         .code_page = .windows1252,
-    }, .{}));
+    }, .{
+        .output_code_page = .windows1252,
+    }));
     // escaped quotes
     try std.testing.expectEqualSlices(u8, " \" ", try parseQuotedAsciiString(arena, .{
         .slice =
         \\" "" "
         ,
         .code_page = .windows1252,
-    }, .{}));
+    }, .{
+        .output_code_page = .windows1252,
+    }));
     // backslash right before escaped quotes
     try std.testing.expectEqualSlices(u8, "\"", try parseQuotedAsciiString(arena, .{
         .slice =
         \\"\"""
         ,
         .code_page = .windows1252,
-    }, .{}));
+    }, .{
+        .output_code_page = .windows1252,
+    }));
     // octal overflow
     try std.testing.expectEqualSlices(u8, "\x01", try parseQuotedAsciiString(arena, .{
         .slice =
         \\"\401"
         ,
         .code_page = .windows1252,
-    }, .{}));
+    }, .{
+        .output_code_page = .windows1252,
+    }));
     // escapes
     try std.testing.expectEqualSlices(u8, "\x08\n\r\t\\", try parseQuotedAsciiString(arena, .{
         .slice =
         \\"\a\n\r\t\\"
         ,
         .code_page = .windows1252,
-    }, .{}));
+    }, .{
+        .output_code_page = .windows1252,
+    }));
     // uppercase escapes
     try std.testing.expectEqualSlices(u8, "\x08\\N\\R\t\\", try parseQuotedAsciiString(arena, .{
         .slice =
         \\"\A\N\R\T\\"
         ,
         .code_page = .windows1252,
-    }, .{}));
+    }, .{
+        .output_code_page = .windows1252,
+    }));
     // backslash on its own
     try std.testing.expectEqualSlices(u8, "\\", try parseQuotedAsciiString(arena, .{
         .slice =
         \\"\"
         ,
         .code_page = .windows1252,
-    }, .{}));
+    }, .{
+        .output_code_page = .windows1252,
+    }));
     // unrecognized escapes
     try std.testing.expectEqualSlices(u8, "\\b", try parseQuotedAsciiString(arena, .{
         .slice =
         \\"\b"
         ,
         .code_page = .windows1252,
-    }, .{}));
+    }, .{
+        .output_code_page = .windows1252,
+    }));
     // escaped carriage returns
     try std.testing.expectEqualSlices(u8, "\\", try parseQuotedAsciiString(
         arena,
         .{ .slice = "\"\\\r\r\r\r\r\"", .code_page = .windows1252 },
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     // escaped newlines
     try std.testing.expectEqualSlices(u8, "", try parseQuotedAsciiString(
         arena,
         .{ .slice = "\"\\\n\n\n\n\n\"", .code_page = .windows1252 },
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     // escaped CRLF pairs
     try std.testing.expectEqualSlices(u8, "", try parseQuotedAsciiString(
         arena,
         .{ .slice = "\"\\\r\n\r\n\r\n\r\n\r\n\"", .code_page = .windows1252 },
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     // escaped newlines with other whitespace
     try std.testing.expectEqualSlices(u8, "", try parseQuotedAsciiString(
         arena,
         .{ .slice = "\"\\\n    \t\r\n \r\t\n  \t\"", .code_page = .windows1252 },
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     // literal tab characters get converted to spaces (dependent on source file columns)
     try std.testing.expectEqualSlices(u8, "       ", try parseQuotedAsciiString(
         arena,
         .{ .slice = "\"\t\"", .code_page = .windows1252 },
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     try std.testing.expectEqualSlices(u8, "abc    ", try parseQuotedAsciiString(
         arena,
         .{ .slice = "\"abc\t\"", .code_page = .windows1252 },
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     try std.testing.expectEqualSlices(u8, "abcdefg        ", try parseQuotedAsciiString(
         arena,
         .{ .slice = "\"abcdefg\t\"", .code_page = .windows1252 },
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     try std.testing.expectEqualSlices(u8, "\\      ", try parseQuotedAsciiString(
         arena,
         .{ .slice = "\"\\\t\"", .code_page = .windows1252 },
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     // literal CR's get dropped
     try std.testing.expectEqualSlices(u8, "", try parseQuotedAsciiString(
         arena,
         .{ .slice = "\"\r\r\r\r\r\"", .code_page = .windows1252 },
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     // contiguous newlines and whitespace get collapsed to <space><newline>
     try std.testing.expectEqualSlices(u8, " \n", try parseQuotedAsciiString(
         arena,
         .{ .slice = "\"\n\r\r  \r\n \t  \"", .code_page = .windows1252 },
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
 }
 
@@ -694,32 +716,32 @@ test "parse quoted ascii string with utf8 code page" {
     try std.testing.expectEqualSlices(u8, "", try parseQuotedAsciiString(
         arena,
         .{ .slice = "\"\"", .code_page = .utf8 },
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     // Codepoints that don't have a Windows-1252 representation get converted to ?
     try std.testing.expectEqualSlices(u8, "?????????", try parseQuotedAsciiString(
         arena,
         .{ .slice = "\"кириллица\"", .code_page = .utf8 },
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     // Codepoints that have a best fit mapping get converted accordingly,
     // these are box drawing codepoints
     try std.testing.expectEqualSlices(u8, "\x2b\x2d\x2b", try parseQuotedAsciiString(
         arena,
         .{ .slice = "\"┌─┐\"", .code_page = .utf8 },
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     // Invalid UTF-8 gets converted to ? depending on well-formedness
     try std.testing.expectEqualSlices(u8, "????", try parseQuotedAsciiString(
         arena,
         .{ .slice = "\"\xf0\xf0\x80\x80\x80\"", .code_page = .utf8 },
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     // Codepoints that would require a UTF-16 surrogate pair get converted to ??
     try std.testing.expectEqualSlices(u8, "??", try parseQuotedAsciiString(
         arena,
         .{ .slice = "\"\xF2\xAF\xBA\xB4\"", .code_page = .utf8 },
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
 
     // Output code page changes how invalid UTF-8 gets converted, since it
@@ -766,52 +788,62 @@ test "parse quoted wide string" {
         \\L"hello"
         ,
         .code_page = .windows1252,
-    }, .{}));
+    }, .{
+        .output_code_page = .windows1252,
+    }));
     // hex with 0 digits
     try std.testing.expectEqualSentinel(u16, 0, &[_:0]u16{0x0}, try parseQuotedWideString(arena, .{
         .slice =
         \\L"\x"
         ,
         .code_page = .windows1252,
-    }, .{}));
+    }, .{
+        .output_code_page = .windows1252,
+    }));
     // hex max of 4 digits
     try std.testing.expectEqualSentinel(u16, 0, &[_:0]u16{ std.mem.nativeToLittle(u16, 0xFFFF), std.mem.nativeToLittle(u16, 'f') }, try parseQuotedWideString(arena, .{
         .slice =
         \\L"\XfFfFf"
         ,
         .code_page = .windows1252,
-    }, .{}));
+    }, .{
+        .output_code_page = .windows1252,
+    }));
     // octal max of 7 digits
     try std.testing.expectEqualSentinel(u16, 0, &[_:0]u16{ std.mem.nativeToLittle(u16, 0x9493), std.mem.nativeToLittle(u16, '3'), std.mem.nativeToLittle(u16, '3') }, try parseQuotedWideString(arena, .{
         .slice =
         \\L"\111222333"
         ,
         .code_page = .windows1252,
-    }, .{}));
+    }, .{
+        .output_code_page = .windows1252,
+    }));
     // octal overflow
     try std.testing.expectEqualSentinel(u16, 0, &[_:0]u16{std.mem.nativeToLittle(u16, 0xFF01)}, try parseQuotedWideString(arena, .{
         .slice =
         \\L"\777401"
         ,
         .code_page = .windows1252,
-    }, .{}));
+    }, .{
+        .output_code_page = .windows1252,
+    }));
     // literal tab characters get converted to spaces (dependent on source file columns)
     try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16LeStringLiteral("abcdefg       "), try parseQuotedWideString(
         arena,
         .{ .slice = "L\"abcdefg\t\"", .code_page = .windows1252 },
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     // Windows-1252 conversion
     try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16LeStringLiteral("ðð€€€"), try parseQuotedWideString(
         arena,
         .{ .slice = "L\"\xf0\xf0\x80\x80\x80\"", .code_page = .windows1252 },
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     // Invalid escape sequences are skipped
     try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16LeStringLiteral(""), try parseQuotedWideString(
         arena,
         .{ .slice = "L\"\\H\"", .code_page = .windows1252 },
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
 }
 
@@ -823,18 +855,18 @@ test "parse quoted wide string with utf8 code page" {
     try std.testing.expectEqualSentinel(u16, 0, &[_:0]u16{}, try parseQuotedWideString(
         arena,
         .{ .slice = "L\"\"", .code_page = .utf8 },
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16LeStringLiteral("кириллица"), try parseQuotedWideString(
         arena,
         .{ .slice = "L\"кириллица\"", .code_page = .utf8 },
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     // Invalid UTF-8 gets converted to � depending on well-formedness
     try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16LeStringLiteral("����"), try parseQuotedWideString(
         arena,
         .{ .slice = "L\"\xf0\xf0\x80\x80\x80\"", .code_page = .utf8 },
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
 }
 
@@ -846,29 +878,29 @@ test "parse quoted ascii string as wide string" {
     try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16LeStringLiteral("кириллица"), try parseQuotedStringAsWideString(
         arena,
         .{ .slice = "\"кириллица\"", .code_page = .utf8 },
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     // Whether or not invalid escapes are skipped is still determined by the L prefix
     try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16LeStringLiteral("\\H"), try parseQuotedStringAsWideString(
         arena,
         .{ .slice = "\"\\H\"", .code_page = .windows1252 },
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16LeStringLiteral(""), try parseQuotedStringAsWideString(
         arena,
         .{ .slice = "L\"\\H\"", .code_page = .windows1252 },
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     // Maximum escape sequence value is also determined by the L prefix
     try std.testing.expectEqualSentinel(u16, 0, &[_:0]u16{ std.mem.nativeToLittle(u16, 0x12), std.mem.nativeToLittle(u16, '3'), std.mem.nativeToLittle(u16, '4') }, try parseQuotedStringAsWideString(
         arena,
         .{ .slice = "\"\\x1234\"", .code_page = .windows1252 },
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
     try std.testing.expectEqualSentinel(u16, 0, &[_:0]u16{std.mem.nativeToLittle(u16, 0x1234)}, try parseQuotedStringAsWideString(
         arena,
         .{ .slice = "L\"\\x1234\"", .code_page = .windows1252 },
-        .{},
+        .{ .output_code_page = .windows1252 },
     ));
 }
 

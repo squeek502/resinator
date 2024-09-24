@@ -308,6 +308,9 @@ pub const Compiler = struct {
                         var parser = literals.IterativeStringParser.init(bytes, .{
                             .start_column = column,
                             .diagnostics = self.errContext(literal_node.token),
+                            // TODO: Re-evaluate this. It's not been tested whether or not using the actual
+                            //       output code page would make more sense.
+                            .output_code_page = .windows1252,
                         });
 
                         while (try parser.nextUnchecked()) |parsed| {
@@ -420,6 +423,9 @@ pub const Compiler = struct {
         var iterative_parser = literals.IterativeStringParser.init(bytes, .{
             .start_column = token.calculateColumn(self.source, 8, null),
             .diagnostics = self.errContext(token),
+            // TODO: Potentially re-evaluate this, it's not been tested whether or not
+            //       using the actual output code page would make more sense.
+            .output_code_page = .windows1252,
         });
 
         // This is similar to the logic in parseQuotedString, but ends up with everything
@@ -1197,6 +1203,7 @@ pub const Compiler = struct {
                         const parsed_string = try literals.parseQuotedWideString(self.allocator, bytes, .{
                             .start_column = column,
                             .diagnostics = self.errContext(literal_node.token),
+                            .output_code_page = self.output_code_pages.getForToken(literal_node.token),
                         });
                         errdefer self.allocator.free(parsed_string);
                         return .{ .wide_string = parsed_string };
@@ -2846,6 +2853,7 @@ pub const Compiler = struct {
             .{
                 .start_column = token.calculateColumn(self.source, 8, null),
                 .diagnostics = self.errContext(token),
+                .output_code_page = self.output_code_pages.getForToken(token),
             },
         );
     }
@@ -3254,6 +3262,7 @@ pub const StringTable = struct {
                 const utf16_string = try literals.parseQuotedStringAsWideString(compiler.allocator, bytes, .{
                     .start_column = column,
                     .diagnostics = compiler.errContext(string_token),
+                    .output_code_page = compiler.output_code_pages.getForToken(string_token),
                 });
                 defer compiler.allocator.free(utf16_string);
 
