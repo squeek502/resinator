@@ -73,7 +73,7 @@ test "fuzz" {
                 },
             }) catch |err| {
                 cache_path_buffer.clearRetainingCapacity();
-                try cache_path_buffer.appendSlice("zig-cache/tmp/fuzzy_accelerators_");
+                try cache_path_buffer.appendSlice(".zig-cache/tmp/fuzzy_accelerators_");
                 try utils.appendNumberStr(&cache_path_buffer, i);
                 try cache_path_buffer.append('_');
                 try cache_path_buffer.appendSlice(@tagName(string_type));
@@ -86,7 +86,7 @@ test "fuzz" {
                 try cache_path_buffer.appendSlice(".rc");
 
                 // write out the source file to disk for debugging
-                try std.fs.cwd().writeFile(cache_path_buffer.items, source);
+                try std.fs.cwd().writeFile(.{ .sub_path = cache_path_buffer.items, .data = source });
             };
         }
     }

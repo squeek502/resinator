@@ -37,7 +37,7 @@ test "FONT fuzz" {
         try tmp.dir.writeFile(.{ .sub_path = "test.fnt", .data = font_buffer.items });
 
         // also write it to the top-level tmp dir for debugging
-        try std.fs.cwd().writeFile(.{ .sub_path = "zig-cache/tmp/fuzzy_fonts.fnt", .data = font_buffer.items });
+        try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_fonts.fnt", .data = font_buffer.items });
 
         var diagnostics = resinator.errors.Diagnostics.init(allocator);
         defer diagnostics.deinit();
