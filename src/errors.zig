@@ -329,6 +329,7 @@ pub const ErrorDetails = struct {
         unary_plus_expression,
         rc_could_miscompile_control_params,
         dangling_literal_at_eof,
+        disjoint_code_page,
 
         // Compiler
         /// `string_and_language` is populated
@@ -617,6 +618,11 @@ pub const ErrorDetails = struct {
             },
             .dangling_literal_at_eof => {
                 try writer.writeAll("dangling literal at end-of-file; this is not a problem, but it is likely a mistake");
+            },
+            .disjoint_code_page => switch (self.type) {
+                .err, .warning => return writer.print("#pragma code_page as the first thing in the .rc script can cause the input and output code pages to become out-of-sync", .{}),
+                .note => return writer.print("to avoid unexpected behavior, add a comment (or anything else) above the #pragma code_page line", .{}),
+                .hint => return,
             },
             .string_already_defined => switch (self.type) {
                 .err, .warning => {

@@ -214,6 +214,7 @@ pub const Lexer = struct {
     /// Needed to determine whether or not the output code page should
     /// be set in the parser.
     seen_pragma_code_pages: u2 = 0,
+    last_pragma_code_page_token: ?Token = null,
 
     pub const Error = LexError;
 
@@ -923,6 +924,7 @@ pub const Lexer = struct {
         }
 
         self.seen_pragma_code_pages +|= 1;
+        self.last_pragma_code_page_token = token;
         self.current_code_page = code_page;
     }
 

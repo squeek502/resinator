@@ -257,6 +257,44 @@ fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile) *std.Build.Step {
         step.dependOn(&run.step);
     }
 
+    const disjoint_code_page = test_rcs.add("disjoint-code-page1.rc",
+        \\#include "empty.h"
+        \\#pragma code_page(65001)
+        \\1 RCDATA { "\371" }
+    );
+    const disjoint_code_page_with_invalid_code_page_before = test_rcs.add("disjoint-code-page2.rc",
+        \\#include "empty.h"
+        \\#pragma code_page(1234567)
+        \\#pragma foo
+        \\#pragma code_page(65001)
+        \\1 RCDATA { "\371" }
+    );
+    const empty_h = test_rcs.add("empty.h", "");
+    _ = empty_h;
+    {
+        const run = b.addRunArtifact(exe);
+        run.addArgs(&.{ "/:auto-includes", "none" });
+        run.addArg("--");
+        run.addFileArg(disjoint_code_page);
+        _ = run.addOutputFileArg("output.res");
+        run.expectExitCode(0);
+        run.addCheck(.{ .expect_stderr_match = b.dupe("#pragma code_page as the first thing in the .rc script can cause the input and output code pages to become out-of-sync") });
+        run.expectStdOutEqual("");
+        step.dependOn(&run.step);
+    }
+    {
+        const run = b.addRunArtifact(exe);
+        run.addArgs(&.{"/w"}); // Warn instead of error on invalid code page in pragma, necessary for this test
+        run.addArgs(&.{ "/:auto-includes", "none" });
+        run.addArg("--");
+        run.addFileArg(disjoint_code_page_with_invalid_code_page_before);
+        _ = run.addOutputFileArg("output.res");
+        run.expectExitCode(0);
+        run.addCheck(.{ .expect_stderr_match = b.dupe("#pragma code_page as the first thing in the .rc script can cause the input and output code pages to become out-of-sync") });
+        run.expectStdOutEqual("");
+        step.dependOn(&run.step);
+    }
+
     return step;
 }
 

@@ -1116,66 +1116,63 @@ test "filename evaluation" {
     defer tmp_dir.cleanup();
 
     // Wide and non-wide quoted strings behave the same for UTF-8 text
-    try testCompileErrorDetailsWithDir(
+    try testCompileErrorDetailsWithOptions(
         &.{.{ .type = .err, .str = "unable to open file 'кириллица': FileNotFound" }},
-        \\#pragma code_page(65001)
         \\1 RCDATA "кириллица"
     ,
         null,
-        tmp_dir.dir,
+        .{ .default_code_page = .utf8, .cwd = tmp_dir.dir },
     );
-    try testCompileErrorDetailsWithDir(
+    try testCompileErrorDetailsWithOptions(
         &.{.{ .type = .err, .str = "unable to open file 'кириллица': FileNotFound" }},
-        \\#pragma code_page(65001)
         \\1 RCDATA L"кириллица"
     ,
         null,
-        tmp_dir.dir,
+        .{ .default_code_page = .utf8, .cwd = tmp_dir.dir },
     );
     // Unquoted too
-    try testCompileErrorDetailsWithDir(
+    try testCompileErrorDetailsWithOptions(
         &.{.{ .type = .err, .str = "unable to open file 'кириллица': FileNotFound" }},
-        \\#pragma code_page(65001)
         \\1 RCDATA кириллица
     ,
         null,
-        tmp_dir.dir,
+        .{ .default_code_page = .utf8, .cwd = tmp_dir.dir },
     );
     // Unquoted Windows-1252 should get converted to UTF-8, too
     // (€ is 0x80 in Windows-1252 but codepoint U+20AC which is encoded as 0xE2 0x82 0xAC in UTF-8)
-    try testCompileErrorDetailsWithDir(
+    try testCompileErrorDetailsWithOptions(
         &.{.{ .type = .err, .str = "unable to open file '€€€': FileNotFound" }},
-        "#pragma code_page(1252)\n1 RCDATA \x80\x80\x80",
+        "1 RCDATA \x80\x80\x80",
         null,
-        tmp_dir.dir,
+        .{ .default_code_page = .windows1252, .cwd = tmp_dir.dir },
     );
     // Number literals are accepted
-    try testCompileErrorDetailsWithDir(
+    try testCompileErrorDetailsWithOptions(
         &.{.{ .type = .err, .str = "unable to open file '-12': FileNotFound" }},
-        "#pragma code_page(1252)\n1 RCDATA -12",
+        "1 RCDATA -12",
         null,
-        tmp_dir.dir,
+        .{ .default_code_page = .windows1252, .cwd = tmp_dir.dir },
     );
 
     // Invalid UTF-8 gets converted to �
-    try testCompileErrorDetailsWithDir(
+    try testCompileErrorDetailsWithOptions(
         &.{.{ .type = .err, .str = "unable to open file '����': FileNotFound" }},
-        "#pragma code_page(65001)\n1 RCDATA \"\xf0\xf0\x80\x80\x80\"",
+        "1 RCDATA \"\xf0\xf0\x80\x80\x80\"",
         null,
-        tmp_dir.dir,
+        .{ .default_code_page = .utf8, .cwd = tmp_dir.dir },
     );
-    try testCompileErrorDetailsWithDir(
+    try testCompileErrorDetailsWithOptions(
         &.{.{ .type = .err, .str = "unable to open file '����': FileNotFound" }},
-        "#pragma code_page(65001)\n1 RCDATA L\"\xf0\xf0\x80\x80\x80\"",
+        "1 RCDATA L\"\xf0\xf0\x80\x80\x80\"",
         null,
-        tmp_dir.dir,
+        .{ .default_code_page = .utf8, .cwd = tmp_dir.dir },
     );
     // Same with unquoted literals
-    try testCompileErrorDetailsWithDir(
+    try testCompileErrorDetailsWithOptions(
         &.{.{ .type = .err, .str = "unable to open file '����': FileNotFound" }},
-        "#pragma code_page(65001)\n1 RCDATA \xf0\xf0\x80\x80\x80",
+        "1 RCDATA \xf0\xf0\x80\x80\x80",
         null,
-        tmp_dir.dir,
+        .{ .default_code_page = .utf8, .cwd = tmp_dir.dir },
     );
 
     // The max width of escapes is dependent on the string being wide
