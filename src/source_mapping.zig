@@ -124,19 +124,22 @@ pub fn parseAndRemoveLineCommands(allocator: Allocator, source: []const u8, buf:
                 },
                 '/' => {
                     if (!current_mapping.ignore_contents) {
-                        result.write(c);
+                        result.writeSlice(source[pending_start orelse index .. index + 1]);
+                        pending_start = null;
                     }
                     state = .forward_slash;
                 },
                 '\'' => {
                     if (!current_mapping.ignore_contents) {
-                        result.write(c);
+                        result.writeSlice(source[pending_start orelse index .. index + 1]);
+                        pending_start = null;
                     }
                     state = .single_quoted;
                 },
                 '"' => {
                     if (!current_mapping.ignore_contents) {
-                        result.write(c);
+                        result.writeSlice(source[pending_start orelse index .. index + 1]);
+                        pending_start = null;
                     }
                     state = .double_quoted;
                 },
@@ -1153,6 +1156,19 @@ test "line command within a multiline comment" {
         \\**/
         \\#line 20 "blah.rc"
         \\foo
+    , .{ .initial_filename = "blah.rc" });
+}
+
+test "whitespace preservation" {
+    try testParseAndRemoveLineCommands(
+        \\  /
+        \\/
+    , &[_]ExpectedSourceSpan{
+        .{ .start_line = 1, .end_line = 1, .filename = "blah.rc" },
+        .{ .start_line = 2, .end_line = 2, .filename = "blah.rc" },
+    },
+        \\  /
+        \\/
     , .{ .initial_filename = "blah.rc" });
 }
 
