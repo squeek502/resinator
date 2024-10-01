@@ -285,6 +285,8 @@ pub const Lexer = struct {
                     },
                     // NBSP only counts as whitespace at the start of a line (but
                     // can be intermixed with other whitespace). Who knows why.
+                    // TODO: This should either be removed, or it should also include
+                    //       the code pages listed in disjoint_code_page.rc
                     '\xA0' => if (self.at_start_of_line) {
                         result.start = self.index + codepoint.byte_len;
                     } else {
