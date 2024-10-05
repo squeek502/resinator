@@ -330,7 +330,7 @@ test "codepointAt invalid utf8" {
             .value = Codepoint.invalid,
             .byte_len = 1,
         }, SupportedCodePage.utf8.codepointAt(4, invalid_utf8).?);
-        try std.testing.expectEqual(@as(?Codepoint, null), SupportedCodePage.windows1252.codepointAt(5, invalid_utf8));
+        try std.testing.expectEqual(@as(?Codepoint, null), SupportedCodePage.utf8.codepointAt(5, invalid_utf8));
     }
 
     {
@@ -343,7 +343,7 @@ test "codepointAt invalid utf8" {
             .value = Codepoint.invalid,
             .byte_len = 1,
         }, SupportedCodePage.utf8.codepointAt(2, invalid_utf8).?);
-        try std.testing.expectEqual(@as(?Codepoint, null), SupportedCodePage.windows1252.codepointAt(3, invalid_utf8));
+        try std.testing.expectEqual(@as(?Codepoint, null), SupportedCodePage.utf8.codepointAt(3, invalid_utf8));
     }
 
     {
@@ -352,7 +352,7 @@ test "codepointAt invalid utf8" {
             .value = Codepoint.invalid,
             .byte_len = 1,
         }, SupportedCodePage.utf8.codepointAt(0, invalid_utf8).?);
-        try std.testing.expectEqual(@as(?Codepoint, null), SupportedCodePage.windows1252.codepointAt(1, invalid_utf8));
+        try std.testing.expectEqual(@as(?Codepoint, null), SupportedCodePage.utf8.codepointAt(1, invalid_utf8));
     }
 
     {
@@ -361,7 +361,7 @@ test "codepointAt invalid utf8" {
             .value = Codepoint.invalid,
             .byte_len = 2,
         }, SupportedCodePage.utf8.codepointAt(0, invalid_utf8).?);
-        try std.testing.expectEqual(@as(?Codepoint, null), SupportedCodePage.windows1252.codepointAt(2, invalid_utf8));
+        try std.testing.expectEqual(@as(?Codepoint, null), SupportedCodePage.utf8.codepointAt(2, invalid_utf8));
     }
 
     {
@@ -374,7 +374,7 @@ test "codepointAt invalid utf8" {
             .value = Codepoint.invalid,
             .byte_len = 1,
         }, SupportedCodePage.utf8.codepointAt(1, invalid_utf8).?);
-        try std.testing.expectEqual(@as(?Codepoint, null), SupportedCodePage.windows1252.codepointAt(2, invalid_utf8));
+        try std.testing.expectEqual(@as(?Codepoint, null), SupportedCodePage.utf8.codepointAt(2, invalid_utf8));
     }
 
     {
