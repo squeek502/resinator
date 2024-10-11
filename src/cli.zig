@@ -15,6 +15,8 @@ pub const usage_string_after_command_name =
     \\The sequence -- can be used to signify when to stop parsing options.
     \\This is necessary when the input path begins with a forward slash.
     \\
+    \\Supported option prefixes are /, -, and --, so e.g. /h, -h, and --h all work.
+    \\
     \\Supported Win32 RC Options:
     \\  /?, /h                  Print this help and exit.
     \\  /v                      Verbose (print progress messages).
