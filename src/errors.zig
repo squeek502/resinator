@@ -14,10 +14,10 @@ const builtin = @import("builtin");
 const native_endian = builtin.cpu.arch.endian();
 
 pub const Diagnostics = struct {
-    errors: std.ArrayListUnmanaged(ErrorDetails) = .{},
+    errors: std.ArrayListUnmanaged(ErrorDetails) = .empty,
     /// Append-only, cannot handle removing strings.
     /// Expects to own all strings within the list.
-    strings: std.ArrayListUnmanaged([]const u8) = .{},
+    strings: std.ArrayListUnmanaged([]const u8) = .empty,
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) Diagnostics {

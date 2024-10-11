@@ -115,7 +115,7 @@ pub const Parser = struct {
     /// current token is unchanged.
     /// The returned slice is allocated by the parser's arena
     fn parseCommonResourceAttributes(self: *Self) ![]Token {
-        var common_resource_attributes = std.ArrayListUnmanaged(Token){};
+        var common_resource_attributes: std.ArrayListUnmanaged(Token) = .empty;
         while (true) {
             const maybe_common_resource_attribute = try self.lookaheadToken(.normal);
             if (maybe_common_resource_attribute.id == .literal and rc.CommonResourceAttributes.map.has(maybe_common_resource_attribute.slice(self.lexer.buffer))) {
@@ -135,7 +135,7 @@ pub const Parser = struct {
     /// current token is unchanged.
     /// The returned slice is allocated by the parser's arena
     fn parseOptionalStatements(self: *Self, resource: Resource) ![]*Node {
-        var optional_statements = std.ArrayListUnmanaged(*Node){};
+        var optional_statements: std.ArrayListUnmanaged(*Node) = .empty;
 
         const num_statement_types = @typeInfo(rc.OptionalStatements).@"enum".fields.len;
         var statement_type_has_duplicates = [_]bool{false} ** num_statement_types;
@@ -501,7 +501,7 @@ pub const Parser = struct {
                 const begin_token = self.state.token;
                 try self.check(.begin);
 
-                var accelerators = std.ArrayListUnmanaged(*Node){};
+                var accelerators: std.ArrayListUnmanaged(*Node) = .empty;
 
                 while (true) {
                     const lookahead = try self.lookaheadToken(.normal);
@@ -519,7 +519,7 @@ pub const Parser = struct {
 
                     const idvalue = try self.parseExpression(.{ .allowed_types = .{ .number = true } });
 
-                    var type_and_options = std.ArrayListUnmanaged(Token){};
+                    var type_and_options: std.ArrayListUnmanaged(Token) = .empty;
                     while (true) {
                         if (!(try self.parseOptionalToken(.comma))) break;
 
@@ -584,7 +584,7 @@ pub const Parser = struct {
                 const begin_token = self.state.token;
                 try self.check(.begin);
 
-                var controls = std.ArrayListUnmanaged(*Node){};
+                var controls: std.ArrayListUnmanaged(*Node) = .empty;
                 defer controls.deinit(self.state.allocator);
                 while (try self.parseControlStatement(resource)) |control_node| {
                     // The number of controls must fit in a u16 in order for it to
@@ -643,7 +643,7 @@ pub const Parser = struct {
                 const begin_token = self.state.token;
                 try self.check(.begin);
 
-                var buttons = std.ArrayListUnmanaged(*Node){};
+                var buttons: std.ArrayListUnmanaged(*Node) = .empty;
                 defer buttons.deinit(self.state.allocator);
                 while (try self.parseToolbarButtonStatement()) |button_node| {
                     // The number of buttons must fit in a u16 in order for it to
@@ -701,7 +701,7 @@ pub const Parser = struct {
                 const begin_token = self.state.token;
                 try self.check(.begin);
 
-                var items = std.ArrayListUnmanaged(*Node){};
+                var items: std.ArrayListUnmanaged(*Node) = .empty;
                 defer items.deinit(self.state.allocator);
                 while (try self.parseMenuItemStatement(resource, id_token, 1)) |item_node| {
                     try items.append(self.state.allocator, item_node);
@@ -735,7 +735,7 @@ pub const Parser = struct {
                 // common resource attributes must all be contiguous and come before optional-statements
                 const common_resource_attributes = try self.parseCommonResourceAttributes();
 
-                var fixed_info = std.ArrayListUnmanaged(*Node){};
+                var fixed_info: std.ArrayListUnmanaged(*Node) = .empty;
                 while (try self.parseVersionStatement()) |version_statement| {
                     try fixed_info.append(self.state.arena, version_statement);
                 }
@@ -744,7 +744,7 @@ pub const Parser = struct {
                 const begin_token = self.state.token;
                 try self.check(.begin);
 
-                var block_statements = std.ArrayListUnmanaged(*Node){};
+                var block_statements: std.ArrayListUnmanaged(*Node) = .empty;
                 while (try self.parseVersionBlockOrValue(id_token, 1)) |block_node| {
                     try block_statements.append(self.state.arena, block_node);
                 }
@@ -1125,7 +1125,7 @@ pub const Parser = struct {
 
                         _ = try self.parseOptionalToken(.comma);
 
-                        var options = std.ArrayListUnmanaged(Token){};
+                        var options: std.ArrayListUnmanaged(Token) = .empty;
                         while (true) {
                             const option_token = try self.lookaheadToken(.normal);
                             if (!rc.MenuItem.Option.map.has(option_token.slice(self.lexer.buffer))) {
@@ -1160,7 +1160,7 @@ pub const Parser = struct {
                     }
                     try self.skipAnyCommas();
 
-                    var options = std.ArrayListUnmanaged(Token){};
+                    var options: std.ArrayListUnmanaged(Token) = .empty;
                     while (true) {
                         const option_token = try self.lookaheadToken(.normal);
                         if (!rc.MenuItem.Option.map.has(option_token.slice(self.lexer.buffer))) {
@@ -1175,7 +1175,7 @@ pub const Parser = struct {
                     const begin_token = self.state.token;
                     try self.check(.begin);
 
-                    var items = std.ArrayListUnmanaged(*Node){};
+                    var items: std.ArrayListUnmanaged(*Node) = .empty;
                     while (try self.parseMenuItemStatement(resource, top_level_menu_id_token, nesting_level + 1)) |item_node| {
                         try items.append(self.state.arena, item_node);
                     }
@@ -1245,7 +1245,7 @@ pub const Parser = struct {
                 const begin_token = self.state.token;
                 try self.check(.begin);
 
-                var items = std.ArrayListUnmanaged(*Node){};
+                var items: std.ArrayListUnmanaged(*Node) = .empty;
                 while (try self.parseMenuItemStatement(resource, top_level_menu_id_token, nesting_level + 1)) |item_node| {
                     try items.append(self.state.arena, item_node);
                 }
@@ -1402,7 +1402,7 @@ pub const Parser = struct {
                 const begin_token = self.state.token;
                 try self.check(.begin);
 
-                var children = std.ArrayListUnmanaged(*Node){};
+                var children: std.ArrayListUnmanaged(*Node) = .empty;
                 while (try self.parseVersionBlockOrValue(top_level_version_id_token, nesting_level + 1)) |value_node| {
                     try children.append(self.state.arena, value_node);
                 }
@@ -1435,7 +1435,7 @@ pub const Parser = struct {
     }
 
     fn parseBlockValuesList(self: *Self, had_comma_before_first_value: bool) Error![]*Node {
-        var values = std.ArrayListUnmanaged(*Node){};
+        var values: std.ArrayListUnmanaged(*Node) = .empty;
         var seen_number: bool = false;
         var first_string_value: ?*Node = null;
         while (true) {

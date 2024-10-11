@@ -252,7 +252,7 @@ pub const LatestMsvcToolsDir = struct {
         defer instances_dir.close();
 
         var state_subpath_buf: [std.fs.MAX_NAME_BYTES + 32]u8 = undefined;
-        var latest_version_dir = std.ArrayListUnmanaged(u8){};
+        var latest_version_dir: std.ArrayListUnmanaged(u8) = .empty;
         errdefer latest_version_dir.deinit(allocator);
 
         var latest_version: u64 = 0;
