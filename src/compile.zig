@@ -4,7 +4,7 @@ const Allocator = std.mem.Allocator;
 const Node = @import("ast.zig").Node;
 const lex = @import("lex.zig");
 const Parser = @import("parse.zig").Parser;
-const Resource = @import("rc.zig").Resource;
+const ResourceType = @import("rc.zig").ResourceType;
 const Token = @import("lex.zig").Token;
 const literals = @import("literals.zig");
 const Number = literals.Number;
@@ -1414,7 +1414,7 @@ pub const Compiler = struct {
         var limited_writer = limitedWriter(data_buffer.writer(), std.math.maxInt(u32));
         const data_writer = limited_writer.writer();
 
-        const resource = Resource.fromString(.{
+        const resource = ResourceType.fromString(.{
             .slice = node.type.slice(self.source),
             .code_page = self.input_code_pages.getForToken(node.type),
         });
@@ -1740,7 +1740,7 @@ pub const Compiler = struct {
         self: *Compiler,
         node: *Node.Dialog,
         data_writer: anytype,
-        resource: Resource,
+        resource: ResourceType,
         optional_statement_values: *const DialogOptionalStatementValues,
         x: Number,
         y: Number,
@@ -1800,7 +1800,7 @@ pub const Compiler = struct {
         self: *Compiler,
         control: *Node.ControlStatement,
         data_writer: anytype,
-        resource: Resource,
+        resource: ResourceType,
         bytes_written_so_far: u32,
         controls_by_id: *std.AutoHashMap(u32, *const Node.ControlStatement),
     ) !void {
@@ -2058,7 +2058,7 @@ pub const Compiler = struct {
         node: *Node.FontStatement,
     };
 
-    pub fn writeDialogFont(self: *Compiler, resource: Resource, values: FontStatementValues, writer: anytype) !void {
+    pub fn writeDialogFont(self: *Compiler, resource: ResourceType, values: FontStatementValues, writer: anytype) !void {
         const node = values.node;
         const point_size = evaluateNumberExpression(node.point_size, self.source, self.input_code_pages);
         try writer.writeInt(u16, point_size.asWord(), .little);
@@ -2095,7 +2095,7 @@ pub const Compiler = struct {
             .slice = node.type.slice(self.source),
             .code_page = self.input_code_pages.getForToken(node.type),
         };
-        const resource = Resource.fromString(type_bytes);
+        const resource = ResourceType.fromString(type_bytes);
         std.debug.assert(resource == .menu or resource == .menuex);
 
         self.writeMenuData(node, data_writer, resource) catch |err| switch (err) {
@@ -2127,7 +2127,7 @@ pub const Compiler = struct {
 
     /// Expects `data_writer` to be a LimitedWriter limited to u32, meaning all writes to
     /// the writer within this function could return error.NoSpaceLeft
-    pub fn writeMenuData(self: *Compiler, node: *Node.Menu, data_writer: anytype, resource: Resource) !void {
+    pub fn writeMenuData(self: *Compiler, node: *Node.Menu, data_writer: anytype, resource: ResourceType) !void {
         // menu header
         const version: u16 = if (resource == .menu) 0 else 1;
         try data_writer.writeInt(u16, version, .little);
@@ -2619,7 +2619,7 @@ pub const Compiler = struct {
 
         pub fn init(allocator: Allocator, id_bytes: SourceBytes, type_bytes: SourceBytes, data_size: DWORD, language: res.Language, version: DWORD, characteristics: DWORD) InitError!ResourceHeader {
             const type_value = type: {
-                const resource_type = Resource.fromString(type_bytes);
+                const resource_type = ResourceType.fromString(type_bytes);
                 if (res.RT.fromResource(resource_type)) |rt_constant| {
                     break :type NameOrOrdinal{ .ordinal = @intFromEnum(rt_constant) };
                 } else {

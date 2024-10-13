@@ -133,7 +133,7 @@ pub const ErrorDetails = struct {
         expected: Token.Id,
         number: u32,
         expected_types: ExpectedTypes,
-        resource: rc.Resource,
+        resource: rc.ResourceType,
         string_and_language: StringAndLanguage,
         file_open_error: FileOpenError,
         icon_read_error: IconReadError,
@@ -682,7 +682,7 @@ pub const ErrorDetails = struct {
                 try writer.print("resource with format '{s}' (at index {}) is not allowed in {s} resource groups", .{ @tagName(self.extra.icon_dir.icon_format), self.extra.icon_dir.index, @tagName(self.extra.icon_dir.icon_type) });
             },
             .icon_dir_and_resource_type_mismatch => {
-                const unexpected_type: rc.Resource = if (self.extra.resource == .icon) .cursor else .icon;
+                const unexpected_type: rc.ResourceType = if (self.extra.resource == .icon) .cursor else .icon;
                 // TODO: Better wording
                 try writer.print("resource type '{s}' does not match type '{s}' specified in the file", .{ self.extra.resource.nameForErrorDisplay(), unexpected_type.nameForErrorDisplay() });
             },

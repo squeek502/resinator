@@ -1,6 +1,6 @@
 const std = @import("std");
 const rc = @import("rc.zig");
-const Resource = rc.Resource;
+const ResourceType = rc.ResourceType;
 const CommonResourceAttributes = rc.CommonResourceAttributes;
 const Allocator = std.mem.Allocator;
 const windows1252 = @import("windows1252.zig");
@@ -40,7 +40,7 @@ pub const RT = enum(u8) {
 
     /// Returns null if the resource type is user-defined
     /// Asserts that the resource is not `stringtable`
-    pub fn fromResource(resource: Resource) ?RT {
+    pub fn fromResource(resource: ResourceType) ?RT {
         return switch (resource) {
             .accelerators => .ACCELERATOR,
             .bitmap => .BITMAP,

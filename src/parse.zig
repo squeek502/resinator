@@ -4,7 +4,7 @@ const Token = @import("lex.zig").Token;
 const Node = @import("ast.zig").Node;
 const Tree = @import("ast.zig").Tree;
 const CodePageLookup = @import("ast.zig").CodePageLookup;
-const Resource = @import("rc.zig").Resource;
+const ResourceType = @import("rc.zig").ResourceType;
 const Allocator = std.mem.Allocator;
 const ErrorDetails = @import("errors.zig").ErrorDetails;
 const ErrorDetailsWithoutCodePage = @import("errors.zig").ErrorDetailsWithoutCodePage;
@@ -134,7 +134,7 @@ pub const Parser = struct {
     /// optional statements (if any). If there are no optional statements, the
     /// current token is unchanged.
     /// The returned slice is allocated by the parser's arena
-    fn parseOptionalStatements(self: *Self, resource: Resource) ![]*Node {
+    fn parseOptionalStatements(self: *Self, resource: ResourceType) ![]*Node {
         var optional_statements: std.ArrayListUnmanaged(*Node) = .empty;
 
         const num_statement_types = @typeInfo(rc.OptionalStatements).@"enum".fields.len;
@@ -911,7 +911,7 @@ pub const Parser = struct {
     /// begin on the next token.
     /// After return, the current token will be the token immediately before the end of the
     /// control statement (or unchanged if the function returns null).
-    fn parseControlStatement(self: *Self, resource: Resource) Error!?*Node {
+    fn parseControlStatement(self: *Self, resource: ResourceType) Error!?*Node {
         const control_token = try self.lookaheadToken(.normal);
         const control = rc.Control.map.get(control_token.slice(self.lexer.buffer)) orelse return null;
         try self.nextToken(.normal);
@@ -1075,7 +1075,7 @@ pub const Parser = struct {
     /// begin on the next token.
     /// After return, the current token will be the token immediately before the end of the
     /// menuitem statement (or unchanged if the function returns null).
-    fn parseMenuItemStatement(self: *Self, resource: Resource, top_level_menu_id_token: Token, nesting_level: u32) Error!?*Node {
+    fn parseMenuItemStatement(self: *Self, resource: ResourceType, top_level_menu_id_token: Token, nesting_level: u32) Error!?*Node {
         const menuitem_token = try self.lookaheadToken(.normal);
         const menuitem = rc.MenuItem.map.get(menuitem_token.slice(self.lexer.buffer)) orelse return null;
         try self.nextToken(.normal);
@@ -1984,9 +1984,9 @@ pub const Parser = struct {
         }
     }
 
-    fn checkResource(self: *Self) !Resource {
+    fn checkResource(self: *Self) !ResourceType {
         switch (self.state.token.id) {
-            .literal => return Resource.fromString(.{
+            .literal => return ResourceType.fromString(.{
                 .slice = self.state.token.slice(self.lexer.buffer),
                 .code_page = self.lexer.current_code_page,
             }),
