@@ -149,7 +149,7 @@ pub fn parseNameOrOrdinal(allocator: Allocator, reader: anytype) !NameOrOrdinal 
     errdefer name_buf.deinit(allocator);
     var code_unit = first_code_unit;
     while (code_unit != 0) {
-        try name_buf.append(allocator, code_unit);
+        try name_buf.append(allocator, std.mem.nativeToLittle(u16, code_unit));
         code_unit = try reader.readInt(u16, .little);
     }
     return .{ .name = try name_buf.toOwnedSliceSentinel(allocator, 0) };
