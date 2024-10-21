@@ -532,7 +532,15 @@ const ResourceTree = struct {
                 }
                 switch (a) {
                     .name => {
-                        return std.mem.lessThan(u16, a.name, b.name);
+                        const n = @min(a.name.len, b.name.len);
+                        for (a.name[0..n], b.name[0..n]) |a_c, b_c| {
+                            switch (std.math.order(std.mem.littleToNative(u16, a_c), std.mem.littleToNative(u16, b_c))) {
+                                .eq => continue,
+                                .lt => return true,
+                                .gt => return false,
+                            }
+                        }
+                        return a.name.len < b.name.len;
                     },
                     .ordinal => {
                         return a.ordinal < b.ordinal;
