@@ -83,6 +83,27 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_compiler_tests.step);
     test_step.dependOn(run_cli_tests_step);
 
+    // Tools
+    const cvtres_strip = b.addExecutable(.{
+        .name = "cvtres-strip",
+        .root_source_file = b.path("tools/cvtres-strip.zig"),
+        .target = target,
+        .optimize = mode,
+    });
+    cvtres_strip.root_module.addAnonymousImport("utils", .{
+        .root_source_file = b.path("test/utils.zig"),
+        .imports = &.{
+            .{ .name = "resinator", .module = resinator },
+        },
+    });
+    const install_cvtres_strip = b.addInstallArtifact(cvtres_strip, .{});
+    const cvtres_strip_step = b.step("cvtres-strip", "Build and install cvtres-strip tool");
+    cvtres_strip_step.dependOn(&install_cvtres_strip.step);
+
+    const tools_step = b.step("tools", "Build and install tools");
+    tools_step.dependOn(&install_cvtres_strip.step);
+
+    // Fuzzy tests
     const fuzzy_max_iterations = b.option(u64, "fuzzy-iterations", "The max iterations for fuzzy tests (default: 1000)") orelse 1000;
 
     const test_options = b.addOptions();
@@ -104,6 +125,7 @@ pub fn build(b: *std.Build) void {
     _ = addFuzzyTest(b, "dlginclude", mode, target, resinator, all_fuzzy_tests_step, test_options);
     _ = addFuzzyTest(b, "strings", mode, target, resinator, all_fuzzy_tests_step, test_options);
     _ = addFuzzyTest(b, "accelerators", mode, target, resinator, all_fuzzy_tests_step, test_options);
+    _ = addFuzzyTest(b, "cvtres", mode, target, resinator, all_fuzzy_tests_step, test_options);
 
     _ = addFuzzer(b, "fuzz_rc", &.{}, resinator, target);
 

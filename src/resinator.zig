@@ -21,6 +21,7 @@ pub const res = @import("res.zig");
 pub const source_mapping = @import("source_mapping.zig");
 pub const utils = @import("utils.zig");
 pub const windows1252 = @import("windows1252.zig");
+pub const cvtres = @import("cvtres.zig");
 
 test {
     _ = std.testing.refAllDecls(@This());

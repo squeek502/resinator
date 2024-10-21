@@ -231,6 +231,276 @@ pub fn getWin32ResultFromFile(allocator: Allocator, input_path: []const u8, opti
     return result;
 }
 
+pub fn expectSameCvtResOutput(allocator: Allocator, res_source: []const u8, options: GetCvtResResultOptions) !void {
+    var resinator_result = try getResinatorCvtResResult(allocator, res_source, options);
+    defer resinator_result.deinit(allocator);
+
+    var win32_result = try getWin32CvtResResult(allocator, res_source, options);
+    defer win32_result.deinit(allocator);
+
+    try compareCvtRes(&win32_result, &resinator_result);
+}
+
+pub fn compareCvtRes(win32_result: *Win32CvtResResult, resinator_result: *ResinatorCvtResResult) !void {
+    // Both erroring is fine
+    if (win32_result.obj == null and resinator_result.obj == null) {
+        return;
+    }
+
+    if (win32_result.obj == null and resinator_result.obj != null) {
+        std.debug.print("stdout:\n{s}\nstderr:\n{s}\n", .{ win32_result.exec.stdout, win32_result.exec.stderr });
+        return error.ExpectedErrorButDidntGetOne;
+    }
+    if (win32_result.obj != null and resinator_result.obj == null) {
+        if (resinator_result.parse_err) |err| std.debug.print("parse error: {s}\n", .{@errorName(err)});
+        if (resinator_result.coff_err) |err| std.debug.print("coff error: {s}\n", .{@errorName(err)});
+        return error.DidNotExpectErrorButGotOne;
+    }
+
+    std.testing.expectEqualSlices(u8, win32_result.obj.?, resinator_result.obj.?) catch |err| {
+        return err;
+    };
+}
+
+pub const GetCvtResResultOptions = struct {
+    cwd: std.fs.Dir,
+    cwd_path: []const u8,
+    /// Only used in the Win32 version
+    output_path: ?[]const u8 = null,
+    target: std.coff.MachineType = .X64,
+};
+
+pub const ResinatorCvtResResult = struct {
+    obj: ?[]const u8 = null,
+    parse_err: ?anyerror = null,
+    coff_err: ?anyerror = null,
+
+    pub fn deinit(self: *ResinatorCvtResResult, allocator: Allocator) void {
+        if (self.obj) |obj| {
+            allocator.free(obj);
+        }
+    }
+};
+
+pub fn getResinatorCvtResResult(allocator: Allocator, res_source: []const u8, options: GetCvtResResultOptions) !ResinatorCvtResResult {
+    var fbs = std.io.fixedBufferStream(res_source);
+    const resources = resinator.cvtres.parseRes(allocator, fbs.reader(), .{ .max_size = res_source.len }) catch |err| {
+        return .{
+            .parse_err = err,
+        };
+    };
+    defer resinator.cvtres.freeResources(allocator, resources);
+
+    var buf = try std.ArrayList(u8).initCapacity(allocator, 256);
+    errdefer buf.deinit();
+
+    resinator.cvtres.writeCoff(allocator, buf.writer(), resources, .{
+        .target = options.target,
+    }) catch |err| {
+        return .{
+            .coff_err = err,
+        };
+    };
+
+    try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_cvtres.resinator.obj", .data = buf.items });
+
+    return .{
+        .obj = try buf.toOwnedSlice(),
+    };
+}
+
+pub const Win32CvtResResult = struct {
+    obj: ?[]const u8 = null,
+    exec: std.process.Child.RunResult,
+
+    pub fn deinit(self: *Win32CvtResResult, allocator: Allocator) void {
+        if (self.obj) |obj| {
+            allocator.free(obj);
+        }
+        allocator.free(self.exec.stdout);
+        allocator.free(self.exec.stderr);
+    }
+};
+
+pub fn getWin32CvtResResult(allocator: Allocator, res_source: []const u8, options: GetCvtResResultOptions) !Win32CvtResResult {
+    try options.cwd.writeFile(.{ .sub_path = "test.res", .data = res_source });
+    return getWin32CvtResResultFromFile(allocator, "test.res", options);
+}
+
+pub fn getWin32CvtResResultFromFile(allocator: Allocator, input_path: []const u8, options: GetCvtResResultOptions) !Win32CvtResResult {
+    const output_path = options.output_path orelse "test_win32.obj";
+    const out_arg = try std.fmt.allocPrint(allocator, "/OUT:{s}", .{output_path});
+    defer allocator.free(out_arg);
+    const target_name = switch (options.target) {
+        .I386 => "X86",
+        .ARMNT => "ARM",
+        else => @tagName(options.target),
+    };
+    const machine_arg = try std.fmt.allocPrint(allocator, "/MACHINE:{s}", .{target_name});
+    defer allocator.free(machine_arg);
+    const exec_result = try std.process.Child.run(.{
+        .allocator = allocator,
+        .argv = &[_][]const u8{
+            // Note: This relies on `cvtres.exe` being in the PATH
+            "cvtres.exe",
+            machine_arg,
+            out_arg,
+            input_path,
+        },
+        .cwd = options.cwd_path,
+    });
+    errdefer allocator.free(exec_result.stdout);
+    errdefer allocator.free(exec_result.stderr);
+
+    var result = Win32CvtResResult{ .exec = exec_result };
+    if (exec_result.term == .Exited and exec_result.term.Exited == 0) {
+        var obj = options.cwd.readFileAlloc(allocator, output_path, std.math.maxInt(usize)) catch |err| blk: {
+            std.debug.print("expected file at {s} but got: {}", .{ output_path, err });
+            break :blk null;
+        };
+        errdefer if (obj) |v| allocator.free(v);
+
+        if (obj) |obj_bytes| {
+            var fbs = std.io.fixedBufferStream(obj.?);
+            var stripped_buf = try std.ArrayList(u8).initCapacity(allocator, obj_bytes.len);
+            errdefer stripped_buf.deinit();
+
+            try stripAndFixupCoff(allocator, fbs.reader(), stripped_buf.writer(), .{});
+            const stripped_obj = try stripped_buf.toOwnedSlice();
+            allocator.free(obj_bytes);
+            obj = stripped_obj;
+        }
+
+        result.obj = obj;
+    }
+    return result;
+}
+
+const CoffFixups = struct {
+    clear_timestamp: bool = true,
+    /// cvtres.exe writes 0 as the string table length, which goes against the spec:
+    /// > At the beginning of the COFF string table are 4 bytes that contain the total size (in bytes)
+    /// > of the rest of the string table. This size includes the size field itself, so that the value
+    /// > in this location would be 4 if no strings were present.
+    /// https://learn.microsoft.com/en-us/windows/win32/debug/pe-format#coff-string-table
+    correct_string_table_length: bool = true,
+    /// cvtres.exe writes a non-zero value to the pointer to relocations field even if
+    /// there are no relocations. The spec, however, says:
+    /// > This is set to zero for executable images or if there are no relocations.
+    /// https://learn.microsoft.com/en-us/windows/win32/debug/pe-format#section-table-section-headers
+    zero_pointer_to_relocations: bool = true,
+    /// @comp.id is a Microsoft-specific symbol containing information about the compiler used
+    /// See https://github.com/dishather/richprint for info
+    strip_comp_id: bool = true,
+};
+
+// Not a general purpose implementation at all, only intended to work on the output of cvtres.exe
+pub fn stripAndFixupCoff(allocator: Allocator, reader: anytype, writer: anytype, fixups: CoffFixups) !void {
+    var counting_reader = std.io.countingReader(reader);
+    const r = counting_reader.reader();
+
+    var stripped_bytes: u32 = 0;
+    var stripped_symbols: u32 = 0;
+    // Assume @comp.id exists
+    // TODO: Don't make this assumption
+    if (fixups.strip_comp_id) {
+        stripped_symbols += 1;
+    }
+    var stripped_sections: u16 = 0;
+    var header = try r.readStruct(std.coff.CoffHeader);
+    if (fixups.clear_timestamp) {
+        header.time_date_stamp = 0;
+    }
+    const original_number_of_symbols = header.number_of_symbols;
+    var sections = std.ArrayList(std.coff.SectionHeader).init(allocator);
+    defer sections.deinit();
+    for (0..header.number_of_sections) |_| {
+        var section_header = try r.readStruct(std.coff.SectionHeader);
+        if (std.mem.startsWith(u8, &section_header.name, ".rsrc")) {
+            if (fixups.zero_pointer_to_relocations and section_header.number_of_relocations == 0) {
+                section_header.pointer_to_relocations = 0;
+            }
+            try sections.append(section_header);
+        } else {
+            stripped_bytes += @sizeOf(std.coff.SectionHeader);
+            stripped_bytes += section_header.size_of_raw_data;
+            stripped_symbols += 2; // 1 for symbol, 1 for aux symbol of section
+            stripped_sections += 1;
+        }
+    }
+    header.number_of_symbols -= stripped_symbols;
+    header.number_of_sections -= stripped_sections;
+    header.pointer_to_symbol_table -= stripped_bytes;
+    try writer.writeAll(std.mem.asBytes(&header));
+
+    for (sections.items) |*section_header| {
+        section_header.pointer_to_raw_data -|= stripped_bytes;
+        section_header.pointer_to_relocations -|= stripped_bytes;
+        try writer.writeAll(std.mem.asBytes(section_header));
+    }
+
+    const data_to_skip = stripped_bytes -| @sizeOf(std.coff.SectionHeader);
+    try r.skipBytes(data_to_skip, .{});
+
+    try pumpBytes(r, writer, sections.items[0].size_of_raw_data);
+    for (0..sections.items[0].number_of_relocations) |_| {
+        var relocation = std.coff.Relocation{
+            .virtual_address = try r.readInt(u32, .little),
+            .symbol_table_index = try r.readInt(u32, .little),
+            .type = try r.readInt(u16, .little),
+        };
+        relocation.symbol_table_index -= stripped_symbols;
+        try writer.writeInt(u32, relocation.virtual_address, .little);
+        try writer.writeInt(u32, relocation.symbol_table_index, .little);
+        try writer.writeInt(u16, relocation.type, .little);
+    }
+    try pumpBytes(r, writer, sections.items[1].size_of_raw_data);
+
+    var symbol_i: usize = 0;
+    while (symbol_i < original_number_of_symbols) : (symbol_i += 1) {
+        var symbol_bytes = try r.readBytesNoEof(std.coff.Symbol.sizeOf());
+        const name = symbol_bytes[0..8];
+        const number_of_aux_symbols = symbol_bytes[17];
+        const should_strip = std.mem.startsWith(u8, name, ".debug") or (fixups.strip_comp_id and std.mem.eql(u8, name, "@comp.id"));
+        if (should_strip) {
+            std.debug.assert(number_of_aux_symbols <= 1);
+            if (number_of_aux_symbols == 1) {
+                try r.skipBytes(std.coff.Symbol.sizeOf(), .{ .buf_size = std.coff.Symbol.sizeOf() });
+            }
+        } else {
+            if (name[0] != '@') {
+                const section_num = std.mem.readInt(u16, symbol_bytes[12..14], .little);
+                std.mem.writeInt(u16, symbol_bytes[12..14], section_num - stripped_sections, .little);
+            }
+            try writer.writeAll(&symbol_bytes);
+            std.debug.assert(number_of_aux_symbols <= 1);
+            if (number_of_aux_symbols == 1) {
+                symbol_bytes = try r.readBytesNoEof(std.coff.Symbol.sizeOf());
+                try writer.writeAll(&symbol_bytes);
+            }
+        }
+        symbol_i += number_of_aux_symbols;
+    }
+
+    var string_table_size = try r.readInt(u32, .little);
+    if (fixups.correct_string_table_length) {
+        string_table_size = @max(4, string_table_size);
+    }
+    try writer.writeInt(u32, string_table_size, .little);
+    if (string_table_size > 4) {
+        const remaining_data = string_table_size - 4;
+        try pumpBytes(r, writer, remaining_data);
+    }
+}
+
+fn pumpBytes(reader: anytype, writer: anytype, num_bytes: usize) !void {
+    var limited_reader = std.io.limitedReader(reader, num_bytes);
+
+    const FifoBuffer = std.fifo.LinearFifo(u8, .{ .Static = 256 });
+    var fifo = FifoBuffer.init();
+    try fifo.pump(limited_reader.reader(), writer);
+}
+
 pub fn randomNumberLiteral(allocator: Allocator, rand: std.Random, comptime include_superscripts: bool) ![]const u8 {
     var buf = std.ArrayList(u8).init(allocator);
     errdefer buf.deinit();

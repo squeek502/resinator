@@ -2664,7 +2664,7 @@ pub const Compiler = struct {
             padding_after_name: u2,
         };
 
-        fn calcSize(self: ResourceHeader) error{Overflow}!SizeInfo {
+        pub fn calcSize(self: ResourceHeader) error{Overflow}!SizeInfo {
             var header_size: u32 = 8;
             header_size = try std.math.add(
                 u32,
@@ -2698,7 +2698,7 @@ pub const Compiler = struct {
             return self.writeSizeInfo(writer, size_info);
         }
 
-        fn writeSizeInfo(self: ResourceHeader, writer: anytype, size_info: SizeInfo) !void {
+        pub fn writeSizeInfo(self: ResourceHeader, writer: anytype, size_info: SizeInfo) !void {
             try writer.writeInt(DWORD, self.data_size, .little); // DataSize
             try writer.writeInt(DWORD, size_info.bytes, .little); // HeaderSize
             try self.type_value.write(writer); // TYPE
