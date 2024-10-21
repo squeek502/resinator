@@ -29,7 +29,7 @@ pub fn preprocess(
     if (hasAnyErrors(comp)) return error.ArgError;
 
     // .include_system_defines gives us things like _WIN32
-    const builtin_macros = comp.generateBuiltinMacros(.include_system_defines) catch |err| switch (err) {
+    const builtin_macros = comp.generateBuiltinMacros(.include_system_defines, null) catch |err| switch (err) {
         error.FatalError => return error.GeneratedSourceError,
         else => |e| return e,
     };
