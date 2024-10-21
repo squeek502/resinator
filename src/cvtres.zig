@@ -196,7 +196,7 @@ pub fn writeCoff(allocator: Allocator, writer: anytype, resources: []const Resou
     const flags = std.coff.CoffHeaderFlags{
         .@"32BIT_MACHINE" = 1,
     };
-    var coff_header = std.coff.CoffHeader{
+    const coff_header = std.coff.CoffHeader{
         .machine = machine_type,
         .number_of_sections = 2,
         .time_date_stamp = @as(u32, @truncate(@as(u64, @bitCast(timestamp)))),
@@ -206,7 +206,7 @@ pub fn writeCoff(allocator: Allocator, writer: anytype, resources: []const Resou
         .flags = flags,
     };
 
-    try writer.writeAll(std.mem.asBytes(&coff_header));
+    try writer.writeStructEndian(coff_header, .little);
 
     const rsrc01_header = std.coff.SectionHeader{
         .name = ".rsrc$01".*,
@@ -224,7 +224,7 @@ pub fn writeCoff(allocator: Allocator, writer: anytype, resources: []const Resou
             .MEM_READ = 1,
         },
     };
-    try writer.writeAll(std.mem.asBytes(&rsrc01_header));
+    try writer.writeStructEndian(rsrc01_header, .little);
 
     const rsrc02_header = std.coff.SectionHeader{
         .name = ".rsrc$02".*,
@@ -242,7 +242,7 @@ pub fn writeCoff(allocator: Allocator, writer: anytype, resources: []const Resou
             .MEM_READ = 1,
         },
     };
-    try writer.writeAll(std.mem.asBytes(&rsrc02_header));
+    try writer.writeStructEndian(rsrc02_header, .little);
 
     // TODO: test surrogate pairs
     try resource_tree.sort();
@@ -361,6 +361,11 @@ pub const ResourceDirectoryEntry = extern struct {
         address: u31,
         to_subdirectory: bool,
     },
+
+    pub fn writeCoff(self: ResourceDirectoryEntry, writer: anytype) !void {
+        try writer.writeInt(u32, @bitCast(self.entry), .little);
+        try writer.writeInt(u32, @bitCast(self.offset), .little);
+    }
 };
 
 pub const ResourceDataEntry = extern struct {
@@ -597,7 +602,7 @@ const ResourceTree = struct {
                 .number_of_id_entries = counts.ids,
                 .number_of_name_entries = counts.names,
             };
-            try w.writeAll(std.mem.asBytes(&table));
+            try w.writeStructEndian(table, .little);
 
             var it = self.type_to_name_map.iterator();
             while (it.next()) |entry| {
@@ -612,7 +617,7 @@ const ResourceTree = struct {
                         .to_subdirectory = true,
                     },
                 };
-                try w.writeAll(std.mem.asBytes(&dir_entry));
+                try dir_entry.writeCoff(w);
                 level2_address += @sizeOf(ResourceDirectoryTable) + @as(u32, @intCast(entry.value_ptr.count() * @sizeOf(ResourceDirectoryEntry)));
 
                 const name_to_lang_map = entry.value_ptr;
@@ -633,7 +638,7 @@ const ResourceTree = struct {
                 .number_of_id_entries = counts.ids,
                 .number_of_name_entries = counts.names,
             };
-            try w.writeAll(std.mem.asBytes(&table));
+            try w.writeStructEndian(table, .little);
 
             var it = name_to_lang_map.iterator();
             while (it.next()) |entry| {
@@ -648,7 +653,7 @@ const ResourceTree = struct {
                         .to_subdirectory = true,
                     },
                 };
-                try w.writeAll(std.mem.asBytes(&dir_entry));
+                try dir_entry.writeCoff(w);
                 level3_address += @sizeOf(ResourceDirectoryTable) + @as(u32, @intCast(entry.value_ptr.count() * @sizeOf(ResourceDirectoryEntry)));
 
                 const lang_to_resources_map = entry.value_ptr;
@@ -675,7 +680,7 @@ const ResourceTree = struct {
                 .number_of_id_entries = counts.ids,
                 .number_of_name_entries = counts.names,
             };
-            try w.writeAll(std.mem.asBytes(&table));
+            try w.writeStructEndian(table, .little);
 
             var it = lang_to_resources_map.iterator();
             while (it.next()) |entry| {
@@ -691,7 +696,7 @@ const ResourceTree = struct {
                 const reloc_resource = entry.value_ptr;
                 reloc_addresses[reloc_resource.original_index] = @intCast(data_entry_address);
 
-                try w.writeAll(std.mem.asBytes(&dir_entry));
+                try dir_entry.writeCoff(w);
                 data_entry_address += @sizeOf(ResourceDataEntry);
 
                 try resources_list.append(allocator, reloc_resource);
@@ -709,7 +714,7 @@ const ResourceTree = struct {
                 .size = @intCast(orig_resource.data.len),
                 .codepage = 0,
             };
-            try w.writeAll(std.mem.asBytes(&data_entry));
+            try w.writeStructEndian(data_entry, .little);
         }
         std.debug.assert(counting_writer.bytes_written == strings_start);
 
