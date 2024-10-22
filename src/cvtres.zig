@@ -95,7 +95,7 @@ pub fn parseResource(allocator: Allocator, reader: anytype, max_size: u64) !Reso
     const total_size: u64 = @as(u64, header_size) + data_size;
     if (total_size > max_size) return error.ImpossibleSize;
 
-    var header_bytes_available = @min(max_size, header_size) -| 8;
+    var header_bytes_available = header_size -| 8;
     var type_reader = std.io.limitedReader(header_reader, header_bytes_available);
     const type_value = try parseNameOrOrdinal(allocator, type_reader.reader());
     errdefer type_value.deinit(allocator);
