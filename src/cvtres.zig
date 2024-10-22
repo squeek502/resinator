@@ -92,7 +92,8 @@ pub fn parseResource(allocator: Allocator, reader: anytype, max_size: u64) !Reso
     const header_reader = header_counting_reader.reader();
     const data_size = try header_reader.readInt(u32, .little);
     const header_size = try header_reader.readInt(u32, .little);
-    if (data_size + header_size > max_size) return error.ImpossibleSize;
+    const total_size: u64 = @as(u64, header_size) + data_size;
+    if (total_size > max_size) return error.ImpossibleSize;
 
     var header_bytes_available = @min(max_size, header_size) -| 8;
     var type_reader = std.io.limitedReader(header_reader, header_bytes_available);
