@@ -752,6 +752,127 @@ pub fn appendNumberStr(buf: *std.ArrayList(u8), num: anytype) !void {
     buf.items.len += num_digits;
 }
 
+pub fn writePreface(writer: anytype) !void {
+    try writer.writeAll("\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00");
+}
+
+pub fn writeRandomPotentiallyInvalidResource(allocator: Allocator, rand: std.Random, writer: anytype) !void {
+    const real_data_size = rand.uintAtMostBiased(u32, 150);
+    const reported_data_size = switch (rand.uintLessThan(u8, 4)) {
+        0 => real_data_size,
+        1 => real_data_size + rand.uintAtMost(u32, 150),
+        2 => real_data_size - rand.uintAtMost(u32, real_data_size),
+        3 => rand.int(u32),
+        else => unreachable,
+    };
+    const name_value = try getRandomNameOrOrdinal(allocator, rand, 32);
+    defer name_value.deinit(allocator);
+    const type_value = try getRandomNameOrOrdinal(allocator, rand, 32);
+    defer type_value.deinit(allocator);
+
+    const header = resinator.compile.Compiler.ResourceHeader{
+        .name_value = name_value,
+        .type_value = type_value,
+        .language = @bitCast(rand.int(u16)),
+        .memory_flags = @bitCast(rand.int(u16)),
+        .data_size = reported_data_size,
+        .version = rand.int(u32),
+        .characteristics = rand.int(u32),
+        .data_version = rand.int(u32),
+    };
+    // only possible error is a field overflowing a u32, which we know can't happen
+    var size_info = header.calcSize() catch unreachable;
+    size_info.bytes = switch (rand.uintLessThan(u8, 4)) {
+        0 => size_info.bytes,
+        1 => size_info.bytes + rand.uintAtMost(u32, size_info.bytes),
+        2 => size_info.bytes - rand.uintAtMost(u32, size_info.bytes),
+        3 => rand.int(u32),
+        else => unreachable,
+    };
+    size_info.padding_after_name = switch (rand.uintLessThan(u8, 3)) {
+        0 => size_info.padding_after_name,
+        1 => size_info.padding_after_name +| rand.uintAtMost(u2, 3),
+        2 => size_info.padding_after_name - rand.uintAtMost(u2, size_info.padding_after_name),
+        else => unreachable,
+    };
+    try header.writeSizeInfo(writer, size_info);
+
+    const data = try allocator.alloc(u8, real_data_size);
+    defer allocator.free(data);
+
+    rand.bytes(data);
+    try writer.writeAll(data);
+    var num_padding_bytes = resinator.compile.Compiler.numPaddingBytesNeeded(real_data_size);
+    num_padding_bytes = switch (rand.uintLessThan(u8, 3)) {
+        0 => num_padding_bytes,
+        1 => num_padding_bytes +| rand.uintAtMost(u2, 3),
+        2 => num_padding_bytes - rand.uintAtMost(u2, num_padding_bytes),
+        else => unreachable,
+    };
+    try writer.writeByteNTimes(0, num_padding_bytes);
+}
+
+pub const RandomResourceOptions = struct {
+    set_name: ?resinator.res.NameOrOrdinal = null,
+    set_type: ?resinator.res.NameOrOrdinal = null,
+    set_language: ?resinator.res.Language = null,
+};
+
+pub fn writeRandomValidResource(allocator: Allocator, rand: std.Random, writer: anytype, options: RandomResourceOptions) !void {
+    const data_size = rand.uintAtMostBiased(u32, 150);
+    const name_value = options.set_name orelse try getRandomNameOrOrdinal(allocator, rand, 32);
+    defer if (options.set_name == null) name_value.deinit(allocator);
+    const type_value = options.set_type orelse try getRandomNameOrOrdinal(allocator, rand, 32);
+    defer if (options.set_type == null) type_value.deinit(allocator);
+
+    const header = resinator.compile.Compiler.ResourceHeader{
+        .name_value = name_value,
+        .type_value = type_value,
+        .language = options.set_language orelse @bitCast(rand.int(u16)),
+        .memory_flags = @bitCast(rand.int(u16)),
+        .data_size = data_size,
+        .version = rand.int(u32),
+        .characteristics = rand.int(u32),
+        .data_version = rand.int(u32),
+    };
+    // only possible error is a field overflowing a u32, which we know can't happen
+    const size_info = header.calcSize() catch unreachable;
+    try header.writeSizeInfo(writer, size_info);
+
+    const data = try allocator.alloc(u8, data_size);
+    defer allocator.free(data);
+
+    rand.bytes(data);
+    try writer.writeAll(data);
+    const num_padding_bytes = resinator.compile.Compiler.numPaddingBytesNeeded(data_size);
+    try writer.writeByteNTimes(0, num_padding_bytes);
+}
+
+pub fn getRandomNameOrOrdinal(allocator: Allocator, rand: std.Random, max_name_len: usize) !resinator.res.NameOrOrdinal {
+    return switch (rand.boolean()) {
+        true => resinator.res.NameOrOrdinal{ .name = try getRandomName(allocator, rand, max_name_len) },
+        false => resinator.res.NameOrOrdinal{ .ordinal = rand.int(u16) },
+    };
+}
+
+pub fn getRandomName(allocator: Allocator, rand: std.Random, max_len: usize) ![:0]const u16 {
+    const code_unit_len = rand.uintAtMost(usize, max_len);
+    const buf = try allocator.allocSentinel(u16, code_unit_len, 0);
+    errdefer allocator.free(buf);
+
+    for (buf) |*code_unit| {
+        if (rand.boolean()) {
+            // random ASCII codepoint, except NUL
+            code_unit.* = rand.intRangeAtMost(u7, 1, std.math.maxInt(u7));
+        } else {
+            // entirely random code unit, except NUL
+            code_unit.* = rand.intRangeAtMost(u16, 1, std.math.maxInt(u16));
+        }
+    }
+
+    return buf;
+}
+
 /// Iterates all K-permutations of the given size `n` where k varies from (0..n),
 /// or (0..max_k) if specified via `initMax`.
 /// e.g. for AllKPermutationsIterator(3) the returns from `next` will be (in this order):
