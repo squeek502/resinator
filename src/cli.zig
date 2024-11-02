@@ -59,6 +59,14 @@ pub const usage_string_after_command_name =
     \\                            the .rc includes or otherwise depends on.
     \\  /:depfile-fmt <value>     Output format of the depfile, if /:depfile is set.
     \\    json                    (default) A top-level JSON array of paths
+    \\  /:input-format <value>    If not specified, the input format is inferred.
+    \\    rc                      (default if input format cannot be inferred)
+    \\    res                     Compiled .rc file, implies /:output-format coff
+    \\    rcpp                    Preprocessed .rc file, implies /:no-preprocess
+    \\  /:output-format <value>   If not specified, the output format is inferred.
+    \\    res                     (default if output format cannot be inferred)
+    \\    coff                    COFF object file (extension: .obj or .o)
+    \\    rcpp                    Preprocessed .rc file, implies /p
     \\
     \\Note: For compatibility reasons, all custom options start with :
     \\
@@ -149,9 +157,25 @@ pub const Options = struct {
     auto_includes: AutoIncludes = .any,
     depfile_path: ?[]const u8 = null,
     depfile_fmt: DepfileFormat = .json,
+    input_format: InputFormat = .rc,
+    output_format: OutputFormat = .res,
 
     pub const AutoIncludes = enum { any, msvc, gnu, none };
     pub const DepfileFormat = enum { json };
+    pub const InputFormat = enum { rc, res, rcpp };
+    pub const OutputFormat = enum {
+        res,
+        coff,
+        rcpp,
+
+        pub fn extension(format: OutputFormat) []const u8 {
+            return switch (format) {
+                .rcpp => ".rcpp",
+                .coff => ".obj",
+                .res => ".res",
+            };
+        }
+    };
     pub const Preprocess = enum { no, yes, only };
     pub const SymbolAction = enum { define, undefine };
     pub const SymbolValue = union(SymbolAction) {
@@ -246,8 +270,8 @@ pub const Options = struct {
     }
 
     pub fn dumpVerbose(self: *const Options, writer: anytype) !void {
-        try writer.print("Input filename: {s}\n", .{self.input_filename});
-        try writer.print("Output filename: {s}\n", .{self.output_filename});
+        try writer.print("Input filename: {s} (format={s})\n", .{ self.input_filename, @tagName(self.input_format) });
+        try writer.print("Output filename: {s} (format={s})\n", .{ self.output_filename, @tagName(self.output_format) });
         if (self.extra_include_paths.items.len > 0) {
             try writer.writeAll(" Extra include paths:\n");
             for (self.extra_include_paths.items) |extra_include_path| {
@@ -391,6 +415,7 @@ pub const Arg = struct {
 
     pub const Context = struct {
         index: usize,
+        option_len: usize,
         arg: Arg,
         value: Value,
     };
@@ -405,7 +430,18 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
     errdefer options.deinit();
 
     var output_filename: ?[]const u8 = null;
-    var output_filename_context: Arg.Context = undefined;
+    var output_filename_context: union(enum) {
+        unspecified: void,
+        positional: usize,
+        arg: Arg.Context,
+    } = .{ .unspecified = {} };
+    var output_format: ?Options.OutputFormat = null;
+    var output_format_context: Arg.Context = undefined;
+    var input_format: ?Options.InputFormat = null;
+    var input_format_context: Arg.Context = undefined;
+    var input_filename_arg_i: usize = undefined;
+    var preprocess_only_context: Arg.Context = undefined;
+    var depfile_context: Arg.Context = undefined;
 
     var arg_i: usize = 0;
     next_arg: while (arg_i < args.len) {
@@ -437,6 +473,25 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
             if (std.ascii.startsWithIgnoreCase(arg_name, ":no-preprocess")) {
                 options.preprocess = .no;
                 arg.name_offset += ":no-preprocess".len;
+            } else if (std.ascii.startsWithIgnoreCase(arg_name, ":output-format")) {
+                const value = arg.value(":output-format".len, arg_i, args) catch {
+                    var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = arg.missingSpan() };
+                    var msg_writer = err_details.msg.writer(allocator);
+                    try msg_writer.print("missing value after {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(":output-format".len) });
+                    try diagnostics.append(err_details);
+                    arg_i += 1;
+                    break :next_arg;
+                };
+                output_format = std.meta.stringToEnum(Options.OutputFormat, value.slice) orelse blk: {
+                    var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = value.argSpan(arg) };
+                    var msg_writer = err_details.msg.writer(allocator);
+                    try msg_writer.print("invalid output format setting: {s} ", .{value.slice});
+                    try diagnostics.append(err_details);
+                    break :blk output_format;
+                };
+                output_format_context = .{ .index = arg_i, .option_len = ":output-format".len, .arg = arg, .value = value };
+                arg_i += value.index_increment;
+                continue :next_arg;
             } else if (std.ascii.startsWithIgnoreCase(arg_name, ":auto-includes")) {
                 const value = arg.value(":auto-includes".len, arg_i, args) catch {
                     var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = arg.missingSpan() };
@@ -453,6 +508,25 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                     try diagnostics.append(err_details);
                     break :blk options.auto_includes;
                 };
+                arg_i += value.index_increment;
+                continue :next_arg;
+            } else if (std.ascii.startsWithIgnoreCase(arg_name, ":input-format")) {
+                const value = arg.value(":input-format".len, arg_i, args) catch {
+                    var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = arg.missingSpan() };
+                    var msg_writer = err_details.msg.writer(allocator);
+                    try msg_writer.print("missing value after {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(":input-format".len) });
+                    try diagnostics.append(err_details);
+                    arg_i += 1;
+                    break :next_arg;
+                };
+                input_format = std.meta.stringToEnum(Options.InputFormat, value.slice) orelse blk: {
+                    var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = value.argSpan(arg) };
+                    var msg_writer = err_details.msg.writer(allocator);
+                    try msg_writer.print("invalid input format setting: {s} ", .{value.slice});
+                    try diagnostics.append(err_details);
+                    break :blk input_format;
+                };
+                input_format_context = .{ .index = arg_i, .option_len = ":input-format".len, .arg = arg, .value = value };
                 arg_i += value.index_increment;
                 continue :next_arg;
             } else if (std.ascii.startsWithIgnoreCase(arg_name, ":depfile-fmt")) {
@@ -489,6 +563,7 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                 const path = try allocator.dupe(u8, value.slice);
                 errdefer allocator.free(path);
                 options.depfile_path = path;
+                depfile_context = .{ .index = arg_i, .option_len = ":depfile".len, .arg = arg, .value = value };
                 arg_i += value.index_increment;
                 continue :next_arg;
             } else if (std.ascii.startsWithIgnoreCase(arg_name, "nologo")) {
@@ -587,7 +662,7 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                     arg_i += 1;
                     break :next_arg;
                 };
-                output_filename_context = .{ .index = arg_i, .arg = arg, .value = value };
+                output_filename_context = .{ .arg = .{ .index = arg_i, .option_len = "fo".len, .arg = arg, .value = value } };
                 output_filename = value.slice;
                 arg_i += value.index_increment;
                 continue :next_arg;
@@ -779,6 +854,7 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                 arg.name_offset += 1;
             } else if (std.ascii.startsWithIgnoreCase(arg_name, "p")) {
                 options.preprocess = .only;
+                preprocess_only_context = .{ .index = arg_i, .option_len = "p".len, .arg = arg, .value = undefined };
                 arg.name_offset += 1;
             } else if (std.ascii.startsWithIgnoreCase(arg_name, "i")) {
                 const value = arg.value(1, arg_i, args) catch {
@@ -887,7 +963,7 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
 
         if (args.len > 0) {
             const last_arg = args[args.len - 1];
-            if (arg_i > 0 and last_arg.len > 0 and last_arg[0] == '/' and std.ascii.endsWithIgnoreCase(last_arg, ".rc")) {
+            if (arg_i > 0 and last_arg.len > 0 and last_arg[0] == '/' and isSupportedInputExtension(std.fs.path.extension(last_arg))) {
                 var note_details = Diagnostics.ErrorDetails{ .type = .note, .print_args = true, .arg_index = arg_i - 1 };
                 var note_writer = note_details.msg.writer(allocator);
                 try note_writer.writeAll("if this argument was intended to be the input filename, then -- should be specified in front of it to exclude it from option parsing");
@@ -900,6 +976,27 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
         return error.ParseError;
     }
     options.input_filename = try allocator.dupe(u8, positionals[0]);
+    input_filename_arg_i = arg_i;
+
+    const InputFormatSource = enum {
+        inferred_from_input_filename,
+        input_format_arg,
+    };
+
+    var input_format_source: InputFormatSource = undefined;
+    if (input_format == null) {
+        const ext = std.fs.path.extension(options.input_filename);
+        if (std.ascii.eqlIgnoreCase(ext, ".res")) {
+            input_format = .res;
+        } else if (std.ascii.eqlIgnoreCase(ext, ".rcpp")) {
+            input_format = .rcpp;
+        } else {
+            input_format = .rc;
+        }
+        input_format_source = .inferred_from_input_filename;
+    } else {
+        input_format_source = .input_format_arg;
+    }
 
     if (positionals.len > 1) {
         if (output_filename != null) {
@@ -909,45 +1006,231 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
             try diagnostics.append(err_details);
             var note_details = Diagnostics.ErrorDetails{
                 .type = .note,
-                .arg_index = output_filename_context.value.index(output_filename_context.index),
-                .arg_span = output_filename_context.value.argSpan(output_filename_context.arg),
+                .arg_index = output_filename_context.arg.index,
+                .arg_span = output_filename_context.arg.value.argSpan(output_filename_context.arg.arg),
             };
             var note_writer = note_details.msg.writer(allocator);
             try note_writer.writeAll("output filename previously specified here");
             try diagnostics.append(note_details);
         } else {
             output_filename = positionals[1];
+            output_filename_context = .{ .positional = arg_i + 1 };
         }
     }
+
+    const OutputFormatSource = enum {
+        inferred_from_input_filename,
+        inferred_from_output_filename,
+        output_format_arg,
+        unable_to_infer_from_input_filename,
+        unable_to_infer_from_output_filename,
+        inferred_from_preprocess_only,
+    };
+
+    var output_format_source: OutputFormatSource = undefined;
     if (output_filename == null) {
-        var buf = std.ArrayList(u8).init(allocator);
-        errdefer buf.deinit();
-
-        if (std.fs.path.dirname(options.input_filename)) |dirname| {
-            var end_pos = dirname.len;
-            // We want to ensure that we write a path separator at the end, so if the dirname
-            // doesn't end with a path sep then include the char after the dirname
-            // which must be a path sep.
-            if (!std.fs.path.isSep(dirname[dirname.len - 1])) end_pos += 1;
-            try buf.appendSlice(options.input_filename[0..end_pos]);
+        if (output_format == null) {
+            output_format_source = .inferred_from_input_filename;
+            const input_ext = std.fs.path.extension(options.input_filename);
+            if (std.ascii.eqlIgnoreCase(input_ext, ".res")) {
+                output_format = .coff;
+            } else if (options.preprocess == .only and (input_format.? == .rc or std.ascii.eqlIgnoreCase(input_ext, ".rc"))) {
+                output_format = .rcpp;
+                output_format_source = .inferred_from_preprocess_only;
+            } else {
+                if (!std.ascii.eqlIgnoreCase(input_ext, ".res")) {
+                    output_format_source = .unable_to_infer_from_input_filename;
+                }
+                output_format = .res;
+            }
         }
-        try buf.appendSlice(std.fs.path.stem(options.input_filename));
-        if (options.preprocess == .only) {
-            try buf.appendSlice(".rcpp");
-        } else {
-            try buf.appendSlice(".res");
-        }
-
-        options.output_filename = try buf.toOwnedSlice();
+        options.output_filename = try filepathWithExtension(allocator, options.input_filename, output_format.?.extension());
     } else {
         options.output_filename = try allocator.dupe(u8, output_filename.?);
+        if (output_format == null) {
+            output_format_source = .inferred_from_output_filename;
+            const ext = std.fs.path.extension(options.output_filename);
+            if (std.ascii.eqlIgnoreCase(ext, ".obj") or std.ascii.eqlIgnoreCase(ext, ".o")) {
+                output_format = .coff;
+            } else if (std.ascii.eqlIgnoreCase(ext, ".rcpp")) {
+                output_format = .rcpp;
+            } else {
+                if (!std.ascii.eqlIgnoreCase(ext, ".res")) {
+                    output_format_source = .unable_to_infer_from_output_filename;
+                }
+                output_format = .res;
+            }
+        } else {
+            output_format_source = .output_format_arg;
+        }
+    }
+
+    options.input_format = input_format.?;
+    options.output_format = output_format.?;
+
+    // Check for incompatible options
+    var print_input_format_source_note: bool = false;
+    var print_output_format_source_note: bool = false;
+    if (options.depfile_path != null and (options.input_format == .res or options.output_format == .rcpp)) {
+        var err_details = Diagnostics.ErrorDetails{ .type = .warning, .arg_index = depfile_context.index, .arg_span = depfile_context.value.argSpan(depfile_context.arg) };
+        var msg_writer = err_details.msg.writer(allocator);
+        if (options.input_format == .res) {
+            try msg_writer.print("the {s}{s} option was ignored because the input format is '{s}'", .{
+                depfile_context.arg.prefixSlice(),
+                depfile_context.arg.optionWithoutPrefix(depfile_context.option_len),
+                @tagName(options.input_format),
+            });
+            print_input_format_source_note = true;
+        } else if (options.output_format == .rcpp) {
+            try msg_writer.print("the {s}{s} option was ignored because the output format is '{s}'", .{
+                depfile_context.arg.prefixSlice(),
+                depfile_context.arg.optionWithoutPrefix(depfile_context.option_len),
+                @tagName(options.output_format),
+            });
+            print_output_format_source_note = true;
+        }
+        try diagnostics.append(err_details);
+    }
+    if (!isSupportedTransformation(options.input_format, options.output_format)) {
+        var err_details = Diagnostics.ErrorDetails{ .arg_index = input_filename_arg_i, .print_args = false };
+        var msg_writer = err_details.msg.writer(allocator);
+        try msg_writer.print("input format '{s}' cannot be converted to output format '{s}'", .{ @tagName(options.input_format), @tagName(options.output_format) });
+        try diagnostics.append(err_details);
+        print_input_format_source_note = true;
+        print_output_format_source_note = true;
+    }
+    if (options.preprocess == .only and options.output_format != .rcpp) {
+        var err_details = Diagnostics.ErrorDetails{ .arg_index = preprocess_only_context.index };
+        var msg_writer = err_details.msg.writer(allocator);
+        try msg_writer.print("the {s}{s} option cannot be used with output format '{s}'", .{
+            preprocess_only_context.arg.prefixSlice(),
+            preprocess_only_context.arg.optionWithoutPrefix(preprocess_only_context.option_len),
+            @tagName(options.output_format),
+        });
+        try diagnostics.append(err_details);
+        print_output_format_source_note = true;
+    }
+    if (print_input_format_source_note) {
+        switch (input_format_source) {
+            .inferred_from_input_filename => {
+                var err_details = Diagnostics.ErrorDetails{ .type = .note, .arg_index = input_filename_arg_i };
+                var msg_writer = err_details.msg.writer(allocator);
+                try msg_writer.writeAll("the input format was inferred from the input filename");
+                try diagnostics.append(err_details);
+            },
+            .input_format_arg => {
+                var err_details = Diagnostics.ErrorDetails{
+                    .type = .note,
+                    .arg_index = input_format_context.index,
+                    .arg_span = input_format_context.value.argSpan(input_format_context.arg),
+                };
+                var msg_writer = err_details.msg.writer(allocator);
+                try msg_writer.writeAll("the input format was specified here");
+                try diagnostics.append(err_details);
+            },
+        }
+    }
+    if (print_output_format_source_note) {
+        switch (output_format_source) {
+            .inferred_from_input_filename, .unable_to_infer_from_input_filename => {
+                var err_details = Diagnostics.ErrorDetails{ .type = .note, .arg_index = input_filename_arg_i };
+                var msg_writer = err_details.msg.writer(allocator);
+                if (output_format_source == .inferred_from_input_filename) {
+                    try msg_writer.writeAll("the output format was inferred from the input filename");
+                } else {
+                    try msg_writer.writeAll("the output format was unable to be inferred from the input filename, so the default was used");
+                }
+                try diagnostics.append(err_details);
+            },
+            .inferred_from_output_filename, .unable_to_infer_from_output_filename => {
+                var err_details: Diagnostics.ErrorDetails = switch (output_filename_context) {
+                    .positional => |i| .{ .type = .note, .arg_index = i },
+                    .arg => |ctx| .{ .type = .note, .arg_index = ctx.index, .arg_span = ctx.value.argSpan(ctx.arg) },
+                    .unspecified => unreachable,
+                };
+                var msg_writer = err_details.msg.writer(allocator);
+                if (output_format_source == .inferred_from_output_filename) {
+                    try msg_writer.writeAll("the output format was inferred from the output filename");
+                } else {
+                    try msg_writer.writeAll("the output format was unable to be inferred from the output filename, so the default was used");
+                }
+                try diagnostics.append(err_details);
+            },
+            .output_format_arg => {
+                var err_details = Diagnostics.ErrorDetails{
+                    .type = .note,
+                    .arg_index = output_format_context.index,
+                    .arg_span = output_format_context.value.argSpan(output_format_context.arg),
+                };
+                var msg_writer = err_details.msg.writer(allocator);
+                try msg_writer.writeAll("the output format was specified here");
+                try diagnostics.append(err_details);
+            },
+            .inferred_from_preprocess_only => {
+                var err_details = Diagnostics.ErrorDetails{ .type = .note, .arg_index = preprocess_only_context.index };
+                var msg_writer = err_details.msg.writer(allocator);
+                try msg_writer.print("the output format was inferred from the usage of the {s}{s} option", .{
+                    preprocess_only_context.arg.prefixSlice(),
+                    preprocess_only_context.arg.optionWithoutPrefix(preprocess_only_context.option_len),
+                });
+                try diagnostics.append(err_details);
+            },
+        }
     }
 
     if (diagnostics.hasError()) {
         return error.ParseError;
     }
 
+    // Implied settings from input/output formats
+    if (options.output_format == .rcpp) options.preprocess = .only;
+    if (options.input_format == .res) options.output_format = .coff;
+    if (options.input_format == .rcpp) options.preprocess = .no;
+
     return options;
+}
+
+pub fn filepathWithExtension(allocator: Allocator, path: []const u8, ext: []const u8) ![]const u8 {
+    var buf = std.ArrayList(u8).init(allocator);
+    errdefer buf.deinit();
+    if (std.fs.path.dirname(path)) |dirname| {
+        var end_pos = dirname.len;
+        // We want to ensure that we write a path separator at the end, so if the dirname
+        // doesn't end with a path sep then include the char after the dirname
+        // which must be a path sep.
+        if (!std.fs.path.isSep(dirname[dirname.len - 1])) end_pos += 1;
+        try buf.appendSlice(path[0..end_pos]);
+    }
+    try buf.appendSlice(std.fs.path.stem(path));
+    try buf.appendSlice(ext);
+    return try buf.toOwnedSlice();
+}
+
+pub fn isSupportedInputExtension(ext: []const u8) bool {
+    if (std.ascii.eqlIgnoreCase(ext, ".rc")) return true;
+    if (std.ascii.eqlIgnoreCase(ext, ".res")) return true;
+    if (std.ascii.eqlIgnoreCase(ext, ".rcpp")) return true;
+    return false;
+}
+
+pub fn isSupportedTransformation(input: Options.InputFormat, output: Options.OutputFormat) bool {
+    return switch (input) {
+        .rc => switch (output) {
+            .res => true,
+            .coff => true,
+            .rcpp => true,
+        },
+        .res => switch (output) {
+            .res => false,
+            .coff => true,
+            .rcpp => false,
+        },
+        .rcpp => switch (output) {
+            .res => true,
+            .coff => true,
+            .rcpp => false,
+        },
+    };
 }
 
 /// Returns true if the str is a valid C identifier for use in a #define/#undef macro
@@ -1250,6 +1533,28 @@ test "parse errors: basic" {
         \\     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         \\
     );
+    try testParseError(&.{"/some/absolute/path/parsed/as/an/option.res"},
+        \\<cli>: error: the /s option is unsupported
+        \\ ... /some/absolute/path/parsed/as/an/option.res
+        \\     ~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        \\<cli>: error: missing input filename
+        \\
+        \\<cli>: note: if this argument was intended to be the input filename, then -- should be specified in front of it to exclude it from option parsing
+        \\ ... /some/absolute/path/parsed/as/an/option.res
+        \\     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        \\
+    );
+    try testParseError(&.{"/some/absolute/path/parsed/as/an/option.rcpp"},
+        \\<cli>: error: the /s option is unsupported
+        \\ ... /some/absolute/path/parsed/as/an/option.rcpp
+        \\     ~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        \\<cli>: error: missing input filename
+        \\
+        \\<cli>: note: if this argument was intended to be the input filename, then -- should be specified in front of it to exclude it from option parsing
+        \\ ... /some/absolute/path/parsed/as/an/option.rcpp
+        \\     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        \\
+    );
 }
 
 test "parse errors: /ln" {
@@ -1463,6 +1768,183 @@ test "parse: unsupported LCX/LCE-related options" {
         \\     ~^~
         \\
     );
+}
+
+test "parse: output filename specified twice" {
+    try testParseError(&.{ "/fo", "foo.res", "foo.rc", "foo.res" },
+        \\<cli>: error: output filename already specified
+        \\ ... foo.res
+        \\     ^~~~~~~
+        \\<cli>: note: output filename previously specified here
+        \\ ... /fo foo.res ...
+        \\     ~~~~^~~~~~~
+        \\
+    );
+}
+
+test "parse: input and output formats" {
+    {
+        try testParseError(&.{ "/:output-format", "rcpp", "foo.res" },
+            \\<cli>: error: input format 'res' cannot be converted to output format 'rcpp'
+            \\
+            \\<cli>: note: the input format was inferred from the input filename
+            \\ ... foo.res
+            \\     ^~~~~~~
+            \\<cli>: note: the output format was specified here
+            \\ ... /:output-format rcpp ...
+            \\     ~~~~~~~~~~~~~~~~^~~~
+            \\
+        );
+    }
+    {
+        try testParseError(&.{ "foo.res", "foo.rcpp" },
+            \\<cli>: error: input format 'res' cannot be converted to output format 'rcpp'
+            \\
+            \\<cli>: note: the input format was inferred from the input filename
+            \\ ... foo.res ...
+            \\     ^~~~~~~
+            \\<cli>: note: the output format was inferred from the output filename
+            \\ ... foo.rcpp
+            \\     ^~~~~~~~
+            \\
+        );
+    }
+    {
+        try testParseError(&.{ "/:input-format", "res", "foo" },
+            \\<cli>: error: input format 'res' cannot be converted to output format 'res'
+            \\
+            \\<cli>: note: the input format was specified here
+            \\ ... /:input-format res ...
+            \\     ~~~~~~~~~~~~~~~^~~
+            \\<cli>: note: the output format was unable to be inferred from the input filename, so the default was used
+            \\ ... foo
+            \\     ^~~
+            \\
+        );
+    }
+    {
+        try testParseError(&.{ "/p", "/:input-format", "res", "foo" },
+            \\<cli>: error: input format 'res' cannot be converted to output format 'res'
+            \\
+            \\<cli>: error: the /p option cannot be used with output format 'res'
+            \\ ... /p ...
+            \\     ^~
+            \\<cli>: note: the input format was specified here
+            \\ ... /:input-format res ...
+            \\     ~~~~~~~~~~~~~~~^~~
+            \\<cli>: note: the output format was unable to be inferred from the input filename, so the default was used
+            \\ ... foo
+            \\     ^~~
+            \\
+        );
+    }
+    {
+        try testParseError(&.{ "/:output-format", "coff", "/p", "foo.rc" },
+            \\<cli>: error: the /p option cannot be used with output format 'coff'
+            \\ ... /p ...
+            \\     ^~
+            \\<cli>: note: the output format was specified here
+            \\ ... /:output-format coff ...
+            \\     ~~~~~~~~~~~~~~~~^~~~
+            \\
+        );
+    }
+    {
+        try testParseError(&.{ "/fo", "foo.res", "/p", "foo.rc" },
+            \\<cli>: error: the /p option cannot be used with output format 'res'
+            \\ ... /p ...
+            \\     ^~
+            \\<cli>: note: the output format was inferred from the output filename
+            \\ ... /fo foo.res ...
+            \\     ~~~~^~~~~~~
+            \\
+        );
+    }
+    {
+        try testParseError(&.{ "/p", "foo.rc", "foo.o" },
+            \\<cli>: error: the /p option cannot be used with output format 'coff'
+            \\ ... /p ...
+            \\     ^~
+            \\<cli>: note: the output format was inferred from the output filename
+            \\ ... foo.o
+            \\     ^~~~~
+            \\
+        );
+    }
+    {
+        var options = try testParse(&.{"foo.rc"});
+        defer options.deinit();
+
+        try std.testing.expectEqual(.rc, options.input_format);
+        try std.testing.expectEqual(.res, options.output_format);
+    }
+    {
+        var options = try testParse(&.{"foo.rcpp"});
+        defer options.deinit();
+
+        try std.testing.expectEqual(.no, options.preprocess);
+        try std.testing.expectEqual(.rcpp, options.input_format);
+        try std.testing.expectEqual(.res, options.output_format);
+    }
+    {
+        var options = try testParse(&.{ "foo.rc", "foo.rcpp" });
+        defer options.deinit();
+
+        try std.testing.expectEqual(.only, options.preprocess);
+        try std.testing.expectEqual(.rc, options.input_format);
+        try std.testing.expectEqual(.rcpp, options.output_format);
+    }
+    {
+        var options = try testParse(&.{ "foo.rc", "foo.obj" });
+        defer options.deinit();
+
+        try std.testing.expectEqual(.rc, options.input_format);
+        try std.testing.expectEqual(.coff, options.output_format);
+    }
+    {
+        var options = try testParse(&.{ "/fo", "foo.o", "foo.rc" });
+        defer options.deinit();
+
+        try std.testing.expectEqual(.rc, options.input_format);
+        try std.testing.expectEqual(.coff, options.output_format);
+    }
+    {
+        var options = try testParse(&.{"foo.res"});
+        defer options.deinit();
+
+        try std.testing.expectEqual(.res, options.input_format);
+        try std.testing.expectEqual(.coff, options.output_format);
+    }
+    {
+        var options = try testParseWarning(&.{ "/:depfile", "foo.json", "foo.rc", "foo.rcpp" },
+            \\<cli>: warning: the /:depfile option was ignored because the output format is 'rcpp'
+            \\ ... /:depfile foo.json ...
+            \\     ~~~~~~~~~~^~~~~~~~
+            \\<cli>: note: the output format was inferred from the output filename
+            \\ ... foo.rcpp
+            \\     ^~~~~~~~
+            \\
+        );
+        defer options.deinit();
+
+        try std.testing.expectEqual(.rc, options.input_format);
+        try std.testing.expectEqual(.rcpp, options.output_format);
+    }
+    {
+        var options = try testParseWarning(&.{ "/:depfile", "foo.json", "foo.res", "foo.o" },
+            \\<cli>: warning: the /:depfile option was ignored because the input format is 'res'
+            \\ ... /:depfile foo.json ...
+            \\     ~~~~~~~~~~^~~~~~~~
+            \\<cli>: note: the input format was inferred from the input filename
+            \\ ... foo.res ...
+            \\     ^~~~~~~
+            \\
+        );
+        defer options.deinit();
+
+        try std.testing.expectEqual(.res, options.input_format);
+        try std.testing.expectEqual(.coff, options.output_format);
+    }
 }
 
 test "maybeAppendRC" {

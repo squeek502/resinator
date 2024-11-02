@@ -11,6 +11,7 @@ const preprocess = @import("preprocess.zig");
 const renderErrorMessage = @import("utils.zig").renderErrorMessage;
 const auto_includes = @import("auto_includes.zig");
 const hasDisjointCodePage = @import("disjoint_code_page.zig").hasDisjointCodePage;
+const cvtres = @import("cvtres.zig");
 const aro = @import("aro");
 
 pub fn main() !void {
@@ -163,142 +164,203 @@ pub fn main() !void {
         return;
     }
 
-    // Note: We still want to run this when no-preprocess is set because:
-    //   1. We want to print accurate line numbers after removing multiline comments
-    //   2. We want to be able to handle an already-preprocessed input with #line commands in it
-    var mapping_results = parseAndRemoveLineCommands(allocator, full_input, full_input, .{ .initial_filename = options.input_filename }) catch |err| switch (err) {
-        error.InvalidLineCommand => {
-            // TODO: Maybe output the invalid line command
-            try renderErrorMessage(stderr.writer(), stderr_config, .err, "invalid line command in the preprocessed source", .{});
-            if (options.preprocess == .no) {
-                try renderErrorMessage(stderr.writer(), stderr_config, .note, "line commands must be of the format: #line <num> \"<path>\"", .{});
-            } else {
-                try renderErrorMessage(stderr.writer(), stderr_config, .note, "this is likely to be a bug, please report it", .{});
-            }
-            std.process.exit(1);
-        },
-        error.LineNumberOverflow => {
-            // TODO: Better error message
-            try renderErrorMessage(stderr.writer(), stderr_config, .err, "line number count exceeded maximum of {}", .{std.math.maxInt(usize)});
-            std.process.exit(1);
-        },
-        error.OutOfMemory => |e| return e,
-    };
-    defer mapping_results.mappings.deinit(allocator);
+    const need_intermediate_res = options.output_format == .coff and options.input_format != .res;
+    const res_filename = if (need_intermediate_res)
+        try cli.filepathWithExtension(allocator, options.input_filename, ".res")
+    else
+        options.output_filename;
+    defer if (need_intermediate_res) allocator.free(res_filename);
 
-    const default_code_page = options.default_code_page orelse .windows1252;
-    const has_disjoint_code_page = hasDisjointCodePage(mapping_results.result, &mapping_results.mappings, default_code_page);
-
-    const final_input = try removeComments(mapping_results.result, mapping_results.result, &mapping_results.mappings);
-
-    var output_file = std.fs.cwd().createFile(options.output_filename, .{}) catch |err| {
-        try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to create output file '{s}': {s}", .{ options.output_filename, @errorName(err) });
-        std.process.exit(1);
-    };
-    var output_file_closed = false;
-    defer if (!output_file_closed) output_file.close();
-
-    var diagnostics = Diagnostics.init(allocator);
-    defer diagnostics.deinit();
-
-    if (options.debug) {
-        std.debug.print("disjoint code page detected: {}\n", .{has_disjoint_code_page});
-        std.debug.print("after preprocessor:\n------------------\n{s}\n------------------\n", .{final_input});
-        std.debug.print("\nmappings:\n", .{});
-        var it = mapping_results.mappings.sources.inorderIterator();
-        while (it.next()) |node| {
-            const source = node.key;
-            const filename = mapping_results.mappings.files.get(source.filename_offset);
-            std.debug.print("{}: {s} : {}-{}\n", .{ source.start_line, filename, source.corresponding_start_line, source.corresponding_start_line + source.span });
-        }
-        std.debug.print("end line #: {}\n", .{mapping_results.mappings.end_line});
-        std.debug.print("\n", .{});
-
-        // Separately parse and dump the AST
-        ast: {
-            var parse_diagnostics = Diagnostics.init(allocator);
-            defer parse_diagnostics.deinit();
-            var lexer = lex.Lexer.init(final_input, .{});
-            var parser = parse.Parser.init(&lexer, .{});
-            var tree = parser.parse(allocator, &parse_diagnostics) catch {
-                std.debug.print("Failed to parse\n", .{});
-                break :ast;
+    const res_data = res_data: {
+        if (options.input_format != .res) {
+            // Note: We still want to run this when no-preprocess is set because:
+            //   1. We want to print accurate line numbers after removing multiline comments
+            //   2. We want to be able to handle an already-preprocessed input with #line commands in it
+            var mapping_results = parseAndRemoveLineCommands(allocator, full_input, full_input, .{ .initial_filename = options.input_filename }) catch |err| switch (err) {
+                error.InvalidLineCommand => {
+                    // TODO: Maybe output the invalid line command
+                    try renderErrorMessage(stderr.writer(), stderr_config, .err, "invalid line command in the preprocessed source", .{});
+                    if (options.preprocess == .no) {
+                        try renderErrorMessage(stderr.writer(), stderr_config, .note, "line commands must be of the format: #line <num> \"<path>\"", .{});
+                    } else {
+                        try renderErrorMessage(stderr.writer(), stderr_config, .note, "this is likely to be a bug, please report it", .{});
+                    }
+                    std.process.exit(1);
+                },
+                error.LineNumberOverflow => {
+                    // TODO: Better error message
+                    try renderErrorMessage(stderr.writer(), stderr_config, .err, "line number count exceeded maximum of {}", .{std.math.maxInt(usize)});
+                    std.process.exit(1);
+                },
+                error.OutOfMemory => |e| return e,
             };
-            defer tree.deinit();
+            defer mapping_results.mappings.deinit(allocator);
 
-            try tree.dump(stderr.writer());
-            std.debug.print("\n", .{});
-        }
-    }
+            const default_code_page = options.default_code_page orelse .windows1252;
+            const has_disjoint_code_page = hasDisjointCodePage(mapping_results.result, &mapping_results.mappings, default_code_page);
 
-    var output_buffered_stream = std.io.bufferedWriter(output_file.writer());
+            const final_input = try removeComments(mapping_results.result, mapping_results.result, &mapping_results.mappings);
 
-    compile(allocator, final_input, output_buffered_stream.writer(), .{
-        .cwd = std.fs.cwd(),
-        .diagnostics = &diagnostics,
-        .source_mappings = &mapping_results.mappings,
-        .dependencies_list = maybe_dependencies_list,
-        .ignore_include_env_var = options.ignore_include_env_var,
-        .extra_include_paths = options.extra_include_paths.items,
-        .system_include_paths = include_paths,
-        .default_language_id = options.default_language_id,
-        .default_code_page = default_code_page,
-        .disjoint_code_page = has_disjoint_code_page,
-        .verbose = options.verbose,
-        .null_terminate_string_table_strings = options.null_terminate_string_table_strings,
-        .max_string_literal_codepoints = options.max_string_literal_codepoints,
-        .silent_duplicate_control_ids = options.silent_duplicate_control_ids,
-        .warn_instead_of_error_on_invalid_code_page = options.warn_instead_of_error_on_invalid_code_page,
-    }) catch |err| switch (err) {
-        error.ParseError, error.CompileError => {
+            var output_file = std.fs.cwd().createFile(res_filename, .{}) catch |err| {
+                try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to create output file '{s}': {s}", .{ res_filename, @errorName(err) });
+                std.process.exit(1);
+            };
+            var output_file_closed = false;
+            defer if (!output_file_closed) output_file.close();
+
+            var diagnostics = Diagnostics.init(allocator);
+            defer diagnostics.deinit();
+
+            if (options.debug) {
+                std.debug.print("disjoint code page detected: {}\n", .{has_disjoint_code_page});
+                std.debug.print("after preprocessor:\n------------------\n{s}\n------------------\n", .{final_input});
+                std.debug.print("\nmappings:\n", .{});
+                var it = mapping_results.mappings.sources.inorderIterator();
+                while (it.next()) |node| {
+                    const source = node.key;
+                    const filename = mapping_results.mappings.files.get(source.filename_offset);
+                    std.debug.print("{}: {s} : {}-{}\n", .{ source.start_line, filename, source.corresponding_start_line, source.corresponding_start_line + source.span });
+                }
+                std.debug.print("end line #: {}\n", .{mapping_results.mappings.end_line});
+                std.debug.print("\n", .{});
+
+                // Separately parse and dump the AST
+                ast: {
+                    var parse_diagnostics = Diagnostics.init(allocator);
+                    defer parse_diagnostics.deinit();
+                    var lexer = lex.Lexer.init(final_input, .{});
+                    var parser = parse.Parser.init(&lexer, .{});
+                    var tree = parser.parse(allocator, &parse_diagnostics) catch {
+                        std.debug.print("Failed to parse\n", .{});
+                        break :ast;
+                    };
+                    defer tree.deinit();
+
+                    try tree.dump(stderr.writer());
+                    std.debug.print("\n", .{});
+                }
+            }
+
+            var output_buffered_stream = std.io.bufferedWriter(output_file.writer());
+
+            compile(allocator, final_input, output_buffered_stream.writer(), .{
+                .cwd = std.fs.cwd(),
+                .diagnostics = &diagnostics,
+                .source_mappings = &mapping_results.mappings,
+                .dependencies_list = maybe_dependencies_list,
+                .ignore_include_env_var = options.ignore_include_env_var,
+                .extra_include_paths = options.extra_include_paths.items,
+                .system_include_paths = include_paths,
+                .default_language_id = options.default_language_id,
+                .default_code_page = default_code_page,
+                .disjoint_code_page = has_disjoint_code_page,
+                .verbose = options.verbose,
+                .null_terminate_string_table_strings = options.null_terminate_string_table_strings,
+                .max_string_literal_codepoints = options.max_string_literal_codepoints,
+                .silent_duplicate_control_ids = options.silent_duplicate_control_ids,
+                .warn_instead_of_error_on_invalid_code_page = options.warn_instead_of_error_on_invalid_code_page,
+            }) catch |err| switch (err) {
+                error.ParseError, error.CompileError => {
+                    diagnostics.renderToStdErr(std.fs.cwd(), final_input, stderr_config, mapping_results.mappings);
+                    // Delete the output file on error
+                    output_file.close();
+                    output_file_closed = true;
+                    // Failing to delete is not really a big deal, so swallow any errors
+                    std.fs.cwd().deleteFile(res_filename) catch {};
+                    std.process.exit(1);
+                },
+                else => |e| return e,
+            };
+
+            try output_buffered_stream.flush();
+
+            if (options.debug) {
+                std.debug.print("dependencies list:\n", .{});
+                for (dependencies_list.items) |path| {
+                    std.debug.print(" {s}\n", .{path});
+                }
+                std.debug.print("\n", .{});
+            }
+
+            // print any warnings/notes
             diagnostics.renderToStdErr(std.fs.cwd(), final_input, stderr_config, mapping_results.mappings);
-            // Delete the output file on error
-            output_file.close();
-            output_file_closed = true;
-            // Failing to delete is not really a big deal, so swallow any errors
-            std.fs.cwd().deleteFile(options.output_filename) catch {};
-            std.process.exit(1);
-        },
-        else => |e| return e,
-    };
 
-    try output_buffered_stream.flush();
+            // write the depfile
+            if (options.depfile_path) |depfile_path| {
+                var depfile = std.fs.cwd().createFile(depfile_path, .{}) catch |err| {
+                    try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to create depfile '{s}': {s}", .{ depfile_path, @errorName(err) });
+                    std.process.exit(1);
+                };
+                defer depfile.close();
 
-    if (options.debug) {
-        std.debug.print("dependencies list:\n", .{});
-        for (dependencies_list.items) |path| {
-            std.debug.print(" {s}\n", .{path});
+                const depfile_writer = depfile.writer();
+                var depfile_buffered_writer = std.io.bufferedWriter(depfile_writer);
+                switch (options.depfile_fmt) {
+                    .json => {
+                        var write_stream = std.json.writeStream(depfile_buffered_writer.writer(), .{ .whitespace = .indent_2 });
+                        defer write_stream.deinit();
+
+                        try write_stream.beginArray();
+                        for (dependencies_list.items) |dep_path| {
+                            try write_stream.write(dep_path);
+                        }
+                        try write_stream.endArray();
+                    },
+                }
+                try depfile_buffered_writer.flush();
+            }
         }
-        std.debug.print("\n", .{});
-    }
 
-    // print any warnings/notes
-    diagnostics.renderToStdErr(std.fs.cwd(), final_input, stderr_config, mapping_results.mappings);
+        if (options.output_format != .coff) return;
 
-    // write the depfile
-    if (options.depfile_path) |depfile_path| {
-        var depfile = std.fs.cwd().createFile(depfile_path, .{}) catch |err| {
-            try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to create depfile '{s}': {s}", .{ depfile_path, @errorName(err) });
+        // TODO: Maybe compile .res into memory instead of an intermediate file when output format is coff
+        break :res_data std.fs.cwd().readFileAlloc(allocator, res_filename, std.math.maxInt(usize)) catch |err| {
+            try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to read res file path '{s}': {s}", .{ res_filename, @errorName(err) });
             std.process.exit(1);
         };
-        defer depfile.close();
+    };
 
-        const depfile_writer = depfile.writer();
-        var depfile_buffered_writer = std.io.bufferedWriter(depfile_writer);
-        switch (options.depfile_fmt) {
-            .json => {
-                var write_stream = std.json.writeStream(depfile_buffered_writer.writer(), .{ .whitespace = .indent_2 });
-                defer write_stream.deinit();
+    std.debug.assert(options.output_format == .coff);
 
-                try write_stream.beginArray();
-                for (dependencies_list.items) |dep_path| {
-                    try write_stream.write(dep_path);
-                }
-                try write_stream.endArray();
-            },
-        }
-        try depfile_buffered_writer.flush();
-    }
+    const resources = resources: {
+        // No need to keep the res_data around after parsing the resources from it
+        defer allocator.free(res_data);
+
+        // TODO: Maybe use a buffered file reader instead of reading file into memory -> fbs
+        var fbs = std.io.fixedBufferStream(res_data);
+        break :resources cvtres.parseRes(allocator, fbs.reader(), .{ .max_size = res_data.len }) catch |err| {
+            // TODO: Better errors
+            try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to parse res file '{s}': {s}", .{ res_filename, @errorName(err) });
+            std.process.exit(1);
+        };
+    };
+    defer cvtres.freeResources(allocator, resources);
+
+    const coff_output_filename = options.output_filename;
+    var coff_output_file = std.fs.cwd().createFile(coff_output_filename, .{}) catch |err| {
+        try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to create output file '{s}': {s}", .{ coff_output_filename, @errorName(err) });
+        std.process.exit(1);
+    };
+    var coff_output_file_closed = false;
+    defer if (!coff_output_file_closed) coff_output_file.close();
+
+    var coff_output_buffered_stream = std.io.bufferedWriter(coff_output_file.writer());
+
+    cvtres.writeCoff(allocator, coff_output_buffered_stream.writer(), resources, .{
+        // TODO: Make this configurable
+        .target = .X64,
+    }) catch |err| {
+        // TODO: Better errors
+        try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to write coff output file '{s}': {s}", .{ coff_output_filename, @errorName(err) });
+        // Delete the output file on error
+        coff_output_file.close();
+        coff_output_file_closed = true;
+        // Failing to delete is not really a big deal, so swallow any errors
+        std.fs.cwd().deleteFile(coff_output_filename) catch {};
+        std.process.exit(1);
+    };
+
+    try coff_output_buffered_stream.flush();
 }
 
 fn getIncludePaths(allocator: std.mem.Allocator, auto_includes_option: cli.Options.AutoIncludes) ![]const []const u8 {
