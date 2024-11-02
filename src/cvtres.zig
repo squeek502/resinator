@@ -754,7 +754,15 @@ const ResourceTree = struct {
 
         for (relocations.list.items, 0..) |relocation, i| {
             var name_buf: [8]u8 = undefined;
-            const name_slice = try std.fmt.bufPrint(&name_buf, "$R{X:0>6}", .{relocation.data_offset});
+            // TODO: This is what cvtres.exe does, but it's a bad solution, since
+            //       e.g. an initial resource with exactly 16 MiB of data and the
+            //       resource following it would both have the symbol name $R000000.
+            //
+            //       Instead, resinator should either adopt llvm-cvtres' behavior
+            //       of $R000001, $R000002, etc and/or write the symbol names to the
+            //       string table if they would overflow 8 characters.
+            const truncated_data_offset: u24 = @truncate(relocation.data_offset);
+            const name_slice = try std.fmt.bufPrint(&name_buf, "$R{X:0>6}", .{truncated_data_offset});
             std.debug.assert(name_slice.len == 8);
             symbols[i] = .{
                 .name = name_buf,
