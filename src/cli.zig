@@ -222,9 +222,10 @@ pub const Options = struct {
         try self.symbols.put(self.allocator, duped_key, .{ .undefine = {} });
     }
 
-    /// If the current input filename both:
+    /// If the current input filename:
     /// - does not have an extension, and
-    /// - does not exist in the cwd
+    /// - does not exist in the cwd, and
+    /// - the input format is .rc
     /// then this function will append `.rc` to the input filename
     ///
     /// Note: This behavior is different from the Win32 compiler.
@@ -237,7 +238,7 @@ pub const Options = struct {
     /// of the .rc extension being omitted from the CLI args, but still
     /// work fine if the file itself does not have an extension.
     pub fn maybeAppendRC(options: *Options, cwd: std.fs.Dir) !void {
-        if (std.fs.path.extension(options.input_filename).len == 0) {
+        if (options.input_format == .rc and std.fs.path.extension(options.input_filename).len == 0) {
             cwd.access(options.input_filename, .{}) catch |err| switch (err) {
                 error.FileNotFound => {
                     var filename_bytes = try options.allocator.alloc(u8, options.input_filename.len + 3);
@@ -1962,9 +1963,16 @@ test "maybeAppendRC" {
     try options.maybeAppendRC(tmp.dir);
     try std.testing.expectEqualStrings("foo", options.input_filename);
 
-    // Now delete the file and try again. Since the verbatim name is no longer found
-    // and the input filename does not have an extension, .rc should get appended.
+    // Now delete the file and try again. But this time change the input format
+    // to non-rc.
     try tmp.dir.deleteFile("foo");
+    options.input_format = .res;
+    try options.maybeAppendRC(tmp.dir);
+    try std.testing.expectEqualStrings("foo", options.input_filename);
+
+    // Finally, reset the input format to rc. Since the verbatim name is no longer found
+    // and the input filename does not have an extension, .rc should get appended.
+    options.input_format = .rc;
     try options.maybeAppendRC(tmp.dir);
     try std.testing.expectEqualStrings("foo.rc", options.input_filename);
 }
