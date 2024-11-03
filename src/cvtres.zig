@@ -156,19 +156,6 @@ pub fn parseNameOrOrdinal(allocator: Allocator, reader: anytype) !NameOrOrdinal 
     return .{ .name = try name_buf.toOwnedSliceSentinel(allocator, 0) };
 }
 
-// https://learn.microsoft.com/en-us/windows/win32/debug/pe-format#type-indicators
-pub fn rvaRelocationTypeIndicator(target: std.coff.MachineType) u16 {
-    return switch (target) {
-        .X64 => 0x3, // IMAGE_REL_AMD64_ADDR32NB
-        .I386 => 0x7, // IMAGE_REL_I386_DIR32NB
-        .ARM, .ARMNT => 0x2, // IMAGE_REL_ARM_ADDR32NB
-        .ARM64, .ARM64EC, .ARM64X => 0x2, // IMAGE_REL_ARM64_ADDR32NB
-        .IA64 => 0x10, // IMAGE_REL_IA64_DIR32NB
-        .EBC => 0x1, // This is what cvtres.exe writes for this target, unsure where it comes from
-        else => 0,
-    };
-}
-
 pub const CoffOptions = struct {
     target: std.coff.MachineType = .X64,
     /// If true, zeroes will be written to all timestamp fields
@@ -739,7 +726,7 @@ const ResourceTree = struct {
             try writeRelocation(w, std.coff.Relocation{
                 .virtual_address = relocation.relocation_address,
                 .symbol_table_index = relocation.symbol_index,
-                .type = rvaRelocationTypeIndicator(options.target),
+                .type = supported_targets.rvaRelocationTypeIndicator(options.target).?,
             });
         }
 
@@ -832,6 +819,141 @@ const Relocations = struct {
         });
         self.cur_symbol_index += 1;
         self.cur_data_offset += std.mem.alignForward(u32, @intCast(resource.data.len), 8);
+    }
+};
+
+pub const supported_targets = struct {
+    /// Enum containing a mixture of names that come from:
+    /// - Machine Types constants in the PE format spec:
+    ///   https://learn.microsoft.com/en-us/windows/win32/debug/pe-format#machine-types
+    /// - cvtres.exe /machine options
+    /// - Zig/LLVM arch names
+    /// All field names are lowercase regardless of their casing used in the above origins.
+    pub const Arch = enum {
+        // cvtres.exe /machine names
+        x64,
+        x86,
+        /// Note: Following cvtres.exe's lead, this corresponds to ARMNT, not ARM
+        arm,
+        arm64,
+        arm64ec,
+        arm64x,
+        ia64,
+        ebc,
+
+        // PE/COFF MACHINE constant names not covered above
+        amd64,
+        i386,
+        armnt,
+
+        // Zig/LLVM names not already covered above
+        x86_64,
+        aarch64,
+
+        pub fn toCoffMachineType(arch: Arch) std.coff.MachineType {
+            return switch (arch) {
+                .x64, .amd64, .x86_64 => .X64,
+                .x86, .i386 => .I386,
+                .arm, .armnt => .ARMNT,
+                .arm64, .aarch64 => .ARM64,
+                .arm64ec => .ARM64EC,
+                .arm64x => .ARM64X,
+                .ia64 => .IA64,
+                .ebc => .EBC,
+            };
+        }
+
+        pub fn description(arch: Arch) []const u8 {
+            return switch (arch) {
+                .x64, .amd64, .x86_64 => "64-bit X86",
+                .x86, .i386 => "32-bit X86",
+                .arm, .armnt => "ARM Thumb-2 little endian",
+                .arm64, .aarch64 => "ARM64/AArch64 little endian",
+                .arm64ec => "ARM64 \"Emulation Compatible\"",
+                .arm64x => "ARM64 and ARM64EC together",
+                .ia64 => "64-bit Intel Itanium",
+                .ebc => "EFI Byte Code",
+            };
+        }
+
+        pub const ordered_for_display: []const Arch = &.{
+            .x64,
+            .x86_64,
+            .amd64,
+            .x86,
+            .i386,
+            .arm64,
+            .aarch64,
+            .arm,
+            .armnt,
+            .arm64ec,
+            .arm64x,
+            .ia64,
+            .ebc,
+        };
+        comptime {
+            for (@typeInfo(Arch).@"enum".fields) |enum_field| {
+                _ = std.mem.indexOfScalar(Arch, ordered_for_display, @enumFromInt(enum_field.value)) orelse {
+                    @compileError(std.fmt.comptimePrint("'{s}' missing from ordered_for_display", .{enum_field.name}));
+                };
+            }
+        }
+
+        pub const longest_name = blk: {
+            var len = 0;
+            for (@typeInfo(Arch).@"enum".fields) |field| {
+                if (field.name.len > len) len = field.name.len;
+            }
+            break :blk len;
+        };
+
+        pub fn fromStringIgnoreCase(str: []const u8) ?Arch {
+            if (str.len > longest_name) return null;
+            var lower_buf: [longest_name]u8 = undefined;
+            const lower = std.ascii.lowerString(&lower_buf, str);
+            return std.meta.stringToEnum(Arch, lower);
+        }
+
+        test fromStringIgnoreCase {
+            try std.testing.expectEqual(.x64, Arch.fromStringIgnoreCase("x64").?);
+            try std.testing.expectEqual(.x64, Arch.fromStringIgnoreCase("X64").?);
+            try std.testing.expectEqual(.aarch64, Arch.fromStringIgnoreCase("Aarch64").?);
+            try std.testing.expectEqual(null, Arch.fromStringIgnoreCase("armzzz"));
+            try std.testing.expectEqual(null, Arch.fromStringIgnoreCase("long string that is longer than any field"));
+        }
+    };
+
+    // https://learn.microsoft.com/en-us/windows/win32/debug/pe-format#type-indicators
+    pub fn rvaRelocationTypeIndicator(target: std.coff.MachineType) ?u16 {
+        return switch (target) {
+            .X64 => 0x3, // IMAGE_REL_AMD64_ADDR32NB
+            .I386 => 0x7, // IMAGE_REL_I386_DIR32NB
+            .ARMNT => 0x2, // IMAGE_REL_ARM_ADDR32NB
+            .ARM64, .ARM64EC, .ARM64X => 0x2, // IMAGE_REL_ARM64_ADDR32NB
+            .IA64 => 0x10, // IMAGE_REL_IA64_DIR32NB
+            .EBC => 0x1, // This is what cvtres.exe writes for this target, unsure where it comes from
+            else => null,
+        };
+    }
+
+    pub fn isSupported(target: std.coff.MachineType) bool {
+        return rvaRelocationTypeIndicator(target) != null;
+    }
+
+    comptime {
+        // Enforce two things:
+        // 1. Arch enum field names are all lowercase (necessary for how fromStringIgnoreCase is implemented)
+        // 2. All enum fields in Arch have an associated RVA relocation type when converted to a coff.MachineType
+        for (@typeInfo(Arch).@"enum".fields) |enum_field| {
+            const all_lower = all_lower: for (enum_field.name) |c| {
+                if (std.ascii.isUpper(c)) break :all_lower false;
+            } else break :all_lower true;
+            if (!all_lower) @compileError(std.fmt.comptimePrint("Arch field is not all lowercase: {s}", .{enum_field.name}));
+            const coff_machine = @field(Arch, enum_field.name).toCoffMachineType();
+            _ = rvaRelocationTypeIndicator(coff_machine) orelse {
+                @compileError(std.fmt.comptimePrint("No RVA relocation for Arch: {s}", .{enum_field.name}));
+            };
+        }
     }
 };
 

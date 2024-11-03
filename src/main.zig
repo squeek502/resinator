@@ -13,6 +13,7 @@ const auto_includes = @import("auto_includes.zig");
 const hasDisjointCodePage = @import("disjoint_code_page.zig").hasDisjointCodePage;
 const cvtres = @import("cvtres.zig");
 const aro = @import("aro");
+const subcommands = @import("subcommands.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{ .stack_trace_frames = 8 }){};
@@ -35,6 +36,11 @@ pub fn main() !void {
         const all_args = try std.process.argsAlloc(allocator);
         defer std.process.argsFree(allocator, all_args);
         const args = all_args[1..]; // skip past the executable name
+
+        if (args.len > 0 and std.mem.eql(u8, args[0], "targets")) {
+            try subcommands.targets.run();
+            return;
+        }
 
         var cli_diagnostics = cli.Diagnostics.init(allocator);
         defer cli_diagnostics.deinit();
@@ -347,8 +353,7 @@ pub fn main() !void {
     var coff_output_buffered_stream = std.io.bufferedWriter(coff_output_file.writer());
 
     cvtres.writeCoff(allocator, coff_output_buffered_stream.writer(), resources, .{
-        // TODO: Make this configurable
-        .target = .X64,
+        .target = options.target,
     }) catch |err| {
         // TODO: Better errors
         try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to write coff output file '{s}': {s}", .{ coff_output_filename, @errorName(err) });

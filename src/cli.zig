@@ -5,12 +5,17 @@ const lang = @import("lang.zig");
 const res = @import("res.zig");
 const Allocator = std.mem.Allocator;
 const lex = @import("lex.zig");
+const cvtres = @import("cvtres.zig");
 
 /// This is what /SL 100 will set the maximum string literal length to
 pub const max_string_literal_length_100_percent = 8192;
 
-pub const usage_string_after_command_name =
+pub const usage_string1_after_command_name =
     \\ [options] [--] <INPUT> [<OUTPUT>]
+    \\
+;
+pub const usage_string2_after_command_name =
+    \\ <subcommand> [options]
     \\
     \\The sequence -- can be used to signify when to stop parsing options.
     \\This is necessary when the input path begins with a forward slash.
@@ -67,15 +72,29 @@ pub const usage_string_after_command_name =
     \\    res                     (default if output format cannot be inferred)
     \\    coff                    COFF object file (extension: .obj or .o)
     \\    rcpp                    Preprocessed .rc file, implies /p
+    \\  /:target <arch>           Set the target machine for COFF object files.
+    \\                            Can be specified either as PE/COFF machine constant
+    \\                            name (X64, ARM64, etc) or Zig/LLVM CPU name (x86_64,
+    \\                            aarch64, etc). The default is X64 (aka x86_64).
+    \\                            Also accepts a full Zig/LLVM triple, but everything
+    \\                            except the architecture is ignored.
+    \\                            Use the targets subcommand to see the list of all
+    \\                            supported target architectures.
     \\
     \\Note: For compatibility reasons, all custom options start with :
+    \\
+    \\Subcommands:
+    \\  targets            Output a list of all supported /:target values.
     \\
 ;
 
 pub fn writeUsage(writer: anytype, command_name: []const u8) !void {
     try writer.writeAll("Usage: ");
     try writer.writeAll(command_name);
-    try writer.writeAll(usage_string_after_command_name);
+    try writer.writeAll(usage_string1_after_command_name);
+    try writer.writeAll("       ");
+    try writer.writeAll(command_name);
+    try writer.writeAll(usage_string2_after_command_name);
 }
 
 pub const Diagnostics = struct {
@@ -159,6 +178,7 @@ pub const Options = struct {
     depfile_fmt: DepfileFormat = .json,
     input_format: InputFormat = .rc,
     output_format: OutputFormat = .res,
+    target: std.coff.MachineType = .X64,
 
     pub const AutoIncludes = enum { any, msvc, gnu, none };
     pub const DepfileFormat = enum { json };
@@ -273,6 +293,9 @@ pub const Options = struct {
     pub fn dumpVerbose(self: *const Options, writer: anytype) !void {
         try writer.print("Input filename: {s} (format={s})\n", .{ self.input_filename, @tagName(self.input_format) });
         try writer.print("Output filename: {s} (format={s})\n", .{ self.output_filename, @tagName(self.output_format) });
+        if (self.output_format == .coff) {
+            try writer.print(" Target machine type for COFF: {s}\n", .{@tagName(self.target)});
+        }
         if (self.extra_include_paths.items.len > 0) {
             try writer.writeAll(" Extra include paths:\n");
             for (self.extra_include_paths.items) |extra_include_path| {
@@ -565,6 +588,30 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                 errdefer allocator.free(path);
                 options.depfile_path = path;
                 depfile_context = .{ .index = arg_i, .option_len = ":depfile".len, .arg = arg, .value = value };
+                arg_i += value.index_increment;
+                continue :next_arg;
+            } else if (std.ascii.startsWithIgnoreCase(arg_name, ":target")) {
+                const value = arg.value(":target".len, arg_i, args) catch {
+                    var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = arg.missingSpan() };
+                    var msg_writer = err_details.msg.writer(allocator);
+                    try msg_writer.print("missing value after {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(":target".len) });
+                    try diagnostics.append(err_details);
+                    arg_i += 1;
+                    break :next_arg;
+                };
+                // Take the substring up to the first dash so that a full target triple
+                // can be used, e.g. x86_64-windows-gnu becomes x86_64
+                var target_it = std.mem.splitScalar(u8, value.slice, '-');
+                const arch_str = target_it.first();
+                const arch = cvtres.supported_targets.Arch.fromStringIgnoreCase(arch_str) orelse {
+                    var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = value.argSpan(arg) };
+                    var msg_writer = err_details.msg.writer(allocator);
+                    try msg_writer.print("invalid or unsupported target architecture: {s} ", .{arch_str});
+                    try diagnostics.append(err_details);
+                    arg_i += value.index_increment;
+                    continue :next_arg;
+                };
+                options.target = arch.toCoffMachineType();
                 arg_i += value.index_increment;
                 continue :next_arg;
             } else if (std.ascii.startsWithIgnoreCase(arg_name, "nologo")) {
