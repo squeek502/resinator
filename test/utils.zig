@@ -269,6 +269,7 @@ pub const GetCvtResResultOptions = struct {
     output_path: ?[]const u8 = null,
     target: std.coff.MachineType = .X64,
     read_only: bool = false,
+    define_external_symbol: ?[]const u8 = null,
 };
 
 pub const ResinatorCvtResResult = struct {
@@ -298,6 +299,7 @@ pub fn getResinatorCvtResResult(allocator: Allocator, res_source: []const u8, op
     resinator.cvtres.writeCoff(allocator, buf.writer(), resources, .{
         .target = options.target,
         .read_only = options.read_only,
+        .define_external_symbol = options.define_external_symbol,
     }) catch |err| {
         buf.deinit();
         return .{
@@ -354,6 +356,16 @@ pub fn getWin32CvtResResultFromFile(allocator: Allocator, input_path: []const u8
     if (options.read_only) {
         try argv.append("/READONLY");
     }
+    const define_arg: ?[]const u8 = define_arg: {
+        if (options.define_external_symbol) |symbol_name| {
+            const define_arg = try std.fmt.allocPrint(allocator, "/DEFINE:{s}", .{symbol_name});
+            errdefer allocator.free(define_arg);
+            try argv.append(define_arg);
+            break :define_arg define_arg;
+        }
+        break :define_arg null;
+    };
+    defer if (define_arg) |v| allocator.free(v);
 
     try argv.append(input_path);
 

@@ -162,6 +162,8 @@ pub const CoffOptions = struct {
     reproducible: bool = true,
     /// If true, the MEM_WRITE flag will not be set in the .rsrc section header
     read_only: bool = false,
+    /// If non-null, a symbol with this name and storage class EXTERNAL will be added to the symbol table.
+    define_external_symbol: ?[]const u8 = null,
 };
 
 pub fn writeCoff(allocator: Allocator, writer: anytype, resources: []const Resource, options: CoffOptions) !void {
@@ -186,12 +188,13 @@ pub fn writeCoff(allocator: Allocator, writer: anytype, resources: []const Resou
     const flags = std.coff.CoffHeaderFlags{
         .@"32BIT_MACHINE" = 1,
     };
+    const number_of_symbols = 5 + @as(u32, @intCast(resources.len)) + @intFromBool(options.define_external_symbol != null);
     const coff_header = std.coff.CoffHeader{
         .machine = machine_type,
         .number_of_sections = 2,
         .time_date_stamp = @as(u32, @truncate(@as(u64, @bitCast(timestamp)))),
         .pointer_to_symbol_table = pointer_to_symbol_table,
-        .number_of_symbols = 5 + @as(u32, @intCast(resources.len)),
+        .number_of_symbols = number_of_symbols,
         .size_of_optional_header = size_of_optional_header,
         .flags = flags,
     };
@@ -304,8 +307,42 @@ pub fn writeCoff(allocator: Allocator, writer: anytype, resources: []const Resou
         try writeSymbol(writer, resource_symbol);
     }
 
-    const string_table_byte_count = 4;
+    var string_table: std.ArrayListUnmanaged(u8) = .empty;
+    defer string_table.deinit(allocator);
+
+    if (options.define_external_symbol) |external_symbol_name| {
+        const name_bytes: [8]u8 = name_bytes: {
+            if (external_symbol_name.len > 8) {
+                // 4 due to the initial string table byte length field
+                const string_table_offset: u32 = @intCast(4 + string_table.items.len);
+                try string_table.appendSlice(allocator, external_symbol_name);
+                try string_table.append(allocator, 0);
+                var bytes = [_]u8{0} ** 8;
+                std.mem.writeInt(u32, bytes[4..8], string_table_offset, .little);
+                break :name_bytes bytes;
+            } else {
+                var symbol_shortname = [_]u8{0} ** 8;
+                @memcpy(symbol_shortname[0..external_symbol_name.len], external_symbol_name);
+                break :name_bytes symbol_shortname;
+            }
+        };
+
+        try writeSymbol(writer, .{
+            .name = name_bytes,
+            .value = 0,
+            .section_number = .ABSOLUTE,
+            .type = .{
+                .base_type = .NULL,
+                .complex_type = .NULL,
+            },
+            .storage_class = .EXTERNAL,
+            .number_of_aux_symbols = 0,
+        });
+    }
+
+    const string_table_byte_count: u32 = @intCast(4 + string_table.items.len);
     try writer.writeInt(u32, string_table_byte_count, .little);
+    try writer.writeAll(string_table.items);
 }
 
 fn writeSymbol(writer: anytype, symbol: std.coff.Symbol) !void {

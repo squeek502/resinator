@@ -76,11 +76,19 @@ test "cvtres fuzz" {
             else => unreachable,
         };
 
+        const random_symbol_define: ?[]const u8 = switch (rand.uintLessThan(u8, 3)) {
+            0 => null,
+            1 => "short", // fits within 8 bytes
+            2 => "longerthan8", // needs to go in the string table
+            else => unreachable,
+        };
+
         try utils.expectSameCvtResOutput(allocator, res_buffer.items, .{
             .cwd = tmp.dir,
             .cwd_path = tmp_path,
             .target = random_target,
             .read_only = rand.boolean(),
+            .define_external_symbol = random_symbol_define,
         });
     }
 }
