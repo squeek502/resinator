@@ -240,11 +240,14 @@ pub fn writeCoff(allocator: Allocator, writer: anytype, resources: []const Resou
     // TODO: test surrogate pairs
     try resource_tree.sort();
 
+    var string_table = StringTable{};
+    defer string_table.deinit(allocator);
     const resource_symbols = try resource_tree.writeCoff(
         allocator,
         writer,
         resources,
         lengths,
+        &string_table,
         options,
     );
     defer allocator.free(resource_symbols);
@@ -307,16 +310,10 @@ pub fn writeCoff(allocator: Allocator, writer: anytype, resources: []const Resou
         try writeSymbol(writer, resource_symbol);
     }
 
-    var string_table: std.ArrayListUnmanaged(u8) = .empty;
-    defer string_table.deinit(allocator);
-
     if (options.define_external_symbol) |external_symbol_name| {
         const name_bytes: [8]u8 = name_bytes: {
             if (external_symbol_name.len > 8) {
-                // 4 due to the initial string table byte length field
-                const string_table_offset: u32 = @intCast(4 + string_table.items.len);
-                try string_table.appendSlice(allocator, external_symbol_name);
-                try string_table.append(allocator, 0);
+                const string_table_offset: u32 = try string_table.put(allocator, external_symbol_name);
                 var bytes = [_]u8{0} ** 8;
                 std.mem.writeInt(u32, bytes[4..8], string_table_offset, .little);
                 break :name_bytes bytes;
@@ -340,9 +337,8 @@ pub fn writeCoff(allocator: Allocator, writer: anytype, resources: []const Resou
         });
     }
 
-    const string_table_byte_count: u32 = @intCast(4 + string_table.items.len);
-    try writer.writeInt(u32, string_table_byte_count, .little);
-    try writer.writeAll(string_table.items);
+    try writer.writeInt(u32, string_table.totalByteLength(), .little);
+    try writer.writeAll(string_table.bytes.items);
 }
 
 fn writeSymbol(writer: anytype, symbol: std.coff.Symbol) !void {
@@ -405,7 +401,7 @@ pub const ResourceDataEntry = extern struct {
 /// type -> name -> language
 const ResourceTree = struct {
     type_to_name_map: std.ArrayHashMapUnmanaged(NameOrOrdinal, NameToLanguageMap, NameOrOrdinalHashContext, true),
-    string_table: std.ArrayHashMapUnmanaged(NameOrOrdinal, void, NameOrOrdinalHashContext, true),
+    rsrc_string_table: std.ArrayHashMapUnmanaged(NameOrOrdinal, void, NameOrOrdinalHashContext, true),
     allocator: Allocator,
 
     const RelocatableResource = struct {
@@ -448,7 +444,7 @@ const ResourceTree = struct {
     pub fn init(allocator: Allocator) ResourceTree {
         return .{
             .type_to_name_map = .empty,
-            .string_table = .empty,
+            .rsrc_string_table = .empty,
             .allocator = allocator,
         };
     }
@@ -461,7 +457,7 @@ const ResourceTree = struct {
             name_to_lang_map.deinit(self.allocator);
         }
         self.type_to_name_map.deinit(self.allocator);
-        self.string_table.deinit(self.allocator);
+        self.rsrc_string_table.deinit(self.allocator);
     }
 
     pub fn put(self: *ResourceTree, resource: *const Resource, original_index: usize) !void {
@@ -488,11 +484,11 @@ const ResourceTree = struct {
             };
         }
 
-        if (resource.type_value == .name and !self.string_table.contains(resource.type_value)) {
-            try self.string_table.putNoClobber(self.allocator, resource.type_value, {});
+        if (resource.type_value == .name and !self.rsrc_string_table.contains(resource.type_value)) {
+            try self.rsrc_string_table.putNoClobber(self.allocator, resource.type_value, {});
         }
-        if (resource.name_value == .name and !self.string_table.contains(resource.name_value)) {
-            try self.string_table.putNoClobber(self.allocator, resource.name_value, {});
+        if (resource.name_value == .name and !self.rsrc_string_table.contains(resource.name_value)) {
+            try self.rsrc_string_table.putNoClobber(self.allocator, resource.name_value, {});
         }
     }
 
@@ -537,7 +533,7 @@ const ResourceTree = struct {
                 }
             }
         }
-        for (self.string_table.keys()) |v| {
+        for (self.rsrc_string_table.keys()) |v| {
             lengths.strings += @sizeOf(u16); // string length
             lengths.strings += @intCast(v.name.len * @sizeOf(u16));
         }
@@ -593,7 +589,15 @@ const ResourceTree = struct {
         }
     }
 
-    pub fn writeCoff(self: *const ResourceTree, allocator: Allocator, writer: anytype, resources_in_data_order: []const Resource, lengths: Lengths, options: CoffOptions) ![]const std.coff.Symbol {
+    pub fn writeCoff(
+        self: *const ResourceTree,
+        allocator: Allocator,
+        writer: anytype,
+        resources_in_data_order: []const Resource,
+        lengths: Lengths,
+        coff_string_table: *StringTable,
+        options: CoffOptions,
+    ) ![]const std.coff.Symbol {
         if (self.type_to_name_map.count() == 0) {
             try writer.writeByteNTimes(0, 16);
             return &.{};
@@ -614,12 +618,12 @@ const ResourceTree = struct {
         var relocations = Relocations.init(allocator);
         defer relocations.deinit();
 
-        var string_offsets = try allocator.alloc(u31, self.string_table.count());
+        var string_offsets = try allocator.alloc(u31, self.rsrc_string_table.count());
         const strings_start = lengths.stringsStart();
         defer allocator.free(string_offsets);
         {
             var string_address: u31 = @intCast(strings_start);
-            for (self.string_table.keys(), 0..) |v, i| {
+            for (self.rsrc_string_table.keys(), 0..) |v, i| {
                 string_offsets[i] = string_address;
                 string_address += @sizeOf(u16) + @as(u31, @intCast(v.name.len * @sizeOf(u16)));
             }
@@ -644,7 +648,7 @@ const ResourceTree = struct {
                 const type_value = entry.key_ptr;
                 const dir_entry = ResourceDirectoryEntry{
                     .entry = switch (type_value.*) {
-                        .name => .{ .name_offset = .{ .address = string_offsets[self.string_table.getIndex(type_value.*).?] } },
+                        .name => .{ .name_offset = .{ .address = string_offsets[self.rsrc_string_table.getIndex(type_value.*).?] } },
                         .ordinal => .{ .integer_id = type_value.ordinal },
                     },
                     .offset = .{
@@ -680,7 +684,7 @@ const ResourceTree = struct {
                 const name_value = entry.key_ptr;
                 const dir_entry = ResourceDirectoryEntry{
                     .entry = switch (name_value.*) {
-                        .name => .{ .name_offset = .{ .address = string_offsets[self.string_table.getIndex(name_value.*).?] } },
+                        .name => .{ .name_offset = .{ .address = string_offsets[self.rsrc_string_table.getIndex(name_value.*).?] } },
                         .ordinal => .{ .integer_id = name_value.ordinal },
                     },
                     .offset = .{
@@ -753,7 +757,7 @@ const ResourceTree = struct {
         }
         std.debug.assert(counting_writer.bytes_written == strings_start);
 
-        for (self.string_table.keys()) |v| {
+        for (self.rsrc_string_table.keys()) |v| {
             const str = v.name;
             try w.writeInt(u16, @intCast(str.len), .little);
             try w.writeAll(std.mem.sliceAsBytes(str));
@@ -779,17 +783,30 @@ const ResourceTree = struct {
         errdefer allocator.free(symbols);
 
         for (relocations.list.items, 0..) |relocation, i| {
-            var name_buf: [8]u8 = undefined;
-            // TODO: This is what cvtres.exe does, but it's a bad solution, since
-            //       e.g. an initial resource with exactly 16 MiB of data and the
-            //       resource following it would both have the symbol name $R000000.
+            // cvtres.exe writes the symbol names as $R<data offset as hexadecimal>.
             //
-            //       Instead, resinator should either adopt llvm-cvtres' behavior
-            //       of $R000001, $R000002, etc and/or write the symbol names to the
-            //       string table if they would overflow 8 characters.
-            const truncated_data_offset: u24 = @truncate(relocation.data_offset);
-            const name_slice = try std.fmt.bufPrint(&name_buf, "$R{X:0>6}", .{truncated_data_offset});
-            std.debug.assert(name_slice.len == 8);
+            // When the data offset would exceed 6 hex digits in cvtres.exe, it
+            // truncates the value down to 6 hex digits. This is bad behavior, since
+            // e.g. an initial resource with exactly 16 MiB of data and the
+            // resource following it would both have the symbol name $R000000.
+            //
+            // Instead, if the offset would exceed 6 hexadecimal digits,
+            // we put the longer name in the string table.
+            //
+            // Another option would be to adopt llvm-cvtres' behavior
+            // of $R000001, $R000002, etc. rather than using data offset values.
+            var name_buf: [8]u8 = undefined;
+            if (relocation.data_offset > std.math.maxInt(u24)) {
+                const name_slice = try std.fmt.allocPrint(allocator, "$R{X}", .{relocation.data_offset});
+                defer allocator.free(name_slice);
+                const string_table_offset: u32 = try coff_string_table.put(allocator, name_slice);
+                std.mem.writeInt(u32, name_buf[0..4], 0, .little);
+                std.mem.writeInt(u32, name_buf[4..8], string_table_offset, .little);
+            } else {
+                const name_slice = std.fmt.bufPrint(&name_buf, "$R{X:0>6}", .{relocation.data_offset}) catch unreachable;
+                std.debug.assert(name_slice.len == 8);
+            }
+
             symbols[i] = .{
                 .name = name_buf,
                 .value = relocation.data_offset,
@@ -858,6 +875,34 @@ const Relocations = struct {
         });
         self.cur_symbol_index += 1;
         self.cur_data_offset += std.mem.alignForward(u32, @intCast(resource.data.len), 8);
+    }
+};
+
+/// Does not do deduplication (only because there's no chance of duplicate strings in this
+/// instance).
+const StringTable = struct {
+    bytes: std.ArrayListUnmanaged(u8) = .empty,
+
+    pub fn deinit(self: *StringTable, allocator: Allocator) void {
+        self.bytes.deinit(allocator);
+    }
+
+    /// Returns the byte offset of the string in the string table
+    pub fn put(self: *StringTable, allocator: Allocator, string: []const u8) !u32 {
+        const null_terminated_len = string.len + 1;
+        const start_offset = self.totalByteLength();
+        if (start_offset + null_terminated_len > std.math.maxInt(u32)) {
+            return error.StringTableOverflow;
+        }
+        try self.bytes.ensureUnusedCapacity(allocator, null_terminated_len);
+        self.bytes.appendSliceAssumeCapacity(string);
+        self.bytes.appendAssumeCapacity(0);
+        return start_offset;
+    }
+
+    /// Returns the total byte count of the string table, including the byte count of the size field
+    pub fn totalByteLength(self: StringTable) u32 {
+        return @intCast(4 + self.bytes.items.len);
     }
 };
 
