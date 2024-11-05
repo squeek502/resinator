@@ -481,9 +481,9 @@ pub fn stripAndFixupCoff(allocator: Allocator, reader: anytype, writer: anytype,
                 try r.skipBytes(std.coff.Symbol.sizeOf(), .{ .buf_size = std.coff.Symbol.sizeOf() });
             }
         } else {
-            if (name[0] != '@') {
-                const section_num = std.mem.readInt(u16, symbol_bytes[12..14], .little);
-                std.mem.writeInt(u16, symbol_bytes[12..14], section_num - stripped_sections, .little);
+            const section_number: std.coff.SectionNumber = @enumFromInt(std.mem.readInt(u16, symbol_bytes[12..14], .little));
+            if (name[0] != '@' and section_number != .UNDEFINED and section_number != .ABSOLUTE and section_number != .DEBUG) {
+                std.mem.writeInt(u16, symbol_bytes[12..14], @intFromEnum(section_number) - stripped_sections, .little);
             }
             try writer.writeAll(&symbol_bytes);
             std.debug.assert(number_of_aux_symbols <= 1);
