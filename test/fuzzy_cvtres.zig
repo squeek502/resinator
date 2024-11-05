@@ -15,6 +15,9 @@ test "cvtres fuzz" {
     const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
     defer allocator.free(tmp_path);
 
+    var data_buffer = std.ArrayList(u8).init(allocator);
+    defer data_buffer.deinit();
+
     var res_buffer = std.ArrayList(u8).init(allocator);
     defer res_buffer.deinit();
 
@@ -31,9 +34,15 @@ test "cvtres fuzz" {
         defer common_type.deinit(allocator);
         const common_lang: resinator.res.Language = @bitCast(rand.int(u16));
 
+        data_buffer.clearRetainingCapacity();
+        const data_size = rand.uintAtMostBiased(u32, 150);
+        try data_buffer.resize(data_size);
+        rand.bytes(data_buffer.items);
+        const common_data = data_buffer.items;
+
         const num_resources = rand.intRangeAtMost(usize, 1, 16);
-        for (0..num_resources) |_| {
-            const options: utils.RandomResourceOptions = switch (rand.uintAtMost(u8, 4)) {
+        for (0..num_resources) |resource_i| {
+            var options: utils.RandomResourceOptions = switch (rand.uintAtMost(u8, 4)) {
                 0 => .{ .set_name = common_name },
                 1 => .{ .set_type = common_type },
                 2 => .{ .set_language = common_lang },
@@ -41,6 +50,14 @@ test "cvtres fuzz" {
                 4 => .{},
                 else => unreachable,
             };
+            // Randomly set data to be a duplicate, but don't make the first resource have
+            // the duplicate data to avoid what seems like a miscompilation when /FOLDDUPS is set.
+            // If the first resource has the same data as another resource, the first
+            // data is written but is unreferenced, and then the same data is written again
+            // and that second data location is actually used for all duplicates of that data.
+            if (resource_i > 0 and rand.float(f32) < 0.20) {
+                options.set_data = common_data;
+            }
             try utils.writeRandomValidResource(allocator, rand, res_buffer.writer(), options);
         }
 

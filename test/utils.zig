@@ -297,6 +297,7 @@ pub fn getResinatorCvtResResult(allocator: Allocator, res_source: []const u8, op
     resinator.cvtres.writeCoff(allocator, buf.writer(), resources, .{
         .target = options.target,
     }) catch |err| {
+        buf.deinit();
         return .{
             .coff_err = err,
         };
@@ -816,10 +817,11 @@ pub const RandomResourceOptions = struct {
     set_name: ?resinator.res.NameOrOrdinal = null,
     set_type: ?resinator.res.NameOrOrdinal = null,
     set_language: ?resinator.res.Language = null,
+    set_data: ?[]const u8 = null,
 };
 
 pub fn writeRandomValidResource(allocator: Allocator, rand: std.Random, writer: anytype, options: RandomResourceOptions) !void {
-    const data_size = rand.uintAtMostBiased(u32, 150);
+    const data_size: u32 = if (options.set_data) |data| @intCast(data.len) else rand.uintAtMostBiased(u32, 150);
     const name_value = options.set_name orelse try getRandomNameOrOrdinal(allocator, rand, 32);
     defer if (options.set_name == null) name_value.deinit(allocator);
     const type_value = options.set_type orelse try getRandomNameOrOrdinal(allocator, rand, 32);
@@ -839,11 +841,15 @@ pub fn writeRandomValidResource(allocator: Allocator, rand: std.Random, writer: 
     const size_info = header.calcSize() catch unreachable;
     try header.writeSizeInfo(writer, size_info);
 
-    const data = try allocator.alloc(u8, data_size);
-    defer allocator.free(data);
+    if (options.set_data) |data| {
+        try writer.writeAll(data);
+    } else {
+        const data = try allocator.alloc(u8, data_size);
+        defer allocator.free(data);
 
-    rand.bytes(data);
-    try writer.writeAll(data);
+        rand.bytes(data);
+        try writer.writeAll(data);
+    }
     const num_padding_bytes = resinator.compile.Compiler.numPaddingBytesNeeded(data_size);
     try writer.writeByteNTimes(0, num_padding_bytes);
 }
