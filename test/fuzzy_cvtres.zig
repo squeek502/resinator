@@ -6,7 +6,7 @@ const resinator = @import("resinator");
 
 test "cvtres fuzz" {
     const allocator = std.testing.allocator;
-    var random = std.Random.DefaultPrng.init(0);
+    var random = std.Random.DefaultPrng.init(std.testing.random_seed);
     var rand = random.random();
 
     var tmp = std.testing.tmpDir(.{});
