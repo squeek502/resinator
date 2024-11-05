@@ -80,6 +80,7 @@ test "cvtres fuzz" {
             .cwd = tmp.dir,
             .cwd_path = tmp_path,
             .target = random_target,
+            .read_only = rand.boolean(),
         });
     }
 }

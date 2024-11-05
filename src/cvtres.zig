@@ -160,6 +160,8 @@ pub const CoffOptions = struct {
     target: std.coff.MachineType = .X64,
     /// If true, zeroes will be written to all timestamp fields
     reproducible: bool = true,
+    /// If true, the MEM_WRITE flag will not be set in the .rsrc section header
+    read_only: bool = false,
 };
 
 pub fn writeCoff(allocator: Allocator, writer: anytype, resources: []const Resource, options: CoffOptions) !void {
@@ -208,7 +210,7 @@ pub fn writeCoff(allocator: Allocator, writer: anytype, resources: []const Resou
         .number_of_linenumbers = 0,
         .flags = .{
             .CNT_INITIALIZED_DATA = 1,
-            .MEM_WRITE = 1,
+            .MEM_WRITE = @intFromBool(!options.read_only),
             .MEM_READ = 1,
         },
     };
@@ -226,7 +228,7 @@ pub fn writeCoff(allocator: Allocator, writer: anytype, resources: []const Resou
         .number_of_linenumbers = 0,
         .flags = .{
             .CNT_INITIALIZED_DATA = 1,
-            .MEM_WRITE = 1,
+            .MEM_WRITE = @intFromBool(!options.read_only),
             .MEM_READ = 1,
         },
     };

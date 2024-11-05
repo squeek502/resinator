@@ -268,6 +268,7 @@ pub const GetCvtResResultOptions = struct {
     /// Only used in the Win32 version
     output_path: ?[]const u8 = null,
     target: std.coff.MachineType = .X64,
+    read_only: bool = false,
 };
 
 pub const ResinatorCvtResResult = struct {
@@ -296,6 +297,7 @@ pub fn getResinatorCvtResResult(allocator: Allocator, res_source: []const u8, op
 
     resinator.cvtres.writeCoff(allocator, buf.writer(), resources, .{
         .target = options.target,
+        .read_only = options.read_only,
     }) catch |err| {
         buf.deinit();
         return .{
@@ -329,9 +331,12 @@ pub fn getWin32CvtResResult(allocator: Allocator, res_source: []const u8, option
 }
 
 pub fn getWin32CvtResResultFromFile(allocator: Allocator, input_path: []const u8, options: GetCvtResResultOptions) !Win32CvtResResult {
-    const output_path = options.output_path orelse "test_win32.obj";
-    const out_arg = try std.fmt.allocPrint(allocator, "/OUT:{s}", .{output_path});
-    defer allocator.free(out_arg);
+    var argv = try std.ArrayList([]const u8).initCapacity(allocator, 4);
+    defer argv.deinit();
+
+    // Note: This relies on `cvtres.exe` being in the PATH
+    argv.appendAssumeCapacity("cvtres.exe");
+
     const target_name = switch (options.target) {
         .I386 => "X86",
         .ARMNT => "ARM",
@@ -339,15 +344,22 @@ pub fn getWin32CvtResResultFromFile(allocator: Allocator, input_path: []const u8
     };
     const machine_arg = try std.fmt.allocPrint(allocator, "/MACHINE:{s}", .{target_name});
     defer allocator.free(machine_arg);
+    argv.appendAssumeCapacity(machine_arg);
+
+    const output_path = options.output_path orelse "test_win32.obj";
+    const out_arg = try std.fmt.allocPrint(allocator, "/OUT:{s}", .{output_path});
+    defer allocator.free(out_arg);
+    argv.appendAssumeCapacity(out_arg);
+
+    if (options.read_only) {
+        try argv.append("/READONLY");
+    }
+
+    try argv.append(input_path);
+
     const exec_result = try std.process.Child.run(.{
         .allocator = allocator,
-        .argv = &[_][]const u8{
-            // Note: This relies on `cvtres.exe` being in the PATH
-            "cvtres.exe",
-            machine_arg,
-            out_arg,
-            input_path,
-        },
+        .argv = argv.items,
         .cwd = options.cwd_path,
     });
     errdefer allocator.free(exec_result.stdout);
