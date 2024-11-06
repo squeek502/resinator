@@ -9,6 +9,7 @@ const parse = @import("parse.zig");
 const lex = @import("lex.zig");
 const preprocess = @import("preprocess.zig");
 const renderErrorMessage = @import("utils.zig").renderErrorMessage;
+const openFileNotDir = @import("utils.zig").openFileNotDir;
 const auto_includes = @import("auto_includes.zig");
 const hasDisjointCodePage = @import("disjoint_code_page.zig").hasDisjointCodePage;
 const cvtres = @import("cvtres.zig");
@@ -370,6 +371,26 @@ pub fn main() !void {
         };
     };
     defer resources.deinit();
+
+    for (options.additional_inputs.items) |additional_res| {
+        const additional_file = openFileNotDir(std.fs.cwd(), additional_res, .{}) catch |err| {
+            try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to read res file path '{s}': {s}", .{ additional_res, @errorName(err) });
+            std.process.exit(1);
+        };
+        defer additional_file.close();
+
+        const file_len = additional_file.getEndPos() catch |err| {
+            try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to determine size of res file '{s}': {s}", .{ additional_res, @errorName(err) });
+            std.process.exit(1);
+        };
+
+        var buffered_reader = std.io.bufferedReader(additional_file.reader());
+        cvtres.parseResInto(&resources, buffered_reader.reader(), .{ .max_size = file_len }) catch |err| {
+            // TODO: Better errors
+            try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to parse res file '{s}': {s}", .{ additional_res, @errorName(err) });
+            std.process.exit(1);
+        };
+    }
 
     const coff_output_filename = options.output_filename;
     var coff_output_file = std.fs.cwd().createFile(coff_output_filename, .{}) catch |err| {
