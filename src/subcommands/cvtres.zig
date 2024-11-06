@@ -102,6 +102,8 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
                     var msg_writer = err_details.msg.writer(allocator);
                     try msg_writer.print("missing value for {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(name_len) });
                     try diagnostics.append(err_details);
+                    arg_i += 1;
+                    continue :next_arg;
                 }
                 const machine = machine_options.get(value) orelse {
                     var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = .{
@@ -130,6 +132,8 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
                     var msg_writer = err_details.msg.writer(allocator);
                     try msg_writer.print("missing value for {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(name_len) });
                     try diagnostics.append(err_details);
+                    arg_i += 1;
+                    continue :next_arg;
                 }
                 if (options.coff_options.define_external_symbol) |overwritten_value| {
                     allocator.free(overwritten_value);
@@ -150,6 +154,8 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
                     var msg_writer = err_details.msg.writer(allocator);
                     try msg_writer.print("missing value for {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(name_len) });
                     try diagnostics.append(err_details);
+                    arg_i += 1;
+                    continue :next_arg;
                 }
                 output_filename = value;
                 arg_i += 1;
@@ -212,6 +218,10 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
         options.output_filename = try cli.filepathWithExtension(allocator, options.input_filename, options.output_format.extension());
     } else {
         options.output_filename = try allocator.dupe(u8, output_filename.?);
+    }
+
+    if (diagnostics.hasError()) {
+        return error.ParseError;
     }
 
     return options;
