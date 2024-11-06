@@ -85,6 +85,9 @@ pub const usage_string2_after_command_name =
     \\
     \\Subcommands:
     \\  targets            Output a list of all supported /:target values.
+    \\  cvtres             A .res to .obj (COFF object file) converter that
+    \\                     has drop-in CLI compatibility with cvtres.exe.
+    \\                     Use the /? option with this subcommand to see the usage.
     \\
 ;
 
@@ -178,8 +181,12 @@ pub const Options = struct {
     depfile_fmt: DepfileFormat = .json,
     input_format: InputFormat = .rc,
     output_format: OutputFormat = .res,
-    target: std.coff.MachineType = .X64,
+    coff_options: cvtres.CoffOptions = .{},
+    /// Currently only used by the cvtres subcommand
+    additional_inputs: std.ArrayListUnmanaged([]const u8) = .empty,
+    subcommand: Subcommand = .none,
 
+    pub const Subcommand = enum { none, targets, cvtres };
     pub const AutoIncludes = enum { any, msvc, gnu, none };
     pub const DepfileFormat = enum { json };
     pub const InputFormat = enum { rc, res, rcpp };
@@ -288,14 +295,25 @@ pub const Options = struct {
         if (self.depfile_path) |depfile_path| {
             self.allocator.free(depfile_path);
         }
+        for (self.additional_inputs.items) |additional_input| {
+            self.allocator.free(additional_input);
+        }
+        self.additional_inputs.deinit(self.allocator);
+        if (self.coff_options.define_external_symbol) |symbol_name| {
+            self.allocator.free(symbol_name);
+        }
     }
 
     pub fn dumpVerbose(self: *const Options, writer: anytype) !void {
         try writer.print("Input filename: {s} (format={s})\n", .{ self.input_filename, @tagName(self.input_format) });
         try writer.print("Output filename: {s} (format={s})\n", .{ self.output_filename, @tagName(self.output_format) });
         if (self.output_format == .coff) {
-            try writer.print(" Target machine type for COFF: {s}\n", .{@tagName(self.target)});
+            try writer.print(" Target machine type for COFF: {s}\n", .{@tagName(self.coff_options.target)});
         }
+
+        // The rest is irrelevant for the cvtres subcommand
+        if (self.subcommand == .cvtres) return;
+
         if (self.extra_include_paths.items.len > 0) {
             try writer.writeAll(" Extra include paths:\n");
             for (self.extra_include_paths.items) |extra_include_path| {
@@ -606,12 +624,12 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                 const arch = cvtres.supported_targets.Arch.fromStringIgnoreCase(arch_str) orelse {
                     var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = value.argSpan(arg) };
                     var msg_writer = err_details.msg.writer(allocator);
-                    try msg_writer.print("invalid or unsupported target architecture: {s} ", .{arch_str});
+                    try msg_writer.print("invalid or unsupported target architecture: {s}", .{arch_str});
                     try diagnostics.append(err_details);
                     arg_i += value.index_increment;
                     continue :next_arg;
                 };
-                options.target = arch.toCoffMachineType();
+                options.coff_options.target = arch.toCoffMachineType();
                 arg_i += value.index_increment;
                 continue :next_arg;
             } else if (std.ascii.startsWithIgnoreCase(arg_name, "nologo")) {
@@ -1014,7 +1032,7 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
             if (arg_i > 0 and last_arg.len > 0 and last_arg[0] == '/' and isSupportedInputExtension(std.fs.path.extension(last_arg))) {
                 var note_details = Diagnostics.ErrorDetails{ .type = .note, .print_args = true, .arg_index = arg_i - 1 };
                 var note_writer = note_details.msg.writer(allocator);
-                try note_writer.writeAll("if this argument was intended to be the input filename, then -- should be specified in front of it to exclude it from option parsing");
+                try note_writer.writeAll("if this argument was intended to be the input filename, adding -- in front of it will exclude it from option parsing");
                 try diagnostics.append(note_details);
             }
         }
@@ -1576,7 +1594,7 @@ test "parse errors: basic" {
         \\     ~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         \\<cli>: error: missing input filename
         \\
-        \\<cli>: note: if this argument was intended to be the input filename, then -- should be specified in front of it to exclude it from option parsing
+        \\<cli>: note: if this argument was intended to be the input filename, adding -- in front of it will exclude it from option parsing
         \\ ... /some/absolute/path/parsed/as/an/option.rc
         \\     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         \\
@@ -1587,7 +1605,7 @@ test "parse errors: basic" {
         \\     ~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         \\<cli>: error: missing input filename
         \\
-        \\<cli>: note: if this argument was intended to be the input filename, then -- should be specified in front of it to exclude it from option parsing
+        \\<cli>: note: if this argument was intended to be the input filename, adding -- in front of it will exclude it from option parsing
         \\ ... /some/absolute/path/parsed/as/an/option.res
         \\     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         \\
@@ -1598,7 +1616,7 @@ test "parse errors: basic" {
         \\     ~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         \\<cli>: error: missing input filename
         \\
-        \\<cli>: note: if this argument was intended to be the input filename, then -- should be specified in front of it to exclude it from option parsing
+        \\<cli>: note: if this argument was intended to be the input filename, adding -- in front of it will exclude it from option parsing
         \\ ... /some/absolute/path/parsed/as/an/option.rcpp
         \\     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         \\

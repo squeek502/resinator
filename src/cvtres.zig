@@ -164,6 +164,8 @@ pub const CoffOptions = struct {
     read_only: bool = false,
     /// If non-null, a symbol with this name and storage class EXTERNAL will be added to the symbol table.
     define_external_symbol: ?[]const u8 = null,
+    /// Re-use data offsets for resources with data that is identical.
+    fold_duplicate_data: bool = false,
 };
 
 pub fn writeCoff(allocator: Allocator, writer: anytype, resources: []const Resource, options: CoffOptions) !void {

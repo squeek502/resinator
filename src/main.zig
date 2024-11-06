@@ -40,6 +40,33 @@ pub fn main() !void {
         if (args.len > 0 and std.mem.eql(u8, args[0], "targets")) {
             try subcommands.targets.run();
             return;
+        } else if (args.len > 0 and std.mem.eql(u8, args[0], "cvtres")) {
+            const subcommand_args = args[1..];
+            var cli_diagnostics = cli.Diagnostics.init(allocator);
+            defer cli_diagnostics.deinit();
+            const options = subcommands.cvtres.parseCli(allocator, subcommand_args, &cli_diagnostics) catch |err| switch (err) {
+                error.ParseError => {
+                    cli_diagnostics.renderToStdErr(subcommand_args, stderr_config);
+                    std.process.exit(1);
+                },
+                else => |e| return e,
+            };
+
+            // print any warnings/notes
+            cli_diagnostics.renderToStdErr(subcommand_args, stderr_config);
+            // If there was something printed, then add an extra newline separator
+            // so that there is a clear separation between the cli diagnostics and whatever
+            // gets printed after
+            if (cli_diagnostics.errors.items.len > 0) {
+                std.debug.print("\n", .{});
+            }
+
+            if (options.print_help_and_exit) {
+                try subcommands.cvtres.writeUsage(stderr.writer(), "resinator cvtres");
+                return;
+            }
+
+            break :options options;
         }
 
         var cli_diagnostics = cli.Diagnostics.init(allocator);
@@ -173,6 +200,8 @@ pub fn main() !void {
     const need_intermediate_res = options.output_format == .coff and options.input_format != .res;
     const res_filename = if (need_intermediate_res)
         try cli.filepathWithExtension(allocator, options.input_filename, ".res")
+    else if (options.input_format == .res)
+        options.input_filename
     else
         options.output_filename;
     defer if (need_intermediate_res) allocator.free(res_filename);
@@ -352,9 +381,7 @@ pub fn main() !void {
 
     var coff_output_buffered_stream = std.io.bufferedWriter(coff_output_file.writer());
 
-    cvtres.writeCoff(allocator, coff_output_buffered_stream.writer(), resources, .{
-        .target = options.target,
-    }) catch |err| {
+    cvtres.writeCoff(allocator, coff_output_buffered_stream.writer(), resources, options.coff_options) catch |err| {
         // TODO: Better errors
         try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to write coff output file '{s}': {s}", .{ coff_output_filename, @errorName(err) });
         // Delete the output file on error
