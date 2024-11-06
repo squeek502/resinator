@@ -49,6 +49,7 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
     errdefer options.deinit();
 
     var output_filename: ?[]const u8 = null;
+    var target_specified: bool = false;
 
     var arg_i: usize = 0;
     next_arg: while (arg_i < args.len) {
@@ -117,6 +118,7 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
                     arg_i += 1;
                     continue :next_arg;
                 };
+                target_specified = true;
                 options.coff_options.target = machine;
                 arg_i += 1;
                 continue :next_arg;
@@ -222,6 +224,13 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
 
     if (diagnostics.hasError()) {
         return error.ParseError;
+    }
+
+    if (!target_specified) {
+        var warning_details = Diagnostics.ErrorDetails{ .type = .warning, .arg_index = 0, .print_args = false };
+        var warning_writer = warning_details.msg.writer(allocator);
+        try warning_writer.writeAll("machine type not specified, assuming /MACHINE:X64");
+        try diagnostics.append(warning_details);
     }
 
     return options;
