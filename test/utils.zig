@@ -286,17 +286,17 @@ pub const ResinatorCvtResResult = struct {
 
 pub fn getResinatorCvtResResult(allocator: Allocator, res_source: []const u8, options: GetCvtResResultOptions) !ResinatorCvtResResult {
     var fbs = std.io.fixedBufferStream(res_source);
-    const resources = resinator.cvtres.parseRes(allocator, fbs.reader(), .{ .max_size = res_source.len }) catch |err| {
+    var resources = resinator.cvtres.parseRes(allocator, fbs.reader(), .{ .max_size = res_source.len }) catch |err| {
         return .{
             .parse_err = err,
         };
     };
-    defer resinator.cvtres.freeResources(allocator, resources);
+    defer resources.deinit();
 
     var buf = try std.ArrayList(u8).initCapacity(allocator, 256);
     errdefer buf.deinit();
 
-    resinator.cvtres.writeCoff(allocator, buf.writer(), resources, .{
+    resinator.cvtres.writeCoff(allocator, buf.writer(), resources.list.items, .{
         .target = options.target,
         .read_only = options.read_only,
         .define_external_symbol = options.define_external_symbol,

@@ -357,7 +357,7 @@ pub fn main() !void {
 
     std.debug.assert(options.output_format == .coff);
 
-    const resources = resources: {
+    var resources = resources: {
         // No need to keep the res_data around after parsing the resources from it
         defer allocator.free(res_data);
 
@@ -369,7 +369,7 @@ pub fn main() !void {
             std.process.exit(1);
         };
     };
-    defer cvtres.freeResources(allocator, resources);
+    defer resources.deinit();
 
     const coff_output_filename = options.output_filename;
     var coff_output_file = std.fs.cwd().createFile(coff_output_filename, .{}) catch |err| {
@@ -381,7 +381,7 @@ pub fn main() !void {
 
     var coff_output_buffered_stream = std.io.bufferedWriter(coff_output_file.writer());
 
-    cvtres.writeCoff(allocator, coff_output_buffered_stream.writer(), resources, options.coff_options) catch |err| {
+    cvtres.writeCoff(allocator, coff_output_buffered_stream.writer(), resources.list.items, options.coff_options) catch |err| {
         // TODO: Better errors
         try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to write coff output file '{s}': {s}", .{ coff_output_filename, @errorName(err) });
         // Delete the output file on error

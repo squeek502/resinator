@@ -38,13 +38,39 @@ pub const Resource = struct {
     }
 };
 
+pub const ParsedResources = struct {
+    list: std.ArrayListUnmanaged(Resource) = .empty,
+    allocator: Allocator,
+
+    pub fn init(allocator: Allocator) ParsedResources {
+        return .{ .allocator = allocator };
+    }
+
+    pub fn deinit(self: *ParsedResources) void {
+        for (self.list.items) |*resource| {
+            resource.deinit(self.allocator);
+        }
+        self.list.deinit(self.allocator);
+    }
+};
+
 pub const ParseResOptions = struct {
     skip_zero_data_resources: bool = true,
     max_size: u64,
 };
 
-/// The returned slice should be freed by calling `freeResources`.
-pub fn parseRes(allocator: Allocator, reader: anytype, options: ParseResOptions) ![]Resource {
+/// The returned ParsedResources should be freed by calling its `deinit` function.
+pub fn parseRes(allocator: Allocator, reader: anytype, options: ParseResOptions) !ParsedResources {
+    var resources = ParsedResources.init(allocator);
+    errdefer resources.deinit();
+
+    try parseResInto(&resources, reader, options);
+
+    return resources;
+}
+
+pub fn parseResInto(resources: *ParsedResources, reader: anytype, options: ParseResOptions) !void {
+    const allocator = resources.allocator;
     var bytes_remaining: u64 = options.max_size;
     {
         const first_resource_and_size = try parseResource(allocator, reader, bytes_remaining);
@@ -53,33 +79,16 @@ pub fn parseRes(allocator: Allocator, reader: anytype, options: ParseResOptions)
         bytes_remaining -= first_resource_and_size.total_size;
     }
 
-    var resources: std.ArrayListUnmanaged(Resource) = .empty;
-    errdefer {
-        for (resources.items) |resource| {
-            resource.deinit(allocator);
-        }
-        resources.deinit(allocator);
-    }
-
     while (bytes_remaining != 0) {
         const resource_and_size = try parseResource(allocator, reader, bytes_remaining);
         if (options.skip_zero_data_resources and resource_and_size.resource.data.len == 0) {
             resource_and_size.resource.deinit(allocator);
         } else {
             errdefer resource_and_size.resource.deinit(allocator);
-            try resources.append(allocator, resource_and_size.resource);
+            try resources.list.append(allocator, resource_and_size.resource);
         }
         bytes_remaining -= resource_and_size.total_size;
     }
-
-    return try resources.toOwnedSlice(allocator);
-}
-
-pub fn freeResources(allocator: Allocator, resources: []const Resource) void {
-    for (resources) |resource| {
-        resource.deinit(allocator);
-    }
-    allocator.free(resources);
 }
 
 pub const ResourceAndSize = struct {
@@ -1109,13 +1118,13 @@ test "res to coff" {
 fn testResToCoff(res_data: []const u8, expected_coff: []const u8) !void {
     var fbs = std.io.fixedBufferStream(res_data);
 
-    const resources = try parseRes(std.testing.allocator, fbs.reader(), .{ .max_size = res_data.len });
-    defer freeResources(std.testing.allocator, resources);
+    var resources = try parseRes(std.testing.allocator, fbs.reader(), .{ .max_size = res_data.len });
+    defer resources.deinit();
 
     var buf = try std.ArrayList(u8).initCapacity(std.testing.allocator, expected_coff.len);
     defer buf.deinit();
 
-    try writeCoff(std.testing.allocator, buf.writer(), resources, .{});
+    try writeCoff(std.testing.allocator, buf.writer(), resources.list.items, .{});
 
     try std.testing.expectEqualSlices(u8, expected_coff, buf.items);
 }

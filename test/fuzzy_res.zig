@@ -32,10 +32,10 @@ test "res preface fuzz" {
         try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_res_preface.res", .data = res_buffer.items });
 
         var fbs = std.io.fixedBufferStream(res_buffer.items);
-        const resources = resinator.cvtres.parseRes(allocator, fbs.reader(), .{
+        var resources = resinator.cvtres.parseRes(allocator, fbs.reader(), .{
             .max_size = res_buffer.items.len,
         }) catch continue;
-        defer resinator.cvtres.freeResources(allocator, resources);
+        defer resources.deinit();
     }
 }
 
@@ -69,9 +69,9 @@ test "res fuzz" {
         try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_res.res", .data = res_buffer.items });
 
         var fbs = std.io.fixedBufferStream(res_buffer.items);
-        const resources = resinator.cvtres.parseRes(allocator, fbs.reader(), .{
+        var resources = resinator.cvtres.parseRes(allocator, fbs.reader(), .{
             .max_size = res_buffer.items.len,
         }) catch continue;
-        defer resinator.cvtres.freeResources(allocator, resources);
+        defer resources.deinit();
     }
 }
