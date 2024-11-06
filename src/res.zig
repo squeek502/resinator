@@ -162,6 +162,27 @@ pub const Language = packed struct(u16) {
     pub fn asInt(self: Language) u16 {
         return @bitCast(self);
     }
+
+    pub fn format(
+        language: Language,
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        out_stream: anytype,
+    ) !void {
+        _ = fmt;
+        _ = options;
+        const language_id = language.asInt();
+        const language_name = language_name: {
+            if (std.meta.intToEnum(lang.LanguageId, language_id)) |lang_enum_val| {
+                break :language_name @tagName(lang_enum_val);
+            } else |_| {}
+            if (language_id == lang.LOCALE_CUSTOM_UNSPECIFIED) {
+                break :language_name "LOCALE_CUSTOM_UNSPECIFIED";
+            }
+            break :language_name "<UNKNOWN>";
+        };
+        try out_stream.print("{s} (0x{X})", .{ language_name, language_id });
+    }
 };
 
 /// https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-dlgitemtemplate#remarks
@@ -422,6 +443,50 @@ pub const NameOrOrdinal = union(enum) {
             },
             .name => return null,
         }
+    }
+
+    pub fn format(
+        self: NameOrOrdinal,
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        out_stream: anytype,
+    ) !void {
+        _ = fmt;
+        _ = options;
+        switch (self) {
+            .name => |name| {
+                try out_stream.print("{s}", .{std.unicode.fmtUtf16Le(name)});
+            },
+            .ordinal => |ordinal| {
+                try out_stream.print("{d}", .{ordinal});
+            },
+        }
+    }
+
+    fn formatResourceType(
+        self: NameOrOrdinal,
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        out_stream: anytype,
+    ) !void {
+        _ = fmt;
+        _ = options;
+        switch (self) {
+            .name => |name| {
+                try out_stream.print("{s}", .{std.unicode.fmtUtf16Le(name)});
+            },
+            .ordinal => |ordinal| {
+                if (std.enums.tagName(RT, @enumFromInt(ordinal))) |predefined_type_name| {
+                    try out_stream.print("{s}", .{predefined_type_name});
+                } else {
+                    try out_stream.print("{d}", .{ordinal});
+                }
+            },
+        }
+    }
+
+    pub fn fmtResourceType(type_value: NameOrOrdinal) std.fmt.Formatter(formatResourceType) {
+        return .{ .data = type_value };
     }
 };
 

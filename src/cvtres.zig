@@ -177,12 +177,26 @@ pub const CoffOptions = struct {
     fold_duplicate_data: bool = false,
 };
 
-pub fn writeCoff(allocator: Allocator, writer: anytype, resources: []const Resource, options: CoffOptions) !void {
+pub const Diagnostics = union {
+    none: void,
+    /// Contains the index of the second resource in a duplicate resource pair.
+    duplicate_resource: usize,
+};
+
+pub fn writeCoff(allocator: Allocator, writer: anytype, resources: []const Resource, options: CoffOptions, diagnostics: ?*Diagnostics) !void {
     var resource_tree = ResourceTree.init(allocator);
     defer resource_tree.deinit();
 
     for (resources, 0..) |*resource, i| {
-        try resource_tree.put(resource, i);
+        resource_tree.put(resource, i) catch |err| {
+            switch (err) {
+                error.DuplicateResource => {
+                    if (diagnostics) |d_ptr| d_ptr.* = .{ .duplicate_resource = i };
+                },
+                else => {},
+            }
+            return err;
+        };
     }
 
     const lengths = resource_tree.dataLengths();
@@ -1059,7 +1073,7 @@ test writeCoff {
     {
         buf.clearRetainingCapacity();
 
-        try writeCoff(std.testing.allocator, buf.writer(), &.{}, .{});
+        try writeCoff(std.testing.allocator, buf.writer(), &.{}, .{}, null);
 
         try std.testing.expectEqualSlices(
             u8,
@@ -1082,7 +1096,7 @@ test writeCoff {
                 .characteristics = 0,
                 .data = "foo",
             },
-        }, .{});
+        }, .{}, null);
 
         try std.testing.expectEqualSlices(
             u8,
@@ -1124,7 +1138,7 @@ fn testResToCoff(res_data: []const u8, expected_coff: []const u8) !void {
     var buf = try std.ArrayList(u8).initCapacity(std.testing.allocator, expected_coff.len);
     defer buf.deinit();
 
-    try writeCoff(std.testing.allocator, buf.writer(), resources.list.items, .{});
+    try writeCoff(std.testing.allocator, buf.writer(), resources.list.items, .{}, null);
 
     try std.testing.expectEqualSlices(u8, expected_coff, buf.items);
 }

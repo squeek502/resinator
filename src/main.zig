@@ -15,6 +15,7 @@ const hasDisjointCodePage = @import("disjoint_code_page.zig").hasDisjointCodePag
 const cvtres = @import("cvtres.zig");
 const aro = @import("aro");
 const subcommands = @import("subcommands.zig");
+const fmtResourceType = @import("res.zig").NameOrOrdinal.fmtResourceType;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{ .stack_trace_frames = 8 }){};
@@ -402,9 +403,22 @@ pub fn main() !void {
 
     var coff_output_buffered_stream = std.io.bufferedWriter(coff_output_file.writer());
 
-    cvtres.writeCoff(allocator, coff_output_buffered_stream.writer(), resources.list.items, options.coff_options) catch |err| {
-        // TODO: Better errors
-        try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to write coff output file '{s}': {s}", .{ coff_output_filename, @errorName(err) });
+    var cvtres_diagnostics: cvtres.Diagnostics = .{ .none = {} };
+    cvtres.writeCoff(allocator, coff_output_buffered_stream.writer(), resources.list.items, options.coff_options, &cvtres_diagnostics) catch |err| {
+        switch (err) {
+            error.DuplicateResource => {
+                const duplicate_resource = resources.list.items[cvtres_diagnostics.duplicate_resource];
+                try renderErrorMessage(stderr.writer(), stderr_config, .err, "duplicate resource [id: {}, type: {}, language: {}]", .{
+                    duplicate_resource.name_value,
+                    fmtResourceType(duplicate_resource.type_value),
+                    duplicate_resource.language,
+                });
+                // TODO: Add note about where the first and second duplicate resources are if additional_inputs.len > 0
+            },
+            else => {
+                try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to write coff output file '{s}': {s}", .{ coff_output_filename, @errorName(err) });
+            },
+        }
         // Delete the output file on error
         coff_output_file.close();
         coff_output_file_closed = true;

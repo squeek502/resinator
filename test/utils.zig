@@ -300,7 +300,7 @@ pub fn getResinatorCvtResResult(allocator: Allocator, res_source: []const u8, op
         .target = options.target,
         .read_only = options.read_only,
         .define_external_symbol = options.define_external_symbol,
-    }) catch |err| {
+    }, null) catch |err| {
         buf.deinit();
         return .{
             .coff_err = err,

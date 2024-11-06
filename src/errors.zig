@@ -626,17 +626,8 @@ pub const ErrorDetails = struct {
             },
             .string_already_defined => switch (self.type) {
                 .err, .warning => {
-                    const language_id = self.extra.string_and_language.language.asInt();
-                    const language_name = language_name: {
-                        if (std.meta.intToEnum(lang.LanguageId, language_id)) |lang_enum_val| {
-                            break :language_name @tagName(lang_enum_val);
-                        } else |_| {}
-                        if (language_id == lang.LOCALE_CUSTOM_UNSPECIFIED) {
-                            break :language_name "LOCALE_CUSTOM_UNSPECIFIED";
-                        }
-                        break :language_name "<UNKNOWN>";
-                    };
-                    return writer.print("string with id {d} (0x{X}) already defined for language {s} (0x{X})", .{ self.extra.string_and_language.id, self.extra.string_and_language.id, language_name, language_id });
+                    const language = self.extra.string_and_language.language;
+                    return writer.print("string with id {d} (0x{X}) already defined for language {}", .{ self.extra.string_and_language.id, self.extra.string_and_language.id, language });
                 },
                 .note => return writer.print("previous definition of string with id {d} (0x{X}) here", .{ self.extra.string_and_language.id, self.extra.string_and_language.id }),
                 .hint => return,
