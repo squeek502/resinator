@@ -114,6 +114,8 @@ nav_order: 2
   + The Win32 RC compiler will skip every `MENU` statement except the last, but if any of the preceding `MENU` statements is treated as a number, then the last `MENU` is treated as a number no matter what. For example, if there are two `MENU` statements and one is `MENU 5` and the last is `MENU forcedordinal`, then the Win32 RC compiler will interpret `forcedordinal` as a number and the value will end up as the ordinal 36934.
 - `resinator` will avoid miscompiling the `MENU` of a `DIALOG`/`DIALOGEX` resource when the first character is a digit, and will emit a warning
   + The Win32 RC compiler treats any `MENU` id starting with a digit as a number, even though that is not the case when evaluating the ID of a `MENU`/`MENUEX` resource which the `MENU` parameter of a `DIALOG`/`DIALOGEX` resource is meant to refer to. This means that if there is a `MENU` defined as `1ABC MENU { ... }` and a `DIALOG`/`DIALOGEX` with a `MENU` parameter set to `MENU 1ABC`, the `MENU` resource will have the name `1ABC`, but the dialog's `MENU` will be treated as a number and have the value 2899. At runtime, this will cause the dialog to fail to load with the error `The specified resource name cannot be found in the image file`.
+- `resinator` will error if non-ASCII digit characters are used in a number literal or resource id/type ordinal
+  + The Win32 RC compiler allows non-ASCII digit characters in base 10 number literals and subtracts the value of the ASCII `'0'` character from their codepoint value to get their 'digit' value, which leads to totally arbitrary results (e.g. the character `²` has a codepoint of `178`, and `178 - '0' = 130`, so a number literal like `1²3` would end up as the number value `1403` when evaluated). This is the case for any UTF-16 code unit for which the Windows implementation of `iswdigit` returns true.
 
 ### Resource data and `.res` filesize limits
 
@@ -125,8 +127,6 @@ nav_order: 2
   + The Win32 RC compiler will not error and instead the number of controls will overflow and wrap back around to 0. This leads to an incorrect dialog resource.
 - `resinator` will error if a control within a `DIALOG`/`DIALOGEX` resource contains more extra data than the max of a `u16`, since the dialog needs to be able to specify the number of extra data bytes of each control as a `u16`.
   + The Win32 RC compiler will not error and instead the extra data length of the control will overflow and wrap back around to 0. This leads to an incorrect dialog resource.
-- `resinator` will error if non-ASCII digit characters are used in a number literal or resource id/type ordinal
-  + The Win32 RC compiler allows non-ASCII digit characters in base 10 number literals and subtracts the value of the ASCII `'0'` character from their codepoint value to get their 'digit' value, which leads to totally arbitrary results (e.g. the character `²` has a codepoint of `178`, and `178 - '0' = 130`, so a number literal like `1²3` would end up as the number value `1403` when evaluated). This is the case for any UTF-16 code unit for which the Windows implementation of `iswdigit` returns true.
 
 ## Unavoidable divergences from the Windows RC compiler
 
