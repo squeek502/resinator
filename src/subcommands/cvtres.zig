@@ -208,7 +208,7 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
 
     for (positionals, 0..) |positional, i| {
         if (i == 0) {
-            options.input_filename = try allocator.dupe(u8, positional);
+            options.input_source = .{ .filename = try allocator.dupe(u8, positional) };
         } else {
             const duped = try allocator.dupe(u8, positional);
             errdefer allocator.free(duped);
@@ -217,9 +217,9 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
     }
 
     if (output_filename == null) {
-        options.output_filename = try cli.filepathWithExtension(allocator, options.input_filename, options.output_format.extension());
+        options.output_source = .{ .filename = try cli.filepathWithExtension(allocator, options.input_source.filename, options.output_format.extension()) };
     } else {
-        options.output_filename = try allocator.dupe(u8, output_filename.?);
+        options.output_source = .{ .filename = try allocator.dupe(u8, output_filename.?) };
     }
 
     if (diagnostics.hasError()) {

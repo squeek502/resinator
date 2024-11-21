@@ -88,6 +88,8 @@ pub const usage_string2_after_command_name =
     \\  cvtres             A .res to .obj (COFF object file) converter that
     \\                     has drop-in CLI compatibility with cvtres.exe.
     \\                     Use the /? option with this subcommand to see the usage.
+    \\  windres            Drop-in CLI compatibility with GNU windres.
+    \\                     Use the -h option with this subcommand to see the usage.
     \\
 ;
 
@@ -161,8 +163,8 @@ pub const Diagnostics = struct {
 
 pub const Options = struct {
     allocator: Allocator,
-    input_filename: []const u8 = &[_]u8{},
-    output_filename: []const u8 = &[_]u8{},
+    input_source: IoSource = .{ .filename = &[_]u8{} },
+    output_source: IoSource = .{ .filename = &[_]u8{} },
     extra_include_paths: std.ArrayListUnmanaged([]const u8) = .empty,
     ignore_include_env_var: bool = false,
     preprocess: Preprocess = .yes,
@@ -186,7 +188,11 @@ pub const Options = struct {
     additional_inputs: std.ArrayListUnmanaged([]const u8) = .empty,
     subcommand: Subcommand = .none,
 
-    pub const Subcommand = enum { none, targets, cvtres };
+    pub const IoSource = union(enum) {
+        stdio: std.fs.File,
+        filename: []const u8,
+    };
+    pub const Subcommand = enum { none, targets, cvtres, windres };
     pub const AutoIncludes = enum { any, msvc, gnu, none };
     pub const DepfileFormat = enum { json };
     pub const InputFormat = enum { rc, res, rcpp };
@@ -265,14 +271,18 @@ pub const Options = struct {
     /// of the .rc extension being omitted from the CLI args, but still
     /// work fine if the file itself does not have an extension.
     pub fn maybeAppendRC(options: *Options, cwd: std.fs.Dir) !void {
-        if (options.input_format == .rc and std.fs.path.extension(options.input_filename).len == 0) {
-            cwd.access(options.input_filename, .{}) catch |err| switch (err) {
+        switch (options.input_source) {
+            .stdio => return,
+            .filename => {},
+        }
+        if (options.input_format == .rc and std.fs.path.extension(options.input_source.filename).len == 0) {
+            cwd.access(options.input_source.filename, .{}) catch |err| switch (err) {
                 error.FileNotFound => {
-                    var filename_bytes = try options.allocator.alloc(u8, options.input_filename.len + 3);
-                    @memcpy(filename_bytes[0..options.input_filename.len], options.input_filename);
+                    var filename_bytes = try options.allocator.alloc(u8, options.input_source.filename.len + 3);
+                    @memcpy(filename_bytes[0..options.input_source.filename.len], options.input_source.filename);
                     @memcpy(filename_bytes[filename_bytes.len - 3 ..], ".rc");
-                    options.allocator.free(options.input_filename);
-                    options.input_filename = filename_bytes;
+                    options.allocator.free(options.input_source.filename);
+                    options.input_source = .{ .filename = filename_bytes };
                 },
                 else => {},
             };
@@ -284,8 +294,14 @@ pub const Options = struct {
             self.allocator.free(extra_include_path);
         }
         self.extra_include_paths.deinit(self.allocator);
-        self.allocator.free(self.input_filename);
-        self.allocator.free(self.output_filename);
+        switch (self.input_source) {
+            .stdio => {},
+            .filename => |filename| self.allocator.free(filename),
+        }
+        switch (self.output_source) {
+            .stdio => {},
+            .filename => |filename| self.allocator.free(filename),
+        }
         var symbol_it = self.symbols.iterator();
         while (symbol_it.next()) |entry| {
             self.allocator.free(entry.key_ptr.*);
@@ -305,8 +321,16 @@ pub const Options = struct {
     }
 
     pub fn dumpVerbose(self: *const Options, writer: anytype) !void {
-        try writer.print("Input filename: {s} (format={s})\n", .{ self.input_filename, @tagName(self.input_format) });
-        try writer.print("Output filename: {s} (format={s})\n", .{ self.output_filename, @tagName(self.output_format) });
+        const input_source_name = switch (self.input_source) {
+            .stdio => "<stdin>",
+            .filename => |filename| filename,
+        };
+        const output_source_name = switch (self.output_source) {
+            .stdio => "<stdout>",
+            .filename => |filename| filename,
+        };
+        try writer.print("Input filename: {s} (format={s})\n", .{ input_source_name, @tagName(self.input_format) });
+        try writer.print("Output filename: {s} (format={s})\n", .{ output_source_name, @tagName(self.output_format) });
         if (self.output_format == .coff) {
             try writer.print(" Target machine type for COFF: {s}\n", .{@tagName(self.coff_options.target)});
         }
@@ -388,6 +412,15 @@ pub const Arg = struct {
         return null;
     }
 
+    pub fn fromStringPosix(str: []const u8) ?@This() {
+        if (std.mem.startsWith(u8, str, "--")) {
+            return .{ .prefix = .long, .name_offset = 2, .full = str };
+        } else if (std.mem.startsWith(u8, str, "-")) {
+            return .{ .prefix = .short, .name_offset = 1, .full = str };
+        }
+        return null;
+    }
+
     pub fn prefixSlice(self: Arg) []const u8 {
         return self.full[0..(if (self.prefix == .long) 2 else 1)];
     }
@@ -397,6 +430,7 @@ pub const Arg = struct {
     }
 
     pub fn optionWithoutPrefix(self: Arg, option_len: usize) []const u8 {
+        if (option_len == 0) return self.name();
         return self.name()[0..option_len];
     }
 
@@ -423,6 +457,8 @@ pub const Arg = struct {
 
     pub const Value = struct {
         slice: []const u8,
+        /// Amount to increment the arg index to skip over both the option and the value arg(s)
+        /// e.g. 1 if /<option><value>, 2 if /<option> <value>
         index_increment: u2 = 1,
 
         pub fn argSpan(self: Value, arg: Arg) Diagnostics.ErrorDetails.ArgSpan {
@@ -451,6 +487,23 @@ pub const Arg = struct {
     pub fn value(self: Arg, option_len: usize, index: usize, args: []const []const u8) error{MissingValue}!Value {
         const rest = self.full[self.name_offset + option_len ..];
         if (rest.len > 0) return .{ .slice = rest };
+        if (index + 1 >= args.len) return error.MissingValue;
+        return .{ .slice = args[index + 1], .index_increment = 2 };
+    }
+
+    pub fn valuePosix(self: Arg, option_len: usize, index: usize, args: []const []const u8) error{MissingValue}!Value {
+        const rest = self.full[self.name_offset + option_len ..];
+        if (rest.len > 0) {
+            if (self.prefix == .short) {
+                const after_opt_equals = if (rest[0] == '=') rest[1..] else rest;
+                if (after_opt_equals.len == 0) return error.MissingValue;
+                return .{ .slice = after_opt_equals };
+            } else {
+                std.debug.assert(rest[0] == '=');
+                if (rest.len == 1) return error.MissingValue;
+                return .{ .slice = rest[1..] };
+            }
+        }
         if (index + 1 >= args.len) return error.MissingValue;
         return .{ .slice = args[index + 1], .index_increment = 2 };
     }
@@ -1041,7 +1094,7 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
         // things after this rely on the value of the input filename.
         return error.ParseError;
     }
-    options.input_filename = try allocator.dupe(u8, positionals[0]);
+    options.input_source = .{ .filename = try allocator.dupe(u8, positionals[0]) };
     input_filename_arg_i = arg_i;
 
     const InputFormatSource = enum {
@@ -1051,7 +1104,7 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
 
     var input_format_source: InputFormatSource = undefined;
     if (input_format == null) {
-        const ext = std.fs.path.extension(options.input_filename);
+        const ext = std.fs.path.extension(options.input_source.filename);
         if (std.ascii.eqlIgnoreCase(ext, ".res")) {
             input_format = .res;
         } else if (std.ascii.eqlIgnoreCase(ext, ".rcpp")) {
@@ -1097,7 +1150,7 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
     if (output_filename == null) {
         if (output_format == null) {
             output_format_source = .inferred_from_input_filename;
-            const input_ext = std.fs.path.extension(options.input_filename);
+            const input_ext = std.fs.path.extension(options.input_source.filename);
             if (std.ascii.eqlIgnoreCase(input_ext, ".res")) {
                 output_format = .coff;
             } else if (options.preprocess == .only and (input_format.? == .rc or std.ascii.eqlIgnoreCase(input_ext, ".rc"))) {
@@ -1110,12 +1163,12 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                 output_format = .res;
             }
         }
-        options.output_filename = try filepathWithExtension(allocator, options.input_filename, output_format.?.extension());
+        options.output_source = .{ .filename = try filepathWithExtension(allocator, options.input_source.filename, output_format.?.extension()) };
     } else {
-        options.output_filename = try allocator.dupe(u8, output_filename.?);
+        options.output_source = .{ .filename = try allocator.dupe(u8, output_filename.?) };
         if (output_format == null) {
             output_format_source = .inferred_from_output_filename;
-            const ext = std.fs.path.extension(options.output_filename);
+            const ext = std.fs.path.extension(options.output_source.filename);
             if (std.ascii.eqlIgnoreCase(ext, ".obj") or std.ascii.eqlIgnoreCase(ext, ".o")) {
                 output_format = .coff;
             } else if (std.ascii.eqlIgnoreCase(ext, ".rcpp")) {
@@ -1644,8 +1697,8 @@ test "parse: options" {
         defer options.deinit();
 
         try std.testing.expectEqual(true, options.verbose);
-        try std.testing.expectEqualStrings("foo.rc", options.input_filename);
-        try std.testing.expectEqualStrings("foo.res", options.output_filename);
+        try std.testing.expectEqualStrings("foo.rc", options.input_source.filename);
+        try std.testing.expectEqualStrings("foo.res", options.output_source.filename);
     }
     {
         var options = try testParse(&.{ "/vx", "foo.rc" });
@@ -1653,8 +1706,8 @@ test "parse: options" {
 
         try std.testing.expectEqual(true, options.verbose);
         try std.testing.expectEqual(true, options.ignore_include_env_var);
-        try std.testing.expectEqualStrings("foo.rc", options.input_filename);
-        try std.testing.expectEqualStrings("foo.res", options.output_filename);
+        try std.testing.expectEqualStrings("foo.rc", options.input_source.filename);
+        try std.testing.expectEqualStrings("foo.res", options.output_source.filename);
     }
     {
         var options = try testParse(&.{ "/xv", "foo.rc" });
@@ -1662,8 +1715,8 @@ test "parse: options" {
 
         try std.testing.expectEqual(true, options.verbose);
         try std.testing.expectEqual(true, options.ignore_include_env_var);
-        try std.testing.expectEqualStrings("foo.rc", options.input_filename);
-        try std.testing.expectEqualStrings("foo.res", options.output_filename);
+        try std.testing.expectEqualStrings("foo.rc", options.input_source.filename);
+        try std.testing.expectEqualStrings("foo.res", options.output_source.filename);
     }
     {
         var options = try testParse(&.{ "/xvFObar.res", "foo.rc" });
@@ -1671,8 +1724,8 @@ test "parse: options" {
 
         try std.testing.expectEqual(true, options.verbose);
         try std.testing.expectEqual(true, options.ignore_include_env_var);
-        try std.testing.expectEqualStrings("foo.rc", options.input_filename);
-        try std.testing.expectEqualStrings("bar.res", options.output_filename);
+        try std.testing.expectEqualStrings("foo.rc", options.input_source.filename);
+        try std.testing.expectEqualStrings("bar.res", options.output_source.filename);
     }
 }
 
@@ -2019,25 +2072,25 @@ test "maybeAppendRC" {
 
     var options = try testParse(&.{"foo"});
     defer options.deinit();
-    try std.testing.expectEqualStrings("foo", options.input_filename);
+    try std.testing.expectEqualStrings("foo", options.input_source.filename);
 
     // Create the file so that it's found. In this scenario, .rc should not get
     // appended.
     var file = try tmp.dir.createFile("foo", .{});
     file.close();
     try options.maybeAppendRC(tmp.dir);
-    try std.testing.expectEqualStrings("foo", options.input_filename);
+    try std.testing.expectEqualStrings("foo", options.input_source.filename);
 
     // Now delete the file and try again. But this time change the input format
     // to non-rc.
     try tmp.dir.deleteFile("foo");
     options.input_format = .res;
     try options.maybeAppendRC(tmp.dir);
-    try std.testing.expectEqualStrings("foo", options.input_filename);
+    try std.testing.expectEqualStrings("foo", options.input_source.filename);
 
     // Finally, reset the input format to rc. Since the verbatim name is no longer found
     // and the input filename does not have an extension, .rc should get appended.
     options.input_format = .rc;
     try options.maybeAppendRC(tmp.dir);
-    try std.testing.expectEqualStrings("foo.rc", options.input_filename);
+    try std.testing.expectEqualStrings("foo.rc", options.input_source.filename);
 }
