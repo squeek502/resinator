@@ -444,7 +444,7 @@ const ResourceTree = struct {
             hasher.update(std.mem.asBytes(&tag));
             switch (v) {
                 .name => |name| {
-                    hasher.update(std.mem.asBytes(name));
+                    hasher.update(std.mem.sliceAsBytes(name));
                 },
                 .ordinal => |*ordinal| {
                     hasher.update(std.mem.asBytes(ordinal));
