@@ -89,6 +89,7 @@ test "cvtres fuzz" {
             .target = random_target,
             .read_only = rand.boolean(),
             .define_external_symbol = random_symbol_define,
+            .fold_duplicate_data = rand.boolean(),
         });
     }
 }

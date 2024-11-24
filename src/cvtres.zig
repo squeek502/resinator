@@ -184,7 +184,7 @@ pub const Diagnostics = union {
 };
 
 pub fn writeCoff(allocator: Allocator, writer: anytype, resources: []const Resource, options: CoffOptions, diagnostics: ?*Diagnostics) !void {
-    var resource_tree = ResourceTree.init(allocator);
+    var resource_tree = ResourceTree.init(allocator, options);
     defer resource_tree.deinit();
 
     for (resources, 0..) |*resource, i| {
@@ -273,7 +273,6 @@ pub fn writeCoff(allocator: Allocator, writer: anytype, resources: []const Resou
         resources,
         lengths,
         &string_table,
-        options,
     );
     defer allocator.free(resource_symbols);
 
@@ -427,6 +426,10 @@ pub const ResourceDataEntry = extern struct {
 const ResourceTree = struct {
     type_to_name_map: std.ArrayHashMapUnmanaged(NameOrOrdinal, NameToLanguageMap, NameOrOrdinalHashContext, true),
     rsrc_string_table: std.ArrayHashMapUnmanaged(NameOrOrdinal, void, NameOrOrdinalHashContext, true),
+    deduplicated_data: std.StringArrayHashMapUnmanaged(u32),
+    data_offsets: std.ArrayListUnmanaged(u32),
+    rsrc02_len: u32,
+    coff_options: CoffOptions,
     allocator: Allocator,
 
     const RelocatableResource = struct {
@@ -466,10 +469,14 @@ const ResourceTree = struct {
         }
     };
 
-    pub fn init(allocator: Allocator) ResourceTree {
+    pub fn init(allocator: Allocator, coff_options: CoffOptions) ResourceTree {
         return .{
             .type_to_name_map = .empty,
             .rsrc_string_table = .empty,
+            .deduplicated_data = .empty,
+            .data_offsets = .empty,
+            .rsrc02_len = 0,
+            .coff_options = coff_options,
             .allocator = allocator,
         };
     }
@@ -483,6 +490,8 @@ const ResourceTree = struct {
         }
         self.type_to_name_map.deinit(self.allocator);
         self.rsrc_string_table.deinit(self.allocator);
+        self.deduplicated_data.deinit(self.allocator);
+        self.data_offsets.deinit(self.allocator);
     }
 
     pub fn put(self: *ResourceTree, resource: *const Resource, original_index: usize) !void {
@@ -507,6 +516,20 @@ const ResourceTree = struct {
                 .original_index = original_index,
                 .resource = resource,
             };
+        }
+
+        // Resize the data_offsets list to accommodate the index, but only if necessary
+        try self.data_offsets.resize(self.allocator, @max(self.data_offsets.items.len, original_index + 1));
+        if (self.coff_options.fold_duplicate_data) {
+            const gop_result = try self.deduplicated_data.getOrPut(self.allocator, resource.data);
+            if (!gop_result.found_existing) {
+                gop_result.value_ptr.* = self.rsrc02_len;
+                self.rsrc02_len += std.mem.alignForward(u32, @intCast(resource.data.len), 8);
+            }
+            self.data_offsets.items[original_index] = gop_result.value_ptr.*;
+        } else {
+            self.data_offsets.items[original_index] = self.rsrc02_len;
+            self.rsrc02_len += std.mem.alignForward(u32, @intCast(resource.data.len), 8);
         }
 
         if (resource.type_value == .name and !self.rsrc_string_table.contains(resource.type_value)) {
@@ -542,7 +565,7 @@ const ResourceTree = struct {
             .strings = 0,
             .padding = 0,
             .rsrc01 = undefined,
-            .rsrc02 = 0,
+            .rsrc02 = self.rsrc02_len,
         };
         lengths.level1 += @sizeOf(ResourceDirectoryTable);
         for (self.type_to_name_map.values()) |name_to_lang_map| {
@@ -551,10 +574,9 @@ const ResourceTree = struct {
             for (name_to_lang_map.values()) |lang_to_resources_map| {
                 lengths.level2 += @sizeOf(ResourceDirectoryEntry);
                 lengths.level3 += @sizeOf(ResourceDirectoryTable);
-                for (lang_to_resources_map.values()) |reloc_resource| {
+                for (lang_to_resources_map.values()) |_| {
                     lengths.level3 += @sizeOf(ResourceDirectoryEntry);
                     lengths.data_entries += @sizeOf(ResourceDataEntry);
-                    lengths.rsrc02 += std.mem.alignForward(u32, @intCast(reloc_resource.resource.data.len), 8);
                 }
             }
         }
@@ -621,7 +643,6 @@ const ResourceTree = struct {
         resources_in_data_order: []const Resource,
         lengths: Lengths,
         coff_string_table: *StringTable,
-        options: CoffOptions,
     ) ![]const std.coff.Symbol {
         if (self.type_to_name_map.count() == 0) {
             try writer.writeByteNTimes(0, 16);
@@ -772,7 +793,7 @@ const ResourceTree = struct {
             // TODO: This logic works but is convoluted, would be good to clean this up
             const orig_resource = &resources_in_data_order[reloc_resource.original_index];
             const address: u32 = reloc_addresses[i];
-            try relocations.add(address, &resources_in_data_order[i]);
+            try relocations.add(address, self.data_offsets.items[i]);
             const data_entry = ResourceDataEntry{
                 .data_rva = 0, // relocation
                 .size = @intCast(orig_resource.data.len),
@@ -794,14 +815,22 @@ const ResourceTree = struct {
             try writeRelocation(w, std.coff.Relocation{
                 .virtual_address = relocation.relocation_address,
                 .symbol_table_index = relocation.symbol_index,
-                .type = supported_targets.rvaRelocationTypeIndicator(options.target).?,
+                .type = supported_targets.rvaRelocationTypeIndicator(self.coff_options.target).?,
             });
         }
 
-        for (resources_in_data_order) |resource| {
-            const padding_bytes: u4 = @intCast((8 -% resource.data.len) % 8);
-            try w.writeAll(resource.data);
-            try w.writeByteNTimes(0, padding_bytes);
+        if (self.coff_options.fold_duplicate_data) {
+            for (self.deduplicated_data.keys()) |data| {
+                const padding_bytes: u4 = @intCast((8 -% data.len) % 8);
+                try w.writeAll(data);
+                try w.writeByteNTimes(0, padding_bytes);
+            }
+        } else {
+            for (resources_in_data_order) |resource| {
+                const padding_bytes: u4 = @intCast((8 -% resource.data.len) % 8);
+                try w.writeAll(resource.data);
+                try w.writeByteNTimes(0, padding_bytes);
+            }
         }
 
         var symbols = try allocator.alloc(std.coff.Symbol, resources_list.items.len);
@@ -882,7 +911,6 @@ const Relocations = struct {
     allocator: Allocator,
     list: std.ArrayListUnmanaged(Relocation) = .empty,
     cur_symbol_index: u32 = 5,
-    cur_data_offset: u32 = 0,
 
     pub fn init(allocator: Allocator) Relocations {
         return .{ .allocator = allocator };
@@ -892,14 +920,13 @@ const Relocations = struct {
         self.list.deinit(self.allocator);
     }
 
-    pub fn add(self: *Relocations, relocation_address: u32, resource: *const Resource) !void {
+    pub fn add(self: *Relocations, relocation_address: u32, data_offset: u32) !void {
         try self.list.append(self.allocator, .{
             .symbol_index = self.cur_symbol_index,
-            .data_offset = self.cur_data_offset,
+            .data_offset = data_offset,
             .relocation_address = relocation_address,
         });
         self.cur_symbol_index += 1;
-        self.cur_data_offset += std.mem.alignForward(u32, @intCast(resource.data.len), 8);
     }
 };
 
