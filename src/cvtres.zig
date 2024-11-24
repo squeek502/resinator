@@ -181,6 +181,9 @@ pub const Diagnostics = union {
     none: void,
     /// Contains the index of the second resource in a duplicate resource pair.
     duplicate_resource: usize,
+    /// Contains the index of the resource that either has data that's too long or
+    /// caused the total data to overflow.
+    overflow_resource: usize,
 };
 
 pub fn writeCoff(allocator: Allocator, writer: anytype, resources: []const Resource, options: CoffOptions, diagnostics: ?*Diagnostics) !void {
@@ -192,6 +195,9 @@ pub fn writeCoff(allocator: Allocator, writer: anytype, resources: []const Resou
             switch (err) {
                 error.DuplicateResource => {
                     if (diagnostics) |d_ptr| d_ptr.* = .{ .duplicate_resource = i };
+                },
+                error.ResourceDataTooLong, error.TotalResourceDataTooLong => {
+                    if (diagnostics) |d_ptr| d_ptr.* = .{ .overflow_resource = i };
                 },
                 else => {},
             }
@@ -524,12 +530,12 @@ const ResourceTree = struct {
             const gop_result = try self.deduplicated_data.getOrPut(self.allocator, resource.data);
             if (!gop_result.found_existing) {
                 gop_result.value_ptr.* = self.rsrc02_len;
-                self.rsrc02_len += std.mem.alignForward(u32, @intCast(resource.data.len), 8);
+                try self.incrementRsrc02Len(resource);
             }
             self.data_offsets.items[original_index] = gop_result.value_ptr.*;
         } else {
             self.data_offsets.items[original_index] = self.rsrc02_len;
-            self.rsrc02_len += std.mem.alignForward(u32, @intCast(resource.data.len), 8);
+            try self.incrementRsrc02Len(resource);
         }
 
         if (resource.type_value == .name and !self.rsrc_string_table.contains(resource.type_value)) {
@@ -538,6 +544,24 @@ const ResourceTree = struct {
         if (resource.name_value == .name and !self.rsrc_string_table.contains(resource.name_value)) {
             try self.rsrc_string_table.putNoClobber(self.allocator, resource.name_value, {});
         }
+    }
+
+    fn incrementRsrc02Len(self: *ResourceTree, resource: *const Resource) !void {
+        // Note: This @intCast is only safe if we assume that the resource was parsed from a .res file,
+        // since the maximum data length for a resource in the .res file format is maxInt(u32).
+        // TODO: Either codify this properly or use std.math.cast and return an error.
+        const data_len: u32 = @intCast(resource.data.len);
+        const data_len_including_padding: u32 = std.math.cast(u32, std.mem.alignForward(u33, data_len, 8)) orelse {
+            return error.ResourceDataTooLong;
+        };
+        // TODO: Verify that this corresponds to an actual PE/COFF limitation for resource data
+        //       in the final linked binary. The limit may turn out to be shorter than u32 max if both
+        //       the tree data and the resource data lengths together need to fit within a u32,
+        //       or it may be longer in which case we would want to add more .rsrc$NN sections
+        //       to the object file for the data that overflows .rsrc$02.
+        self.rsrc02_len = std.math.add(u32, self.rsrc02_len, data_len_including_padding) catch {
+            return error.TotalResourceDataTooLong;
+        };
     }
 
     const Lengths = struct {

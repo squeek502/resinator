@@ -459,6 +459,24 @@ pub fn main() !void {
                 });
                 // TODO: Add note about where the first and second duplicate resources are if additional_inputs.len > 0
             },
+            error.ResourceDataTooLong => {
+                const overflow_resource = resources.list.items[cvtres_diagnostics.duplicate_resource];
+                try renderErrorMessage(stderr.writer(), stderr_config, .err, "resource has a data length that is too large to be written into a coff section", .{});
+                try renderErrorMessage(stderr.writer(), stderr_config, .note, "the resource with the invalid size is [id: {}, type: {}, language: {}]", .{
+                    overflow_resource.name_value,
+                    fmtResourceType(overflow_resource.type_value),
+                    overflow_resource.language,
+                });
+            },
+            error.TotalResourceDataTooLong => {
+                const overflow_resource = resources.list.items[cvtres_diagnostics.duplicate_resource];
+                try renderErrorMessage(stderr.writer(), stderr_config, .err, "total resource data exceeds the maximum of the coff 'size of raw data' field", .{});
+                try renderErrorMessage(stderr.writer(), stderr_config, .note, "size overflow occurred when attempting to write this resource: [id: {}, type: {}, language: {}]", .{
+                    overflow_resource.name_value,
+                    fmtResourceType(overflow_resource.type_value),
+                    overflow_resource.language,
+                });
+            },
             else => {
                 try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to write coff output file '{s}': {s}", .{ coff_stream.name, @errorName(err) });
             },
