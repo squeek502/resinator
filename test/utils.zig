@@ -849,7 +849,8 @@ pub const RandomResourceOptions = struct {
     set_data: ?[]const u8 = null,
 };
 
-pub fn writeRandomValidResource(allocator: Allocator, rand: std.Random, writer: anytype, options: RandomResourceOptions) !void {
+/// Returns the data size of the resource that was written
+pub fn writeRandomValidResource(allocator: Allocator, rand: std.Random, writer: anytype, options: RandomResourceOptions) !u32 {
     const data_size: u32 = if (options.set_data) |data| @intCast(data.len) else rand.uintAtMostBiased(u32, 150);
     const name_value = options.set_name orelse try getRandomNameOrOrdinal(allocator, rand, 32);
     defer if (options.set_name == null) name_value.deinit(allocator);
@@ -881,6 +882,8 @@ pub fn writeRandomValidResource(allocator: Allocator, rand: std.Random, writer: 
     }
     const num_padding_bytes = resinator.compile.Compiler.numPaddingBytesNeeded(data_size);
     try writer.writeByteNTimes(0, num_padding_bytes);
+
+    return data_size;
 }
 
 pub fn getRandomNameOrOrdinal(allocator: Allocator, rand: std.Random, max_name_len: usize) !resinator.res.NameOrOrdinal {

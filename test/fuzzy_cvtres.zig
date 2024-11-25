@@ -41,7 +41,8 @@ test "cvtres fuzz" {
         const common_data = data_buffer.items;
 
         const num_resources = rand.intRangeAtMost(usize, 1, 16);
-        for (0..num_resources) |resource_i| {
+        var have_written_a_non_zero_data_resource = false;
+        for (0..num_resources) |_| {
             var options: utils.RandomResourceOptions = switch (rand.uintAtMost(u8, 4)) {
                 0 => .{ .set_name = common_name },
                 1 => .{ .set_type = common_type },
@@ -55,10 +56,11 @@ test "cvtres fuzz" {
             // If the first resource has the same data as another resource, the first
             // data is written but is unreferenced, and then the same data is written again
             // and that second data location is actually used for all duplicates of that data.
-            if (resource_i > 0 and rand.float(f32) < 0.20) {
+            if (have_written_a_non_zero_data_resource and rand.float(f32) < 0.20) {
                 options.set_data = common_data;
             }
-            try utils.writeRandomValidResource(allocator, rand, res_buffer.writer(), options);
+            const written_data_size = try utils.writeRandomValidResource(allocator, rand, res_buffer.writer(), options);
+            if (written_data_size != 0) have_written_a_non_zero_data_resource = true;
         }
 
         // also write it to the top-level tmp dir for debugging
@@ -83,13 +85,18 @@ test "cvtres fuzz" {
             else => unreachable,
         };
 
-        try utils.expectSameCvtResOutput(allocator, res_buffer.items, .{
+        const options: utils.GetCvtResResultOptions = .{
             .cwd = tmp.dir,
             .cwd_path = tmp_path,
             .target = random_target,
             .read_only = rand.boolean(),
             .define_external_symbol = random_symbol_define,
             .fold_duplicate_data = rand.boolean(),
-        });
+        };
+
+        utils.expectSameCvtResOutput(allocator, res_buffer.items, options) catch |err| {
+            std.debug.print("options: {}\n", .{options});
+            return err;
+        };
     }
 }
