@@ -74,6 +74,16 @@ pub fn build(b: *std.Build) void {
     compiler_tests.root_module.addImport("resinator", resinator);
     const run_compiler_tests = b.addRunArtifact(compiler_tests);
 
+    const cvtres_tests = b.addTest(.{
+        .name = "cvtres",
+        .root_source_file = b.path("test/cvtres.zig"),
+        .target = target,
+        .optimize = mode,
+        .filter = test_filter,
+    });
+    cvtres_tests.root_module.addImport("resinator", resinator);
+    const run_cvtres_tests = b.addRunArtifact(cvtres_tests);
+
     const run_cli_tests_step = addCliTests(b, exe);
 
     const test_step = b.step("test", "Run all tests");
@@ -81,6 +91,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_reference_tests.step);
     test_step.dependOn(&run_parser_tests.step);
     test_step.dependOn(&run_compiler_tests.step);
+    test_step.dependOn(&run_cvtres_tests.step);
     test_step.dependOn(run_cli_tests_step);
 
     const test_utils_module = b.createModule(.{
