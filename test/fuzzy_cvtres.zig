@@ -7,7 +7,7 @@ const resinator = @import("resinator");
 test "cvtres fuzz" {
     const allocator = std.testing.allocator;
     var random = std.Random.DefaultPrng.init(std.testing.random_seed);
-    var rand = random.random();
+    const rand = random.random();
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -100,4 +100,42 @@ test "cvtres fuzz" {
             return err;
         };
     }
+}
+
+test "all reserved types" {
+    const allocator = std.testing.allocator;
+    var random = std.Random.DefaultPrng.init(std.testing.random_seed);
+    const rand = random.random();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(tmp_path);
+
+    var data_buffer = std.ArrayList(u8).init(allocator);
+    defer data_buffer.deinit();
+
+    var res_buffer = std.ArrayList(u8).init(allocator);
+    defer res_buffer.deinit();
+
+    try utils.writePreface(res_buffer.writer());
+
+    // https://learn.microsoft.com/en-us/windows/win32/menurc/user-defined-resource
+    // > The numbers 1 through 255 are reserved for existing and future predefined resource types.
+    for (1..256) |predefined_type| {
+        _ = try utils.writeRandomValidResource(allocator, rand, res_buffer.writer(), .{
+            .set_type = .{ .ordinal = @intCast(predefined_type) },
+            .set_data = "foo",
+        });
+    }
+
+    // also write it to the top-level tmp dir for debugging
+    if (fuzzy_options.fuzzy_debug)
+        try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_cvtres_reserved_types.res", .data = res_buffer.items });
+
+    try utils.expectSameCvtResOutput(allocator, res_buffer.items, .{
+        .cwd = tmp.dir,
+        .cwd_path = tmp_path,
+    });
 }

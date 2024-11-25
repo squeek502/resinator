@@ -36,6 +36,10 @@ pub const Resource = struct {
         if (self.data.len != 0) return false;
         return true;
     }
+
+    pub fn isDlgInclude(resource: Resource) bool {
+        return resource.type_value == .ordinal and resource.type_value.ordinal == @intFromEnum(res.RT.DLGINCLUDE);
+    }
 };
 
 pub const ParsedResources = struct {
@@ -56,6 +60,7 @@ pub const ParsedResources = struct {
 
 pub const ParseResOptions = struct {
     skip_zero_data_resources: bool = true,
+    skip_dlginclude_resources: bool = true,
     max_size: u64,
 };
 
@@ -82,6 +87,8 @@ pub fn parseResInto(resources: *ParsedResources, reader: anytype, options: Parse
     while (bytes_remaining != 0) {
         const resource_and_size = try parseResource(allocator, reader, bytes_remaining);
         if (options.skip_zero_data_resources and resource_and_size.resource.data.len == 0) {
+            resource_and_size.resource.deinit(allocator);
+        } else if (options.skip_dlginclude_resources and resource_and_size.resource.isDlgInclude()) {
             resource_and_size.resource.deinit(allocator);
         } else {
             errdefer resource_and_size.resource.deinit(allocator);

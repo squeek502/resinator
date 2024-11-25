@@ -852,10 +852,21 @@ pub const RandomResourceOptions = struct {
 /// Returns the data size of the resource that was written
 pub fn writeRandomValidResource(allocator: Allocator, rand: std.Random, writer: anytype, options: RandomResourceOptions) !u32 {
     const data_size: u32 = if (options.set_data) |data| @intCast(data.len) else rand.uintAtMostBiased(u32, 150);
-    const name_value = options.set_name orelse try getRandomNameOrOrdinal(allocator, rand, 32);
-    defer if (options.set_name == null) name_value.deinit(allocator);
     const type_value = options.set_type orelse try getRandomNameOrOrdinal(allocator, rand, 32);
     defer if (options.set_type == null) type_value.deinit(allocator);
+
+    const name_value = name_value: {
+        // Avoid a cvtres.exe miscompilation where DLGINCLUDE resources are excluded, but their name
+        // value is written into the strings section anyway (even though it is not referenced by anything).
+        // This is a hacky approach, but we just force the ID to be an ordinal whenever the type is DLGINCLUDE.
+        if (type_value == .ordinal and type_value.ordinal == @intFromEnum(resinator.res.RT.DLGINCLUDE)) {
+            if (options.set_name != null and options.set_name.? == .ordinal)
+                break :name_value options.set_name.?;
+            break :name_value resinator.res.NameOrOrdinal{ .ordinal = rand.int(u16) };
+        }
+        break :name_value options.set_name orelse try getRandomNameOrOrdinal(allocator, rand, 32);
+    };
+    defer if (options.set_name == null) name_value.deinit(allocator);
 
     const header = resinator.compile.Compiler.ResourceHeader{
         .name_value = name_value,
