@@ -47,6 +47,10 @@ jobs:
         if: ${{ matrix.os != 'macos-latest' }}
         run: zig build test -Dtarget=x86-native
 
+      - name: Fuzzy Tests
+        if: ${{ matrix.os == 'windows-latest' }}
+        run: zig build test_fuzzy
+
       - name: Test big endian (mips)
         # TODO: Disabled due to segfault when running the compiled resinator
         #       binary with qemu-mips, unsure of the cause but might be in the

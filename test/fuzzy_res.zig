@@ -1,5 +1,5 @@
 const std = @import("std");
-const utils = @import("utils.zig");
+const utils = @import("test_utils");
 const fuzzy_options = @import("fuzzy_options");
 const iterations = fuzzy_options.max_iterations;
 const resinator = @import("resinator");
@@ -24,12 +24,13 @@ test "res preface fuzz" {
         res_buffer.clearRetainingCapacity();
 
         switch (rand.boolean()) {
-            true => try utils.writeRandomValidResource(allocator, rand, res_buffer.writer(), .{}),
+            true => _ = try utils.writeRandomValidResource(allocator, rand, res_buffer.writer(), .{}),
             false => try utils.writeRandomPotentiallyInvalidResource(allocator, rand, res_buffer.writer()),
         }
 
         // also write it to the top-level tmp dir for debugging
-        try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_res_preface.res", .data = res_buffer.items });
+        if (fuzzy_options.fuzzy_debug)
+            try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_res_preface.res", .data = res_buffer.items });
 
         var fbs = std.io.fixedBufferStream(res_buffer.items);
         var resources = resinator.cvtres.parseRes(allocator, fbs.reader(), .{
@@ -66,7 +67,8 @@ test "res fuzz" {
         }
 
         // also write it to the top-level tmp dir for debugging
-        try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_res.res", .data = res_buffer.items });
+        if (fuzzy_options.fuzzy_debug)
+            try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_res.res", .data = res_buffer.items });
 
         var fbs = std.io.fixedBufferStream(res_buffer.items);
         var resources = resinator.cvtres.parseRes(allocator, fbs.reader(), .{

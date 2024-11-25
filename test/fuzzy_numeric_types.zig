@@ -1,5 +1,5 @@
 const std = @import("std");
-const utils = @import("utils.zig");
+const utils = @import("test_utils");
 
 test "raw data" {
     const allocator = std.testing.allocator;

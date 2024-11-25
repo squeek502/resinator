@@ -1,5 +1,5 @@
 const std = @import("std");
-const utils = @import("utils.zig");
+const utils = @import("test_utils");
 const fuzzy_options = @import("fuzzy_options");
 const iterations = fuzzy_options.max_iterations;
 
@@ -79,7 +79,8 @@ test "ICON fuzz" {
         try tmp.dir.writeFile(.{ .sub_path = "test.ico", .data = icon_buffer.items });
 
         // also write it to the top-level tmp dir for debugging
-        try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_icons.ico", .data = icon_buffer.items });
+        if (fuzzy_options.fuzzy_debug)
+            try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_icons.ico", .data = icon_buffer.items });
 
         try utils.expectSameResOutput(allocator, source, .{
             .cwd = tmp.dir,

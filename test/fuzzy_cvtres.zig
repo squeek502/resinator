@@ -1,5 +1,5 @@
 const std = @import("std");
-const utils = @import("utils.zig");
+const utils = @import("test_utils");
 const fuzzy_options = @import("fuzzy_options");
 const iterations = fuzzy_options.max_iterations;
 const resinator = @import("resinator");
@@ -64,7 +64,8 @@ test "cvtres fuzz" {
         }
 
         // also write it to the top-level tmp dir for debugging
-        try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_cvtres.res", .data = res_buffer.items });
+        if (fuzzy_options.fuzzy_debug)
+            try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_cvtres.res", .data = res_buffer.items });
 
         const random_target: std.coff.MachineType = switch (rand.uintLessThan(u8, 8)) {
             0 => .X64,

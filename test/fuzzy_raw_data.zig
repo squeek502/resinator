@@ -1,5 +1,5 @@
 const std = @import("std");
-const utils = @import("utils.zig");
+const utils = @import("test_utils");
 
 test "single char in raw data block" {
     var source_buf = "1 RCDATA { ? }".*;

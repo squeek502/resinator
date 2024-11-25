@@ -1,6 +1,6 @@
 const std = @import("std");
 const resinator = @import("resinator");
-const utils = @import("utils.zig");
+const utils = @import("test_utils");
 const fuzzy_options = @import("fuzzy_options");
 const iterations = fuzzy_options.max_iterations;
 

@@ -1,5 +1,5 @@
 const std = @import("std");
-const utils = @import("utils.zig");
+const utils = @import("test_utils");
 const fuzzy_options = @import("fuzzy_options");
 const iterations = fuzzy_options.max_iterations;
 const resinator = @import("resinator");
@@ -78,7 +78,8 @@ test "BITMAP fuzz" {
         try tmp.dir.writeFile(.{ .sub_path = "test.bin", .data = image_buffer.items });
 
         // also write it to the top-level tmp dir for debugging
-        try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_bitmaps.bin", .data = image_buffer.items });
+        if (fuzzy_options.fuzzy_debug)
+            try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_bitmaps.bin", .data = image_buffer.items });
 
         var diagnostics = resinator.errors.Diagnostics.init(allocator);
         defer diagnostics.deinit();

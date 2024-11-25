@@ -1,5 +1,5 @@
 const std = @import("std");
-const utils = @import("utils.zig");
+const utils = @import("test_utils");
 const fuzzy_options = @import("fuzzy_options");
 const iterations = fuzzy_options.max_iterations;
 
@@ -30,7 +30,8 @@ test "fuzz" {
         const source = source_buffer.items;
 
         // write out the source file to disk for debugging
-        try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_stringtable_strings.rc", .data = source });
+        if (fuzzy_options.fuzzy_debug)
+            try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_stringtable_strings.rc", .data = source });
 
         try utils.expectSameResOutput(allocator, source, .{
             .cwd = tmp.dir,

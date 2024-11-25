@@ -1,5 +1,5 @@
 const std = @import("std");
-const utils = @import("utils.zig");
+const utils = @import("test_utils");
 
 const common_resource_attributes: []const []const u8 = &.{
     "PRELOAD",  "LOADONCALL",  "FIXED",
@@ -41,7 +41,6 @@ test "RCDATA common resource attribute permutations" {
         // batching large amounts of permutations together we hugely reduce the amount of time it takes this
         // test to run, since the bottleneck is the creation of each `.rc` and `.res` file.
         if (is_batch_i) {
-            std.debug.print("{}\n", .{perm_i});
             const source = source_buffer.items;
 
             try utils.expectSameResOutput(allocator, source, .{
