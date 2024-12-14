@@ -18,6 +18,8 @@ pub const usage_string_after_command_name =
     \\  -J --input-format=<format>    Specify input format
     \\  -O --output-format=<format>   Specify output format
     \\  -F --target=<target>          Specify COFF target
+    \\         pe-x86-64              (default) X86 (64-bit)
+    \\         pe-i386                X86 (32-bit)
     \\  -I --include-dir=<dir>        Add an include path
     \\  -D --define <name>[=<value>]  Define a symbol (during preprocessing)
     \\  -U --undefine <name>          Undefine a symbol (during preprocessing)
