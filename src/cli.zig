@@ -455,6 +455,29 @@ pub const Arg = struct {
         };
     }
 
+    pub fn looksLikeFilepath(self: Arg) bool {
+        const meets_min_requirements = self.prefix == .slash and isSupportedInputExtension(std.fs.path.extension(self.full));
+        if (!meets_min_requirements) return false;
+
+        const could_be_fo_option = could_be_fo_option: {
+            var window_it = std.mem.window(u8, self.full[1..], 2, 1);
+            while (window_it.next()) |window| {
+                if (std.ascii.eqlIgnoreCase(window, "fo")) break :could_be_fo_option true;
+                // If we see '/' before "fo", then it's not possible for this to be a valid
+                // `/fo` option.
+                if (window[0] == '/') break;
+            }
+            break :could_be_fo_option false;
+        };
+        if (!could_be_fo_option) return true;
+
+        // It's still possible for a file path to look like a /fo option but not actually
+        // be one, e.g. `/foo/bar.rc`. As a last ditch effort to reduce false negatives,
+        // check if the file path exists and, if so, then we ignore the 'could be /fo option'-ness
+        std.fs.accessAbsolute(self.full, .{}) catch return false;
+        return true;
+    }
+
     pub const Value = struct {
         slice: []const u8,
         /// Amount to increment the arg index to skip over both the option and the value arg(s)
@@ -558,6 +581,16 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                     continue :next_arg;
                 },
             }
+        }
+
+        const args_remaining = args.len - arg_i;
+        if (args_remaining <= 2 and arg.looksLikeFilepath()) {
+            var err_details = Diagnostics.ErrorDetails{ .type = .note, .print_args = true, .arg_index = arg_i };
+            var msg_writer = err_details.msg.writer(allocator);
+            try msg_writer.writeAll("this argument was inferred to be a filepath, so argument parsing was terminated");
+            try diagnostics.append(err_details);
+
+            break;
         }
 
         while (arg.name().len > 0) {
@@ -1641,39 +1674,43 @@ test "parse errors: basic" {
         \\
         \\
     );
-    try testParseError(&.{"/some/absolute/path/parsed/as/an/option.rc"},
-        \\<cli>: error: the /s option is unsupported
-        \\ ... /some/absolute/path/parsed/as/an/option.rc
-        \\     ~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        \\<cli>: error: missing input filename
-        \\
-        \\<cli>: note: if this argument was intended to be the input filename, adding -- in front of it will exclude it from option parsing
-        \\ ... /some/absolute/path/parsed/as/an/option.rc
-        \\     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        \\
-    );
-    try testParseError(&.{"/some/absolute/path/parsed/as/an/option.res"},
-        \\<cli>: error: the /s option is unsupported
-        \\ ... /some/absolute/path/parsed/as/an/option.res
-        \\     ~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        \\<cli>: error: missing input filename
-        \\
-        \\<cli>: note: if this argument was intended to be the input filename, adding -- in front of it will exclude it from option parsing
-        \\ ... /some/absolute/path/parsed/as/an/option.res
-        \\     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        \\
-    );
-    try testParseError(&.{"/some/absolute/path/parsed/as/an/option.rcpp"},
-        \\<cli>: error: the /s option is unsupported
-        \\ ... /some/absolute/path/parsed/as/an/option.rcpp
-        \\     ~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        \\<cli>: error: missing input filename
-        \\
-        \\<cli>: note: if this argument was intended to be the input filename, adding -- in front of it will exclude it from option parsing
-        \\ ... /some/absolute/path/parsed/as/an/option.rcpp
-        \\     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        \\
-    );
+}
+
+test "inferred absolute filepaths" {
+    {
+        var options = try testParseWarning(&.{ "/fo", "foo.res", "/home/absolute/path.rc" },
+            \\<cli>: note: this argument was inferred to be a filepath, so argument parsing was terminated
+            \\ ... /home/absolute/path.rc
+            \\     ^~~~~~~~~~~~~~~~~~~~~~
+            \\
+        );
+        defer options.deinit();
+    }
+    {
+        var options = try testParseWarning(&.{ "/home/absolute/path.rc", "foo.res" },
+            \\<cli>: note: this argument was inferred to be a filepath, so argument parsing was terminated
+            \\ ... /home/absolute/path.rc ...
+            \\     ^~~~~~~~~~~~~~~~~~~~~~
+            \\
+        );
+        defer options.deinit();
+    }
+    {
+        // Only the last two arguments are checked, so the /h is parsed as an option
+        var options = try testParse(&.{ "/home/absolute/path.rc", "foo.rc", "foo.res" });
+        defer options.deinit();
+
+        try std.testing.expect(options.print_help_and_exit);
+    }
+    {
+        var options = try testParse(&.{ "/xvFO/some/absolute/path.res", "foo.rc" });
+        defer options.deinit();
+
+        try std.testing.expectEqual(true, options.verbose);
+        try std.testing.expectEqual(true, options.ignore_include_env_var);
+        try std.testing.expectEqualStrings("foo.rc", options.input_source.filename);
+        try std.testing.expectEqualStrings("/some/absolute/path.res", options.output_source.filename);
+    }
 }
 
 test "parse errors: /ln" {
