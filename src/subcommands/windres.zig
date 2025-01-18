@@ -39,6 +39,15 @@ pub const usage_string_after_command_name =
     \\  @<file>                 Reading the options from a file is unsupported
     \\  -V --version            Printing version information is unsupported
     \\
+    \\Custom Options (resinator-specific):
+    \\  --:auto-includes <value>  Set the automatic include path detection behavior.
+    \\    any                     (default) Use MSVC if available, fall back to MinGW
+    \\    msvc                    Use MSVC include paths (must be present on the system)
+    \\    gnu                     Use MinGW include paths
+    \\    none                    Do not use any autodetected include paths
+    \\
+    \\Note: For compatibility reasons, all custom options start with :
+    \\
 ;
 
 pub fn writeUsage(writer: anytype, command_name: []const u8) !void {
@@ -55,7 +64,6 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
         .input_source = .{ .stdio = std.io.getStdIn() },
         .output_source = .{ .stdio = std.io.getStdOut() },
         .ignore_include_env_var = true,
-        .auto_includes = .none,
         .subcommand = .windres,
     };
     errdefer options.deinit();
@@ -328,6 +336,18 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
                     }
                 },
                 .r => arg.name_offset += option_and_len.length,
+                .auto_includes => {
+                    const value = maybe_value.?;
+                    options.auto_includes = std.meta.stringToEnum(Options.AutoIncludes, value.slice) orelse blk: {
+                        var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = value.argSpan(arg) };
+                        var msg_writer = err_details.msg.writer(allocator);
+                        try msg_writer.print("invalid auto includes setting: {s} ", .{value.slice});
+                        try diagnostics.append(err_details);
+                        break :blk options.auto_includes;
+                    };
+                    arg_i += value.index_increment;
+                    continue :next_arg;
+                },
             }
         } else {
             // The while loop exited via its conditional, meaning we are done with
@@ -596,6 +616,7 @@ const Option = enum {
     use_temp_file,
     no_use_temp_file,
     version,
+    auto_includes,
 
     const OptionAndLength = struct {
         option: Option,
@@ -622,6 +643,7 @@ const Option = enum {
             .use_temp_file => "use-temp-file",
             .no_use_temp_file => "no-use-temp-file",
             .version => "version",
+            .auto_includes => ":auto-includes",
         };
     }
 
@@ -639,6 +661,7 @@ const Option = enum {
             .language,
             .preprocessor,
             .preprocessor_arg,
+            .auto_includes,
             => true,
             .verbose,
             .help,
