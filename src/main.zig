@@ -122,7 +122,8 @@ pub fn main() !void {
     defer options.deinit();
 
     if (options.print_help_and_exit) {
-        try cli.writeUsage(stderr.writer(), "resinator");
+        const stdout = std.io.getStdOut();
+        try cli.writeUsage(stdout.writer(), "resinator");
         return;
     }
 
