@@ -61,6 +61,9 @@ pub fn getCachePath(allocator: Allocator, appname: []const u8) error{OutOfMemory
             return try std.fs.path.join(allocator, &.{ local_app_data, "Temp", appname });
         },
         .macos => {
+            if (std.posix.getenv("XDG_CACHE_HOME")) |cache| {
+                return try std.fs.path.join(allocator, &.{ cache, appname });
+            }
             const home = std.posix.getenv("HOME") orelse return null;
             return try std.fs.path.join(allocator, &.{ home, "Library/Caches", appname });
         },
