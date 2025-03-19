@@ -27,6 +27,7 @@ pub const usage_string_after_command_name =
     \\  -c --codepage=<codepage>      Specify default codepage
     \\  -l --language=<value>         Set default language using hexadecimal id (ex: 409)
     \\  -h --help                     Print this help and exit
+    \\  -V --version                  Printing version information and exit
     \\
     \\No-op GNU windres Options:
     \\     --preprocessor=<program>   The built-in preprocessor is used instead
@@ -37,7 +38,6 @@ pub const usage_string_after_command_name =
     \\
     \\Unsupported GNU windres Options:
     \\  @<file>                 Reading the options from a file is unsupported
-    \\  -V --version            Printing version information is unsupported
     \\
     \\Custom Options (resinator-specific):
     \\  --:auto-includes <value>  Set the automatic include path detection behavior.
@@ -323,17 +323,13 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
                     }
                 },
                 .version => {
-                    var err_details = Diagnostics.ErrorDetails{ .type = .err, .arg_index = arg_i, .arg_span = arg.optionSpan(option_and_len.length) };
-                    var msg_writer = err_details.msg.writer(allocator);
-                    try msg_writer.print("the {s}{s} option is unsupported", .{ arg.prefixSlice(), arg.optionWithoutPrefix(option_and_len.length) });
-                    try diagnostics.append(err_details);
-                    if (arg.prefix == .short) {
-                        arg.name_offset += 1;
-                        continue :next_option;
-                    } else {
-                        arg_i += 1;
-                        continue :next_arg;
-                    }
+                    // This is only here to trick meson into thinking we're windres
+                    // TODO: Formalize this, probably should be handled similarly to --help,
+                    //       i.e. set something in options and return, print at the callsite.
+                    std.io.getStdOut().writer().writeAll("Drop-in compatible with GNU windres.\n") catch {
+                        std.process.exit(1);
+                    };
+                    std.process.exit(0);
                 },
                 .r => arg.name_offset += option_and_len.length,
                 .auto_includes => {
