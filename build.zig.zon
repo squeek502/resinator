@@ -1,10 +1,11 @@
 .{
-    .name = "resinator",
+    .name = .resinator,
     .version = "0.1.0",
+    .fingerprint = 0xf8223bb821ba5ab2,
     .dependencies = .{
         .aro = .{
-            .url = "https://github.com/Vexu/arocc/archive/7a404727b6d3a4d0cae55807c6473958599d065a.tar.gz",
-            .hash = "1220903be62612f5863567a8c1b0e810713de1b5c0a6a10714fb7f3b7993656a168c",
+            .url = "https://github.com/Vexu/arocc/archive/d768f7dd38de9e99e3a3a78b2f5f674b34e62c7b.tar.gz",
+            .hash = "1220606948f8f4b0f698d50ee5c8f61d22bcc0f988f9a5a99e7bfca4be51e4d080d1",
         },
         .compressed_mingw_includes = .{
             .url = "https://github.com/squeek502/compressed_mingw_includes/releases/download/1.0.2/compressed_mingw_includes.tar",
