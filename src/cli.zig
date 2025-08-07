@@ -142,13 +142,12 @@ pub const Diagnostics = struct {
     }
 
     pub fn renderToStdErr(self: *Diagnostics, args: []const []const u8, config: std.io.tty.Config) void {
-        std.debug.lockStdErr();
-        defer std.debug.unlockStdErr();
-        const stderr = std.io.getStdErr().writer();
+        const stderr = std.debug.lockStderrWriter(&.{});
+        defer std.debug.unlockStderrWriter();
         self.renderToWriter(args, stderr, config) catch return;
     }
 
-    pub fn renderToWriter(self: *Diagnostics, args: []const []const u8, writer: anytype, config: std.io.tty.Config) !void {
+    pub fn renderToWriter(self: *Diagnostics, args: []const []const u8, writer: *std.io.Writer, config: std.io.tty.Config) !void {
         for (self.errors.items) |err_details| {
             try renderErrorMessage(writer, config, err_details, args);
         }
@@ -382,9 +381,9 @@ pub const Options = struct {
 
         const language_id = self.default_language_id orelse res.Language.default;
         const language_name = language_name: {
-            if (std.meta.intToEnum(lang.LanguageId, language_id)) |lang_enum_val| {
+            if (std.enums.fromInt(lang.LanguageId, language_id)) |lang_enum_val| {
                 break :language_name @tagName(lang_enum_val);
-            } else |_| {}
+            }
             if (language_id == lang.LOCALE_CUSTOM_UNSPECIFIED) {
                 break :language_name "LOCALE_CUSTOM_UNSPECIFIED";
             }
@@ -1196,6 +1195,8 @@ pub fn parse(allocator: Allocator, args: []const []const u8, diagnostics: *Diagn
                 }
                 output_format = .res;
             }
+        } else {
+            output_format_source = .output_format_arg;
         }
         options.output_source = .{ .filename = try filepathWithExtension(allocator, options.input_source.filename, output_format.?.extension()) };
     } else {
@@ -1457,7 +1458,7 @@ test parsePercent {
     try std.testing.expectError(error.InvalidFormat, parsePercent("~1"));
 }
 
-pub fn renderErrorMessage(writer: anytype, config: std.io.tty.Config, err_details: Diagnostics.ErrorDetails, args: []const []const u8) !void {
+pub fn renderErrorMessage(writer: *std.io.Writer, config: std.io.tty.Config, err_details: Diagnostics.ErrorDetails, args: []const []const u8) !void {
     try config.setColor(writer, .dim);
     try writer.writeAll("<cli>");
     try config.setColor(writer, .reset);
@@ -1535,27 +1536,27 @@ pub fn renderErrorMessage(writer: anytype, config: std.io.tty.Config, err_detail
     try writer.writeByte('\n');
 
     try config.setColor(writer, .green);
-    try writer.writeByteNTimes(' ', prefix.len);
+    try writer.splatByteAll(' ', prefix.len);
     // Special case for when the option is *only* a prefix (e.g. invalid option: -)
     if (err_details.arg_span.prefix_len == arg_with_name.len) {
-        try writer.writeByteNTimes('^', err_details.arg_span.prefix_len);
+        try writer.splatByteAll('^', err_details.arg_span.prefix_len);
     } else {
-        try writer.writeByteNTimes('~', err_details.arg_span.prefix_len);
-        try writer.writeByteNTimes(' ', err_details.arg_span.name_offset - err_details.arg_span.prefix_len);
+        try writer.splatByteAll('~', err_details.arg_span.prefix_len);
+        try writer.splatByteAll(' ', err_details.arg_span.name_offset - err_details.arg_span.prefix_len);
         if (!err_details.arg_span.point_at_next_arg and err_details.arg_span.value_offset == 0) {
             try writer.writeByte('^');
-            try writer.writeByteNTimes('~', name_slice.len - 1);
+            try writer.splatByteAll('~', name_slice.len - 1);
         } else if (err_details.arg_span.value_offset > 0) {
-            try writer.writeByteNTimes('~', err_details.arg_span.value_offset - err_details.arg_span.name_offset);
+            try writer.splatByteAll('~', err_details.arg_span.value_offset - err_details.arg_span.name_offset);
             try writer.writeByte('^');
             if (err_details.arg_span.value_offset < arg_with_name.len) {
-                try writer.writeByteNTimes('~', arg_with_name.len - err_details.arg_span.value_offset - 1);
+                try writer.splatByteAll('~', arg_with_name.len - err_details.arg_span.value_offset - 1);
             }
         } else if (err_details.arg_span.point_at_next_arg) {
-            try writer.writeByteNTimes('~', arg_with_name.len - err_details.arg_span.name_offset + 1);
+            try writer.splatByteAll('~', arg_with_name.len - err_details.arg_span.name_offset + 1);
             try writer.writeByte('^');
             if (next_arg_len > 0) {
-                try writer.writeByteNTimes('~', next_arg_len - 1);
+                try writer.splatByteAll('~', next_arg_len - 1);
             }
         }
     }
@@ -1584,21 +1585,21 @@ fn testParseOutput(args: []const []const u8, expected_output: []const u8) !?Opti
     var diagnostics = Diagnostics.init(std.testing.allocator);
     defer diagnostics.deinit();
 
-    var output = std.ArrayList(u8).init(std.testing.allocator);
+    var output: std.io.Writer.Allocating = .init(std.testing.allocator);
     defer output.deinit();
 
     var options = parse(std.testing.allocator, args, &diagnostics) catch |err| switch (err) {
         error.ParseError => {
-            try diagnostics.renderToWriter(args, output.writer(), .no_color);
-            try std.testing.expectEqualStrings(expected_output, output.items);
+            try diagnostics.renderToWriter(args, &output.writer, .no_color);
+            try std.testing.expectEqualStrings(expected_output, output.getWritten());
             return null;
         },
         else => |e| return e,
     };
     errdefer options.deinit();
 
-    try diagnostics.renderToWriter(args, output.writer(), .no_color);
-    try std.testing.expectEqualStrings(expected_output, output.items);
+    try diagnostics.renderToWriter(args, &output.writer, .no_color);
+    try std.testing.expectEqualStrings(expected_output, output.getWritten());
     return options;
 }
 

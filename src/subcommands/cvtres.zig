@@ -30,7 +30,7 @@ pub const usage_string_after_command_name =
     \\
 ;
 
-pub fn writeUsage(writer: anytype, command_name: []const u8) !void {
+pub fn writeUsage(writer: *std.io.Writer, command_name: []const u8) !void {
     try writer.writeAll("Usage: ");
     try writer.writeAll(command_name);
     try writer.writeAll(usage_string_after_command_name);

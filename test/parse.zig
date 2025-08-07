@@ -2270,11 +2270,11 @@ fn testParse(source: []const u8, expected_ast_dump: []const u8) !void {
     };
     defer tree.deinit();
 
-    var buf = std.ArrayList(u8).init(allocator);
+    var buf: std.io.Writer.Allocating = .init(allocator);
     defer buf.deinit();
 
-    try tree.dump(buf.writer());
-    try std.testing.expectEqualStrings(expected_ast_dump, buf.items);
+    try tree.dump(&buf.writer);
+    try std.testing.expectEqualStrings(expected_ast_dump, buf.getWritten());
 }
 
 const ExpectedErrorDetails = struct {
@@ -2310,7 +2310,9 @@ fn testParseErrorDetails(expected_details: []const ExpectedErrorDetails, source:
 
     if (tree != null and expect_fail) {
         std.debug.print("expected parse error, got tree:\n", .{});
-        try tree.?.dump(std.io.getStdErr().writer());
+        const stderr = std.debug.lockStderrWriter(&.{});
+        defer std.debug.unlockStderrWriter();
+        try tree.?.dump(stderr);
         return error.UnexpectedSuccess;
     }
 
@@ -2331,10 +2333,10 @@ fn testParseErrorDetails(expected_details: []const ExpectedErrorDetails, source:
     }
 
     if (maybe_expected_output) |expected_output| {
-        var buf = std.ArrayList(u8).init(allocator);
+        var buf: std.io.Writer.Allocating = .init(allocator);
         defer buf.deinit();
 
-        try tree.?.dump(buf.writer());
-        try std.testing.expectEqualStrings(expected_output, buf.items);
+        try tree.?.dump(&buf.writer);
+        try std.testing.expectEqualStrings(expected_output, buf.getWritten());
     }
 }

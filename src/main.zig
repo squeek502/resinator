@@ -31,8 +31,10 @@ pub fn main() !void {
     if (builtin.os.tag == .windows) {
         _ = std.os.windows.kernel32.SetConsoleOutputCP(65001);
     }
-    const stderr = std.io.getStdErr();
-    const stderr_config = std.io.tty.detectConfig(stderr);
+    const stderr_handle = std.fs.File.stderr();
+    const stderr_config = std.io.tty.detectConfig(stderr_handle);
+    var stderr_writer = stderr_handle.writer(&.{});
+    const stderr = &stderr_writer.interface;
 
     var options = options: {
         const all_args = try std.process.argsAlloc(allocator);
@@ -64,7 +66,7 @@ pub fn main() !void {
             }
 
             if (options.print_help_and_exit) {
-                try subcommands.cvtres.writeUsage(stderr.writer(), "resinator cvtres");
+                try subcommands.cvtres.writeUsage(stderr, "resinator cvtres");
                 return;
             }
 
@@ -91,7 +93,7 @@ pub fn main() !void {
             }
 
             if (options.print_help_and_exit) {
-                try subcommands.windres.writeUsage(stderr.writer(), "resinator windres");
+                try subcommands.windres.writeUsage(stderr, "resinator windres");
                 return;
             }
 
@@ -122,12 +124,12 @@ pub fn main() !void {
     defer options.deinit();
 
     if (options.print_help_and_exit) {
-        const stdout = std.io.getStdOut();
-        try cli.writeUsage(stdout.writer(), "resinator");
+        const stdout = std.fs.File.stdout();
+        try cli.writeUsage(stdout.deprecatedWriter(), "resinator");
         return;
     }
 
-    const stdout_writer = std.io.getStdOut().writer();
+    const stdout_writer = std.fs.File.stdout().deprecatedWriter();
     if (options.verbose) {
         try options.dumpVerbose(stdout_writer);
         try stdout_writer.writeByte('\n');
@@ -147,24 +149,24 @@ pub fn main() !void {
         else => {
             switch (err) {
                 error.MsvcIncludesNotFound => {
-                    try renderErrorMessage(stderr.writer(), stderr_config, .err, "MSVC include paths could not be automatically detected", .{});
+                    try renderErrorMessage(stderr, stderr_config, .err, "MSVC include paths could not be automatically detected", .{});
                 },
                 error.CannotResolveCachePath => {
-                    try renderErrorMessage(stderr.writer(), stderr_config, .err, "could not resolve global cache path (for MinGW auto includes)", .{});
+                    try renderErrorMessage(stderr, stderr_config, .err, "could not resolve global cache path (for MinGW auto includes)", .{});
                 },
                 // All other errors are related to MinGW includes
                 else => {
-                    try renderErrorMessage(stderr.writer(), stderr_config, .err, "failed to find / extract cached MinGW includes: {s}", .{@errorName(err)});
+                    try renderErrorMessage(stderr, stderr_config, .err, "failed to find / extract cached MinGW includes: {s}", .{@errorName(err)});
                 },
             }
-            try renderErrorMessage(stderr.writer(), stderr_config, .note, "to disable auto includes, use the option /:auto-includes none", .{});
+            try renderErrorMessage(stderr, stderr_config, .note, "to disable auto includes, use the option /:auto-includes none", .{});
             std.process.exit(1);
         },
     };
 
     const full_input = full_input: {
         if (options.input_format == .rc and options.preprocess != .no) {
-            var preprocessed_buf = std.ArrayList(u8).init(allocator);
+            var preprocessed_buf: std.io.Writer.Allocating = .init(allocator);
             errdefer preprocessed_buf.deinit();
 
             // We're going to throw away everything except the final preprocessed output anyway,
@@ -173,7 +175,15 @@ pub fn main() !void {
             defer aro_arena_state.deinit();
             const aro_arena = aro_arena_state.allocator();
 
-            var comp = aro.Compilation.init(aro_arena, std.fs.cwd());
+            var diagnostics: aro.Diagnostics = .{ .output = .{
+                .to_writer = .{
+                    .writer = stderr,
+                    .color = stderr_config,
+                },
+            } };
+            defer diagnostics.deinit();
+
+            var comp = aro.Compilation.init(aro_arena, aro_arena, &diagnostics, std.fs.cwd());
             defer comp.deinit();
 
             var argv = std.ArrayList([]const u8).init(comp.gpa);
@@ -194,22 +204,22 @@ pub fn main() !void {
                 try stdout_writer.print("{s}\n\n", .{argv.items[argv.items.len - 1]});
             }
 
-            preprocess.preprocess(&comp, preprocessed_buf.writer(), argv.items, maybe_dependencies_list) catch |err| switch (err) {
+            preprocess.preprocess(&comp, &preprocessed_buf.writer, argv.items, maybe_dependencies_list) catch |err| switch (err) {
                 error.GeneratedSourceError => {
-                    // extra newline to separate this line from the aro errors
-                    try renderErrorMessage(stderr.writer(), stderr_config, .err, "failed during preprocessor setup (this is always a bug):\n", .{});
-                    aro.Diagnostics.render(&comp, stderr_config);
+                    try renderErrorMessage(stderr, stderr_config, .err, "failed during preprocessor setup (this is always a bug)", .{});
                     std.process.exit(1);
                 },
                 // ArgError can occur if e.g. the .rc file is not found
                 error.ArgError, error.PreprocessError => {
-                    // extra newline to separate this line from the aro errors
-                    try renderErrorMessage(stderr.writer(), stderr_config, .err, "failed during preprocessing:\n", .{});
-                    aro.Diagnostics.render(&comp, stderr_config);
+                    try renderErrorMessage(stderr, stderr_config, .err, "failed during preprocessing", .{});
                     std.process.exit(1);
                 },
-                error.StreamTooLong => {
-                    try renderErrorMessage(stderr.writer(), stderr_config, .err, "failed during preprocessing: maximum file size exceeded", .{});
+                error.FileTooBig => {
+                    try renderErrorMessage(stderr, stderr_config, .err, "failed during preprocessing: maximum file size exceeded", .{});
+                    std.process.exit(1);
+                },
+                error.WriteFailed => {
+                    try renderErrorMessage(stderr, stderr_config, .err, "failed during preprocessing: error writing the preprocessed output", .{});
                     std.process.exit(1);
                 },
                 error.OutOfMemory => |e| return e,
@@ -220,13 +230,13 @@ pub fn main() !void {
             switch (options.input_source) {
                 .stdio => |file| {
                     break :full_input file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
-                        try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to read input from stdin: {s}", .{@errorName(err)});
+                        try renderErrorMessage(stderr, stderr_config, .err, "unable to read input from stdin: {s}", .{@errorName(err)});
                         std.process.exit(1);
                     };
                 },
                 .filename => |input_filename| {
                     break :full_input std.fs.cwd().readFileAlloc(allocator, input_filename, std.math.maxInt(usize)) catch |err| {
-                        try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to read input file path '{s}': {s}", .{ input_filename, @errorName(err) });
+                        try renderErrorMessage(stderr, stderr_config, .err, "unable to read input file path '{s}': {s}", .{ input_filename, @errorName(err) });
                         std.process.exit(1);
                     };
                 },
@@ -257,12 +267,12 @@ pub fn main() !void {
             }
         else if (options.input_format == .res)
             IoStream.fromIoSource(options.input_source, .input) catch |err| {
-                try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to read res file path '{s}': {s}", .{ options.input_source.filename, @errorName(err) });
+                try renderErrorMessage(stderr, stderr_config, .err, "unable to read res file path '{s}': {s}", .{ options.input_source.filename, @errorName(err) });
                 std.process.exit(1);
             }
         else
             IoStream.fromIoSource(options.output_source, .output) catch |err| {
-                try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to create output file '{s}': {s}", .{ options.output_source.filename, @errorName(err) });
+                try renderErrorMessage(stderr, stderr_config, .err, "unable to create output file '{s}': {s}", .{ options.output_source.filename, @errorName(err) });
                 std.process.exit(1);
             };
         defer res_stream.deinit(allocator);
@@ -275,17 +285,17 @@ pub fn main() !void {
                 var mapping_results = parseAndRemoveLineCommands(allocator, full_input, full_input, .{ .initial_filename = options.input_source.filename }) catch |err| switch (err) {
                     error.InvalidLineCommand => {
                         // TODO: Maybe output the invalid line command
-                        try renderErrorMessage(stderr.writer(), stderr_config, .err, "invalid line command in the preprocessed source", .{});
+                        try renderErrorMessage(stderr, stderr_config, .err, "invalid line command in the preprocessed source", .{});
                         if (options.preprocess == .no) {
-                            try renderErrorMessage(stderr.writer(), stderr_config, .note, "line commands must be of the format: #line <num> \"<path>\"", .{});
+                            try renderErrorMessage(stderr, stderr_config, .note, "line commands must be of the format: #line <num> \"<path>\"", .{});
                         } else {
-                            try renderErrorMessage(stderr.writer(), stderr_config, .note, "this is likely to be a bug, please report it", .{});
+                            try renderErrorMessage(stderr, stderr_config, .note, "this is likely to be a bug, please report it", .{});
                         }
                         std.process.exit(1);
                     },
                     error.LineNumberOverflow => {
                         // TODO: Better error message
-                        try renderErrorMessage(stderr.writer(), stderr_config, .err, "line number count exceeded maximum of {}", .{std.math.maxInt(usize)});
+                        try renderErrorMessage(stderr, stderr_config, .err, "line number count exceeded maximum of {}", .{std.math.maxInt(usize)});
                         std.process.exit(1);
                     },
                     error.OutOfMemory => |e| return e,
@@ -325,7 +335,7 @@ pub fn main() !void {
                         };
                         defer tree.deinit();
 
-                        try tree.dump(stderr.writer());
+                        try tree.dump(stderr);
                         std.debug.print("\n", .{});
                     }
                 }
@@ -375,17 +385,19 @@ pub fn main() !void {
                 // write the depfile
                 if (options.depfile_path) |depfile_path| {
                     var depfile = std.fs.cwd().createFile(depfile_path, .{}) catch |err| {
-                        try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to create depfile '{s}': {s}", .{ depfile_path, @errorName(err) });
+                        try renderErrorMessage(stderr, stderr_config, .err, "unable to create depfile '{s}': {s}", .{ depfile_path, @errorName(err) });
                         std.process.exit(1);
                     };
                     defer depfile.close();
 
-                    const depfile_writer = depfile.writer();
-                    var depfile_buffered_writer = std.io.bufferedWriter(depfile_writer);
+                    var depfile_buffer: [256]u8 = undefined;
+                    var depfile_writer = depfile.writer(&depfile_buffer);
                     switch (options.depfile_fmt) {
                         .json => {
-                            var write_stream = std.json.writeStream(depfile_buffered_writer.writer(), .{ .whitespace = .indent_2 });
-                            defer write_stream.deinit();
+                            var write_stream: std.json.Stringify = .{
+                                .writer = &depfile_writer.interface,
+                                .options = .{ .whitespace = .indent_2 },
+                            };
 
                             try write_stream.beginArray();
                             for (dependencies_list.items) |dep_path| {
@@ -394,14 +406,14 @@ pub fn main() !void {
                             try write_stream.endArray();
                         },
                     }
-                    try depfile_buffered_writer.flush();
+                    try depfile_writer.interface.flush();
                 }
             }
 
             if (options.output_format != .coff) return;
 
             break :res_data res_stream.source.readAll(allocator) catch |err| {
-                try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to read res from '{s}': {s}", .{ res_stream.name, @errorName(err) });
+                try renderErrorMessage(stderr, stderr_config, .err, "unable to read res from '{s}': {s}", .{ res_stream.name, @errorName(err) });
                 std.process.exit(1);
             };
         };
@@ -411,10 +423,10 @@ pub fn main() !void {
         std.debug.assert(options.output_format == .coff);
 
         // TODO: Maybe use a buffered file reader instead of reading file into memory -> fbs
-        var fbs = std.io.fixedBufferStream(res_data.bytes);
-        break :resources cvtres.parseRes(allocator, fbs.reader(), .{ .max_size = res_data.bytes.len }) catch |err| {
+        var res_reader: std.Io.Reader = .fixed(res_data.bytes);
+        break :resources cvtres.parseRes(allocator, &res_reader, .{ .max_size = res_data.bytes.len }) catch |err| {
             // TODO: Better errors
-            try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to parse res from '{s}': {s}", .{ res_stream.name, @errorName(err) });
+            try renderErrorMessage(stderr, stderr_config, .err, "unable to parse res from '{s}': {s}", .{ res_stream.name, @errorName(err) });
             std.process.exit(1);
         };
     };
@@ -422,26 +434,27 @@ pub fn main() !void {
 
     for (options.additional_inputs.items) |additional_res| {
         const additional_file = openFileNotDir(std.fs.cwd(), additional_res, .{}) catch |err| {
-            try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to read res file path '{s}': {s}", .{ additional_res, @errorName(err) });
+            try renderErrorMessage(stderr, stderr_config, .err, "unable to read res file path '{s}': {s}", .{ additional_res, @errorName(err) });
             std.process.exit(1);
         };
         defer additional_file.close();
 
         const file_len = additional_file.getEndPos() catch |err| {
-            try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to determine size of res file '{s}': {s}", .{ additional_res, @errorName(err) });
+            try renderErrorMessage(stderr, stderr_config, .err, "unable to determine size of res file '{s}': {s}", .{ additional_res, @errorName(err) });
             std.process.exit(1);
         };
 
-        var buffered_reader = std.io.bufferedReader(additional_file.reader());
-        cvtres.parseResInto(&resources, buffered_reader.reader(), .{ .max_size = file_len }) catch |err| {
+        var buf: [256]u8 = undefined;
+        var reader = additional_file.reader(&buf);
+        cvtres.parseResInto(&resources, &reader.interface, .{ .max_size = file_len }) catch |err| {
             // TODO: Better errors
-            try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to parse res file '{s}': {s}", .{ additional_res, @errorName(err) });
+            try renderErrorMessage(stderr, stderr_config, .err, "unable to parse res file '{s}': {s}", .{ additional_res, @errorName(err) });
             std.process.exit(1);
         };
     }
 
     var coff_stream = IoStream.fromIoSource(options.output_source, .output) catch |err| {
-        try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to create output file '{s}': {s}", .{ options.output_source.filename, @errorName(err) });
+        try renderErrorMessage(stderr, stderr_config, .err, "unable to create output file '{s}': {s}", .{ options.output_source.filename, @errorName(err) });
         std.process.exit(1);
     };
     defer coff_stream.deinit(allocator);
@@ -453,7 +466,7 @@ pub fn main() !void {
         switch (err) {
             error.DuplicateResource => {
                 const duplicate_resource = resources.list.items[cvtres_diagnostics.duplicate_resource];
-                try renderErrorMessage(stderr.writer(), stderr_config, .err, "duplicate resource [id: {}, type: {}, language: {}]", .{
+                try renderErrorMessage(stderr, stderr_config, .err, "duplicate resource [id: {f}, type: {f}, language: {f}]", .{
                     duplicate_resource.name_value,
                     fmtResourceType(duplicate_resource.type_value),
                     duplicate_resource.language,
@@ -462,8 +475,8 @@ pub fn main() !void {
             },
             error.ResourceDataTooLong => {
                 const overflow_resource = resources.list.items[cvtres_diagnostics.duplicate_resource];
-                try renderErrorMessage(stderr.writer(), stderr_config, .err, "resource has a data length that is too large to be written into a coff section", .{});
-                try renderErrorMessage(stderr.writer(), stderr_config, .note, "the resource with the invalid size is [id: {}, type: {}, language: {}]", .{
+                try renderErrorMessage(stderr, stderr_config, .err, "resource has a data length that is too large to be written into a coff section", .{});
+                try renderErrorMessage(stderr, stderr_config, .note, "the resource with the invalid size is [id: {f}, type: {f}, language: {f}]", .{
                     overflow_resource.name_value,
                     fmtResourceType(overflow_resource.type_value),
                     overflow_resource.language,
@@ -471,15 +484,15 @@ pub fn main() !void {
             },
             error.TotalResourceDataTooLong => {
                 const overflow_resource = resources.list.items[cvtres_diagnostics.duplicate_resource];
-                try renderErrorMessage(stderr.writer(), stderr_config, .err, "total resource data exceeds the maximum of the coff 'size of raw data' field", .{});
-                try renderErrorMessage(stderr.writer(), stderr_config, .note, "size overflow occurred when attempting to write this resource: [id: {}, type: {}, language: {}]", .{
+                try renderErrorMessage(stderr, stderr_config, .err, "total resource data exceeds the maximum of the coff 'size of raw data' field", .{});
+                try renderErrorMessage(stderr, stderr_config, .note, "size overflow occurred when attempting to write this resource: [id: {f}, type: {f}, language: {f}]", .{
                     overflow_resource.name_value,
                     fmtResourceType(overflow_resource.type_value),
                     overflow_resource.language,
                 });
             },
             else => {
-                try renderErrorMessage(stderr.writer(), stderr_config, .err, "unable to write coff output file '{s}': {s}", .{ coff_stream.name, @errorName(err) });
+                try renderErrorMessage(stderr, stderr_config, .err, "unable to write coff output file '{s}': {s}", .{ coff_stream.name, @errorName(err) });
             },
         }
         // Delete the output file on error
@@ -582,7 +595,7 @@ const IoStream = struct {
             allocator: std.mem.Allocator,
         };
         pub const WriteError = std.mem.Allocator.Error || std.fs.File.WriteError;
-        pub const Writer = std.io.Writer(WriterContext, WriteError, write);
+        pub const Writer = std.io.GenericWriter(WriterContext, WriteError, write);
 
         pub fn write(ctx: WriterContext, bytes: []const u8) WriteError!usize {
             switch (ctx.self.*) {

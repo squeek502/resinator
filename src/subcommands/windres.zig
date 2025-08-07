@@ -50,7 +50,7 @@ pub const usage_string_after_command_name =
     \\
 ;
 
-pub fn writeUsage(writer: anytype, command_name: []const u8) !void {
+pub fn writeUsage(writer: *std.io.Writer, command_name: []const u8) !void {
     try writer.writeAll("Usage: ");
     try writer.writeAll(command_name);
     try writer.writeAll(usage_string_after_command_name);
@@ -61,8 +61,8 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
         .allocator = allocator,
         .input_format = .res,
         .output_format = .coff,
-        .input_source = .{ .stdio = std.io.getStdIn() },
-        .output_source = .{ .stdio = std.io.getStdOut() },
+        .input_source = .{ .stdio = std.fs.File.stdin() },
+        .output_source = .{ .stdio = std.fs.File.stdout() },
         .ignore_include_env_var = true,
         .subcommand = .windres,
     };
@@ -326,7 +326,7 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
                     // This is only here to trick meson into thinking we're windres
                     // TODO: Formalize this, probably should be handled similarly to --help,
                     //       i.e. set something in options and return, print at the callsite.
-                    std.io.getStdOut().writer().writeAll("Drop-in compatible with GNU windres.\n") catch {
+                    std.fs.File.stdout().deprecatedWriter().writeAll("Drop-in compatible with GNU windres.\n") catch {
                         std.process.exit(1);
                     };
                     std.process.exit(0);

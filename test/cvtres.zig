@@ -68,9 +68,9 @@ test "res to coff" {
 }
 
 fn testResToCoff(res_data: []const u8, expected_coff: []const u8) !void {
-    var fbs = std.io.fixedBufferStream(res_data);
+    var res_reader: std.Io.Reader = .fixed(res_data);
 
-    var resources = try parseRes(std.testing.allocator, fbs.reader(), .{ .max_size = res_data.len });
+    var resources = try parseRes(std.testing.allocator, &res_reader, .{ .max_size = res_data.len });
     defer resources.deinit();
 
     var buf = try std.ArrayList(u8).initCapacity(std.testing.allocator, expected_coff.len);

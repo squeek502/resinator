@@ -1,14 +1,7 @@
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
-    // Standard target options allows the person running `zig build` to choose
-    // what target to build for. Here we do not override the defaults, which
-    // means any target is allowed, and the default is native. Other options
-    // for restricting supported target set are available.
     const target = b.standardTargetOptions(.{});
-
-    // Standard release options allow the person running `zig build` to select
-    // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     const mode = b.standardOptimizeOption(.{});
 
     const aro = b.dependency("aro", .{
@@ -20,6 +13,8 @@ pub fn build(b: *std.Build) void {
     const compressed_mingw_includes_module = compressed_mingw_includes.module("compressed_mingw_includes");
     const resinator = b.addModule("resinator", .{
         .root_source_file = b.path("src/resinator.zig"),
+        .target = target,
+        .optimize = mode,
         .imports = &.{
             .{ .name = "aro", .module = aro_module },
         },
@@ -27,59 +22,67 @@ pub fn build(b: *std.Build) void {
 
     const exe = b.addExecutable(.{
         .name = "resinator",
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = mode,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = mode,
+        }),
     });
     exe.root_module.addImport("aro", aro_module);
     exe.root_module.addImport("compressed_mingw_includes", compressed_mingw_includes_module);
     b.installArtifact(exe);
 
-    const test_filter = b.option([]const u8, "test-filter", "Skip tests that do not match filter");
+    const test_filters = b.option([]const []const u8, "test-filter", "Skip tests that do not match any filter") orelse &[0][]const u8{};
     const exe_tests = b.addTest(.{
-        .root_source_file = b.path("src/resinator.zig"),
-        .target = target,
-        .optimize = mode,
-        .filter = test_filter,
+        .root_module = resinator,
+        .filters = test_filters,
     });
     const run_exe_tests = b.addRunArtifact(exe_tests);
 
     const reference_tests = b.addTest(.{
         .name = "reference",
-        .root_source_file = b.path("test/reference.zig"),
-        .target = target,
-        .optimize = mode,
-        .filter = test_filter,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/reference.zig"),
+            .target = target,
+            .optimize = mode,
+        }),
+        .filters = test_filters,
     });
     reference_tests.root_module.addImport("resinator", resinator);
     const run_reference_tests = b.addRunArtifact(reference_tests);
 
     const parser_tests = b.addTest(.{
         .name = "parse",
-        .root_source_file = b.path("test/parse.zig"),
-        .target = target,
-        .optimize = mode,
-        .filter = test_filter,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/parse.zig"),
+            .target = target,
+            .optimize = mode,
+        }),
+        .filters = test_filters,
     });
     parser_tests.root_module.addImport("resinator", resinator);
     const run_parser_tests = b.addRunArtifact(parser_tests);
 
     const compiler_tests = b.addTest(.{
         .name = "compile",
-        .root_source_file = b.path("test/compile.zig"),
-        .target = target,
-        .optimize = mode,
-        .filter = test_filter,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/compile.zig"),
+            .target = target,
+            .optimize = mode,
+        }),
+        .filters = test_filters,
     });
     compiler_tests.root_module.addImport("resinator", resinator);
     const run_compiler_tests = b.addRunArtifact(compiler_tests);
 
     const cvtres_tests = b.addTest(.{
         .name = "cvtres",
-        .root_source_file = b.path("test/cvtres.zig"),
-        .target = target,
-        .optimize = mode,
-        .filter = test_filter,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/cvtres.zig"),
+            .target = target,
+            .optimize = mode,
+        }),
+        .filters = test_filters,
     });
     cvtres_tests.root_module.addImport("resinator", resinator);
     const run_cvtres_tests = b.addRunArtifact(cvtres_tests);
@@ -104,9 +107,11 @@ pub fn build(b: *std.Build) void {
     // Tools
     const cvtres_strip = b.addExecutable(.{
         .name = "cvtres-strip",
-        .root_source_file = b.path("tools/cvtres-strip.zig"),
-        .target = target,
-        .optimize = mode,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/cvtres-strip.zig"),
+            .target = target,
+            .optimize = mode,
+        }),
     });
     cvtres_strip.root_module.addImport("utils", test_utils_module);
     const install_cvtres_strip = b.addInstallArtifact(cvtres_strip, .{});
@@ -149,9 +154,11 @@ pub fn build(b: *std.Build) void {
 
     const fuzz_winafl_exe = b.addExecutable(.{
         .name = "fuzz_winafl",
-        .root_source_file = b.path("test/fuzz_winafl.zig"),
-        .target = target,
-        .optimize = mode,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/fuzz_winafl.zig"),
+            .target = target,
+            .optimize = mode,
+        }),
     });
     fuzz_winafl_exe.root_module.addImport("resinator", resinator);
     const fuzz_winafl_compile = b.step("fuzz_winafl", "Build/install fuzz_winafl exe");
@@ -174,11 +181,13 @@ pub fn build(b: *std.Build) void {
             const resolved_release_target = b.resolveTargetQuery(release_target);
             const release_exe = b.addExecutable(.{
                 .name = "resinator",
-                .root_source_file = b.path("src/main.zig"),
-                .target = resolved_release_target,
-                .optimize = .ReleaseFast,
-                .single_threaded = true,
-                .strip = true,
+                .root_module = b.createModule(.{
+                    .root_source_file = b.path("src/main.zig"),
+                    .target = resolved_release_target,
+                    .optimize = .ReleaseFast,
+                    .single_threaded = true,
+                    .strip = true,
+                }),
             });
             release_exe.root_module.addImport("aro", aro_module);
             release_exe.root_module.addImport("compressed_mingw_includes", compressed_mingw_includes_module);
@@ -341,7 +350,7 @@ fn addCliTests(b: *std.Build, exe: *std.Build.Step.Compile) *std.Build.Step {
 fn addFuzzyTest(
     b: *std.Build,
     comptime name: []const u8,
-    mode: std.builtin.Mode,
+    mode: std.builtin.OptimizeMode,
     target: std.Build.ResolvedTarget,
     resinator: *std.Build.Module,
     test_utils_module: *std.Build.Module,
@@ -349,9 +358,11 @@ fn addFuzzyTest(
     fuzzy_options: *std.Build.Step.Options,
 ) *std.Build.Step.Compile {
     var test_step = b.addTest(.{
-        .root_source_file = b.path("test/fuzzy_" ++ name ++ ".zig"),
-        .target = target,
-        .optimize = mode,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/fuzzy_" ++ name ++ ".zig"),
+            .target = target,
+            .optimize = mode,
+        }),
     });
     test_step.root_module.addImport("resinator", resinator);
     // We use an import to avoid pulling in the test cases of the test utils themselves
@@ -378,11 +389,13 @@ fn addFuzzer(
     target: std.Build.ResolvedTarget,
 ) FuzzerSteps {
     // The library
-    const fuzz_lib = b.addStaticLibrary(.{
+    const fuzz_lib = b.addLibrary(.{
         .name = name ++ "-lib",
-        .root_source_file = b.path("test/" ++ name ++ ".zig"),
-        .target = target,
-        .optimize = .Debug,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/" ++ name ++ ".zig"),
+            .target = target,
+            .optimize = .Debug,
+        }),
     });
     fuzz_lib.root_module.addImport("resinator", resinator);
     fuzz_lib.want_lto = true;
@@ -412,9 +425,11 @@ fn addFuzzer(
     // Compile a companion exe for debugging crashes
     const fuzz_debug_exe = b.addExecutable(.{
         .name = name ++ "-debug",
-        .root_source_file = b.path("test/" ++ name ++ ".zig"),
-        .target = target,
-        .optimize = .Debug,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/" ++ name ++ ".zig"),
+            .target = target,
+            .optimize = .Debug,
+        }),
     });
     fuzz_debug_exe.root_module.addImport("resinator", resinator);
 

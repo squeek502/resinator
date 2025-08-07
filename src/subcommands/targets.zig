@@ -2,8 +2,9 @@ const std = @import("std");
 const supported_targets = @import("../cvtres.zig").supported_targets;
 
 pub fn run() !void {
-    var buffered_stdout = std.io.bufferedWriter(std.io.getStdOut().writer());
-    const w = buffered_stdout.writer();
+    var buf: [128]u8 = undefined;
+    var buffered_stdout = std.fs.File.stdout().writer(&buf);
+    const w = &buffered_stdout.interface;
 
     for (supported_targets.Arch.ordered_for_display) |arch| {
         try w.print("{s: <" ++ std.fmt.comptimePrint("{}", .{supported_targets.Arch.longest_name + 2}) ++ "} {s}\n", .{ @tagName(arch), arch.description() });
@@ -15,5 +16,5 @@ pub fn run() !void {
         \\      This means that there is currently no way to target 32-bit ARM without Thumb-2.
     );
 
-    try buffered_stdout.flush();
+    try buffered_stdout.interface.flush();
 }

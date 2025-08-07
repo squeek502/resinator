@@ -33,16 +33,16 @@ pub fn extractMingwIncludes(allocator: Allocator, maybe_progress: ?std.Progress.
     // or in a weird state and we should just start over.
     resinator_cache_dir.deleteTree("include") catch {};
 
-    var in_stream = std.io.fixedBufferStream(compressed_mingw_includes);
-    const zstd_window = try allocator.alloc(u8, std.compress.zstd.DecompressorOptions.default_window_buffer_len);
-    defer allocator.free(zstd_window);
-    var zstd_stream = std.compress.zstd.decompressor(in_stream.reader(), .{ .window_buffer = zstd_window });
+    const window_len = std.compress.zstd.default_window_len;
+    const window_buffer = try allocator.create([window_len]u8);
+    defer allocator.destroy(window_buffer);
+    var in: std.io.Reader = .fixed(compressed_mingw_includes);
+    var decompress: std.compress.zstd.Decompress = .init(&in, window_buffer, .{
+        .window_len = window_len,
+        .verify_checksum = false,
+    });
 
-    const uncompressed_tar = try zstd_stream.reader().readAllAlloc(allocator, std.math.maxInt(usize));
-    defer allocator.free(uncompressed_tar);
-    var tar_stream = std.io.fixedBufferStream(uncompressed_tar);
-
-    try std.tar.pipeToFileSystem(resinator_cache_dir, tar_stream.reader(), .{ .mode_mode = .ignore });
+    try std.tar.pipeToFileSystem(resinator_cache_dir, &decompress.reader, .{ .mode_mode = .ignore });
     const include_ver_contents = std.fmt.comptimePrint("{}", .{include_ver});
     try resinator_cache_dir.writeFile(.{ .sub_path = "include_ver", .data = include_ver_contents });
 
