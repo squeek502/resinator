@@ -15,10 +15,10 @@ test "fuzz" {
     const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
     defer allocator.free(tmp_path);
 
-    var source_buffer = std.ArrayList(u8).init(allocator);
-    defer source_buffer.deinit();
+    var source_buffer: std.ArrayList(u8) = .empty;
+    defer source_buffer.deinit(allocator);
 
-    var cache_path_buffer = std.ArrayList(u8).init(allocator);
+    var cache_path_buffer = std.array_list.Managed(u8).init(allocator);
     defer cache_path_buffer.deinit();
 
     var i: u64 = 0;
@@ -39,15 +39,14 @@ test "fuzz" {
         };
         for (std.enums.values(Variation)) |variation| {
             source_buffer.clearRetainingCapacity();
-            var source_writer = source_buffer.writer();
             // Swap the input code page using #pragma code_page
             // (this only works if its the first #pragma code_page in the file)
             switch (variation) {
-                .in_1252_out_utf8 => try source_writer.writeAll("#pragma code_page(1252)\n"),
-                .in_utf8_out_1252 => try source_writer.writeAll("#pragma code_page(65001)\n"),
+                .in_1252_out_utf8 => try source_buffer.appendSlice(allocator, "#pragma code_page(1252)\n"),
+                .in_utf8_out_1252 => try source_buffer.appendSlice(allocator, "#pragma code_page(65001)\n"),
                 else => {},
             }
-            try source_writer.print("1 DLGINCLUDE {s}", .{literal});
+            try source_buffer.print(allocator, "1 DLGINCLUDE {s}", .{literal});
 
             const source = source_buffer.items;
 

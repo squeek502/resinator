@@ -12,7 +12,7 @@ pub fn zigMain() !void {
     defer std.debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
 
-    const stdin = std.io.getStdIn();
+    const stdin = std.fs.File.stdin();
     const data = try stdin.readToEndAlloc(allocator, std.math.maxInt(usize));
     defer allocator.free(data);
 
@@ -30,7 +30,7 @@ pub fn zigMain() !void {
     var diagnostics = resinator.errors.Diagnostics.init(allocator);
     defer diagnostics.deinit();
 
-    var output_buf = std.ArrayList(u8).init(allocator);
+    var output_buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer output_buf.deinit();
 
     // TODO: Better seed, maybe taking the first few bytes and interpretting as u64
@@ -54,7 +54,7 @@ pub fn zigMain() !void {
         warn_instead_of_error_on_invalid_code_page,
     });
 
-    resinator.compile.compile(allocator, final_input, output_buf.writer(), .{
+    resinator.compile.compile(allocator, final_input, &output_buf.writer, .{
         .cwd = std.fs.cwd(),
         .diagnostics = &diagnostics,
         .source_mappings = &mapping_results.mappings,

@@ -130,25 +130,26 @@ pub fn build(b: *std.Build) void {
     test_options.addOption(bool, "fuzzy_debug", fuzzy_debug);
 
     const all_fuzzy_tests_step = b.step("test_fuzzy", "Run all fuzz/property-testing-like tests with a max number of iterations for each");
-    _ = addFuzzyTest(b, "numbers", mode, target, resinator, test_utils_module, all_fuzzy_tests_step, test_options);
-    _ = addFuzzyTest(b, "number_expressions", mode, target, resinator, test_utils_module, all_fuzzy_tests_step, test_options);
-    _ = addFuzzyTest(b, "ascii_strings", mode, target, resinator, test_utils_module, all_fuzzy_tests_step, test_options);
-    _ = addFuzzyTest(b, "numeric_types", mode, target, resinator, test_utils_module, all_fuzzy_tests_step, test_options);
-    _ = addFuzzyTest(b, "common_resource_attributes", mode, target, resinator, test_utils_module, all_fuzzy_tests_step, test_options);
-    _ = addFuzzyTest(b, "raw_data", mode, target, resinator, test_utils_module, all_fuzzy_tests_step, test_options);
-    _ = addFuzzyTest(b, "name_or_ordinal", mode, target, resinator, test_utils_module, all_fuzzy_tests_step, test_options);
-    _ = addFuzzyTest(b, "code_pages", mode, target, resinator, test_utils_module, all_fuzzy_tests_step, test_options);
-    _ = addFuzzyTest(b, "icons", mode, target, resinator, test_utils_module, all_fuzzy_tests_step, test_options);
-    _ = addFuzzyTest(b, "stringtable", mode, target, resinator, test_utils_module, all_fuzzy_tests_step, test_options);
-    _ = addFuzzyTest(b, "strings", mode, target, resinator, test_utils_module, all_fuzzy_tests_step, test_options);
-    _ = addFuzzyTest(b, "cvtres", mode, target, resinator, test_utils_module, all_fuzzy_tests_step, test_options);
-    _ = addFuzzyTest(b, "res", mode, target, resinator, test_utils_module, all_fuzzy_tests_step, test_options);
+    const all_fuzzy_check_step = b.step("check_fuzzy", "Check for compile errors in all fuzz/property-testing-like tests");
+    _ = addFuzzyTest(b, "numbers", mode, target, resinator, test_utils_module, all_fuzzy_tests_step, all_fuzzy_check_step, test_options);
+    _ = addFuzzyTest(b, "number_expressions", mode, target, resinator, test_utils_module, all_fuzzy_tests_step, all_fuzzy_check_step, test_options);
+    _ = addFuzzyTest(b, "ascii_strings", mode, target, resinator, test_utils_module, all_fuzzy_tests_step, all_fuzzy_check_step, test_options);
+    _ = addFuzzyTest(b, "numeric_types", mode, target, resinator, test_utils_module, all_fuzzy_tests_step, all_fuzzy_check_step, test_options);
+    _ = addFuzzyTest(b, "common_resource_attributes", mode, target, resinator, test_utils_module, all_fuzzy_tests_step, all_fuzzy_check_step, test_options);
+    _ = addFuzzyTest(b, "raw_data", mode, target, resinator, test_utils_module, all_fuzzy_tests_step, all_fuzzy_check_step, test_options);
+    _ = addFuzzyTest(b, "name_or_ordinal", mode, target, resinator, test_utils_module, all_fuzzy_tests_step, all_fuzzy_check_step, test_options);
+    _ = addFuzzyTest(b, "code_pages", mode, target, resinator, test_utils_module, all_fuzzy_tests_step, all_fuzzy_check_step, test_options);
+    _ = addFuzzyTest(b, "icons", mode, target, resinator, test_utils_module, all_fuzzy_tests_step, all_fuzzy_check_step, test_options);
+    _ = addFuzzyTest(b, "stringtable", mode, target, resinator, test_utils_module, all_fuzzy_tests_step, all_fuzzy_check_step, test_options);
+    _ = addFuzzyTest(b, "strings", mode, target, resinator, test_utils_module, all_fuzzy_tests_step, all_fuzzy_check_step, test_options);
+    _ = addFuzzyTest(b, "cvtres", mode, target, resinator, test_utils_module, all_fuzzy_tests_step, all_fuzzy_check_step, test_options);
+    _ = addFuzzyTest(b, "res", mode, target, resinator, test_utils_module, all_fuzzy_tests_step, all_fuzzy_check_step, test_options);
     // Exclude these fuzzy tests from the test_fuzzy step since they don't fully work as tests
     // and are more geared towards gathering info at the moment.
-    _ = addFuzzyTest(b, "bitmaps", mode, target, resinator, test_utils_module, null, test_options);
-    _ = addFuzzyTest(b, "fonts", mode, target, resinator, test_utils_module, null, test_options);
-    _ = addFuzzyTest(b, "dlginclude", mode, target, resinator, test_utils_module, null, test_options);
-    _ = addFuzzyTest(b, "accelerators", mode, target, resinator, test_utils_module, null, test_options);
+    _ = addFuzzyTest(b, "bitmaps", mode, target, resinator, test_utils_module, null, all_fuzzy_check_step, test_options);
+    _ = addFuzzyTest(b, "fonts", mode, target, resinator, test_utils_module, null, all_fuzzy_check_step, test_options);
+    _ = addFuzzyTest(b, "dlginclude", mode, target, resinator, test_utils_module, null, all_fuzzy_check_step, test_options);
+    _ = addFuzzyTest(b, "accelerators", mode, target, resinator, test_utils_module, null, all_fuzzy_check_step, test_options);
 
     _ = addFuzzer(b, "fuzz_rc", &.{}, resinator, target);
 
@@ -355,6 +356,7 @@ fn addFuzzyTest(
     resinator: *std.Build.Module,
     test_utils_module: *std.Build.Module,
     all_fuzzy_tests_step: ?*std.Build.Step,
+    all_fuzzy_check_step: *std.Build.Step,
     fuzzy_options: *std.Build.Step.Options,
 ) *std.Build.Step.Compile {
     var test_step = b.addTest(.{
@@ -368,6 +370,8 @@ fn addFuzzyTest(
     // We use an import to avoid pulling in the test cases of the test utils themselves
     test_step.root_module.addImport("test_utils", test_utils_module);
     test_step.root_module.addOptions("fuzzy_options", fuzzy_options);
+
+    all_fuzzy_check_step.dependOn(&test_step.step);
 
     const run_test = b.addRunArtifact(test_step);
 

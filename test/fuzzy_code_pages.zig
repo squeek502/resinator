@@ -18,8 +18,8 @@ test "windows-1252 mappings" {
     const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
     defer allocator.free(tmp_path);
 
-    var source_buffer = std.ArrayList(u8).init(allocator);
-    defer source_buffer.deinit();
+    var source_buffer: std.ArrayList(u8) = .empty;
+    defer source_buffer.deinit(allocator);
     try source_buffer.appendSlice("#pragma code_page(65001)\n");
 
     const max_codepoint = 0x10FFFF;
@@ -36,13 +36,12 @@ test "windows-1252 mappings" {
         }
         i += 1;
 
-        const source_writer = source_buffer.writer();
-        try source_writer.print("0x{X} RCDATA {{\"", .{codepoint});
+        try source_buffer.print(allocator, "0x{X} RCDATA {{\"", .{codepoint});
         const codepoint_sequence_length = std.unicode.utf8CodepointSequenceLength(codepoint) catch unreachable;
         const start_index = source_buffer.items.len;
         try source_buffer.resize(source_buffer.items.len + codepoint_sequence_length);
         _ = std.unicode.utf8Encode(codepoint, source_buffer.items[start_index..]) catch unreachable;
-        try source_writer.writeAll("\"}\n");
+        try source_buffer.appendSlice(allocator, "\"}\n");
 
         // 0x10FFFF is a lot of codepoints, so breaking them into large batches helps
         // reduce the amount of time this test takes.
@@ -69,20 +68,19 @@ test "fuzz" {
     const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
     defer allocator.free(tmp_path);
 
-    var source_buffer = std.ArrayList(u8).init(allocator);
-    defer source_buffer.deinit();
+    var source_buffer: std.ArrayList(u8) = .empty;
+    defer source_buffer.deinit(allocator);
 
     var i: u64 = 0;
     while (iterations == 0 or i < iterations) : (i += 1) {
         source_buffer.shrinkRetainingCapacity(0);
         const bytes = try utils.randomAlphanumExtendedBytes(allocator, rand);
         defer allocator.free(bytes);
-        var source_writer = source_buffer.writer();
         // There seems to be a very strange bug where the order of the pragma's
         // matter, if 1252 is first then the ascii string literal is parsed strangely
         // when the code page is 65001.
         // TODO: What is happening?
-        try source_writer.print(
+        try source_buffer.print(allocator,
             \\#pragma code_page(65001)
             \\{s}
             \\{s}

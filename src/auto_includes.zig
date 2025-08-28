@@ -33,12 +33,11 @@ pub fn extractMingwIncludes(allocator: Allocator, maybe_progress: ?std.Progress.
     // or in a weird state and we should just start over.
     resinator_cache_dir.deleteTree("include") catch {};
 
-    const window_len = std.compress.zstd.default_window_len;
-    const window_buffer = try allocator.create([window_len]u8);
-    defer allocator.destroy(window_buffer);
+    const buffer_len = std.compress.zstd.default_window_len + std.compress.zstd.block_size_max;
+    const buffer = try allocator.alloc(u8, buffer_len);
+    defer allocator.free(buffer);
     var in: std.io.Reader = .fixed(compressed_mingw_includes);
-    var decompress: std.compress.zstd.Decompress = .init(&in, window_buffer, .{
-        .window_len = window_len,
+    var decompress: std.compress.zstd.Decompress = .init(&in, buffer, .{
         .verify_checksum = false,
     });
 
@@ -81,7 +80,7 @@ pub fn getMsvcIncludePaths(allocator: Allocator) error{ OutOfMemory, MsvcInclude
     var list = try std.ArrayList([]const u8).initCapacity(allocator, 5);
     errdefer {
         for (list.items) |path| allocator.free(path);
-        list.deinit();
+        list.deinit(allocator);
     }
 
     const msvc_tools_path = LatestMsvcToolsDir.find(allocator) catch |err| switch (err) {
@@ -111,7 +110,7 @@ pub fn getMsvcIncludePaths(allocator: Allocator) error{ OutOfMemory, MsvcInclude
     const sdk_shared = try std.fs.path.join(allocator, &.{ sdk_include_path, "shared" });
     list.appendAssumeCapacity(sdk_shared);
 
-    return list.toOwnedSlice();
+    return list.toOwnedSlice(allocator);
 }
 
 // TODO: Remove once this constant gets added to std.os.windows
@@ -144,8 +143,8 @@ pub const LatestSdkIncludeDir = struct {
         var dir = try findInstallationIncludeDir("v10.0");
         defer dir.close();
 
-        var subpath_buf: [std.fs.MAX_NAME_BYTES]u8 = undefined;
-        var latest_version_dir = std.ArrayListUnmanaged(u8).initBuffer(&subpath_buf);
+        var subpath_buf: [std.fs.max_name_bytes]u8 = undefined;
+        var latest_version_dir = std.ArrayList(u8).initBuffer(&subpath_buf);
 
         var latest_version: u64 = 0;
         var dir_it = dir.iterateAssumeFirstIteration();
@@ -254,8 +253,8 @@ pub const LatestMsvcToolsDir = struct {
         var instances_dir = try findInstancesDir();
         defer instances_dir.close();
 
-        var state_subpath_buf: [std.fs.MAX_NAME_BYTES + 32]u8 = undefined;
-        var latest_version_dir: std.ArrayListUnmanaged(u8) = .empty;
+        var state_subpath_buf: [std.fs.max_name_bytes + 32]u8 = undefined;
+        var latest_version_dir: std.ArrayList(u8) = .empty;
         errdefer latest_version_dir.deinit(allocator);
 
         var latest_version: u64 = 0;
@@ -263,14 +262,14 @@ pub const LatestMsvcToolsDir = struct {
         while (instances_dir_it.next() catch return error.PathNotFound) |entry| {
             if (entry.kind != .directory) continue;
 
-            var fbs = std.io.fixedBufferStream(&state_subpath_buf);
-            const writer = fbs.writer();
+            var fbs: std.Io.Writer = .fixed(&state_subpath_buf);
+            const writer = &fbs;
 
             writer.writeAll(entry.name) catch unreachable;
             writer.writeByte(std.fs.path.sep) catch unreachable;
             writer.writeAll("state.json") catch unreachable;
 
-            const json_contents = instances_dir.readFileAlloc(allocator, fbs.getWritten(), std.math.maxInt(usize)) catch continue;
+            const json_contents = instances_dir.readFileAlloc(allocator, fbs.buffered(), std.math.maxInt(usize)) catch continue;
             defer allocator.free(json_contents);
 
             var parsed = std.json.parseFromSlice(std.json.Value, allocator, json_contents, .{}) catch continue;
@@ -307,7 +306,7 @@ pub const LatestMsvcToolsDir = struct {
 
     fn toolsDirFromInstallationPath(allocator: Allocator, installation_path: []const u8) error{ OutOfMemory, PathNotFound }![]const u8 {
         var lib_dir_buf = try std.ArrayList(u8).initCapacity(allocator, installation_path.len + 64);
-        errdefer lib_dir_buf.deinit();
+        errdefer lib_dir_buf.deinit(allocator);
 
         lib_dir_buf.appendSliceAssumeCapacity(installation_path);
 
@@ -326,9 +325,9 @@ pub const LatestMsvcToolsDir = struct {
 
         lib_dir_buf.shrinkRetainingCapacity(installation_path_with_trailing_sep_len);
         lib_dir_buf.appendSliceAssumeCapacity("VC\\Tools\\MSVC\\");
-        try lib_dir_buf.appendSlice(default_tools_version);
+        try lib_dir_buf.appendSlice(allocator, default_tools_version);
 
-        return lib_dir_buf.toOwnedSlice();
+        return lib_dir_buf.toOwnedSlice(allocator);
     }
 
     fn findInstancesDirViaSetup() error{PathNotFound}!std.fs.Dir {

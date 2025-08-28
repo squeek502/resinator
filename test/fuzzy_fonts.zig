@@ -15,12 +15,12 @@ test "FONT fuzz" {
     defer allocator.free(tmp_path);
 
     const max_file_len = 1000;
-    var font_buffer = try std.ArrayList(u8).initCapacity(allocator, max_file_len);
+    var font_buffer = try std.array_list.Managed(u8).initCapacity(allocator, max_file_len);
     defer font_buffer.deinit();
 
     const source = "1 FONT test.fnt";
 
-    var buffer = std.ArrayList(u8).init(allocator);
+    var buffer: std.Io.Writer.Allocating = .init(allocator);
     defer buffer.deinit();
 
     var i: u64 = 0;
@@ -43,7 +43,7 @@ test "FONT fuzz" {
         defer diagnostics.deinit();
 
         buffer.shrinkRetainingCapacity(0);
-        if (resinator.compile.compile(allocator, source, buffer.writer(), .{ .cwd = tmp.dir, .diagnostics = &diagnostics })) {
+        if (resinator.compile.compile(allocator, source, &buffer.writer, .{ .cwd = tmp.dir, .diagnostics = &diagnostics })) {
             diagnostics.renderToStdErrDetectTTY(tmp.dir, source, null);
         } else |err| switch (err) {
             error.ParseError, error.CompileError => {

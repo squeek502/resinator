@@ -18,10 +18,13 @@ pub fn main() !void {
     var file = try std.fs.cwd().openFile(filepath, .{ .mode = .read_write });
     defer file.close();
 
-    var buf = try std.ArrayList(u8).initCapacity(allocator, try file.getEndPos());
+    var buf: std.Io.Writer.Allocating = try .initCapacity(allocator, try file.getEndPos());
     defer buf.deinit();
 
-    try utils.stripAndFixupCoff(allocator, file.reader(), buf.writer(), .{});
+    var reader_buf: [1024]u8 = undefined;
+    var file_reader = file.reader(&reader_buf);
+
+    try utils.stripAndFixupCoff(allocator, &file_reader.interface, &buf.writer, .{});
 
     try file.seekTo(0);
     try file.writeAll(buf.items);

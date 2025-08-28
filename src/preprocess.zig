@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const cli = @import("cli.zig");
+const Dependencies = @import("compile.zig").Dependencies;
 const aro = @import("aro");
 
 const PreprocessError = error{ ArgError, GeneratedSourceError, PreprocessError, FileTooBig, OutOfMemory, WriteFailed };
@@ -11,14 +12,14 @@ pub fn preprocess(
     writer: *std.Io.Writer,
     /// Expects argv[0] to be the command name
     argv: []const []const u8,
-    maybe_dependencies_list: ?*std.ArrayList([]const u8),
+    maybe_dependencies: ?*Dependencies,
 ) PreprocessError!void {
     try comp.addDefaultPragmaHandlers();
 
     var driver: aro.Driver = .{ .comp = comp, .diagnostics = comp.diagnostics, .aro_name = "arocc" };
     defer driver.deinit();
 
-    var macro_buf: std.ArrayListUnmanaged(u8) = .empty;
+    var macro_buf: std.ArrayList(u8) = .empty;
     defer macro_buf.deinit(comp.gpa);
 
     var discarding: std.Io.Writer.Discarding = .init(&.{});
@@ -66,13 +67,13 @@ pub fn preprocess(
 
     try pp.prettyPrintTokens(writer, .result_only);
 
-    if (maybe_dependencies_list) |dependencies_list| {
+    if (maybe_dependencies) |dependencies| {
         for (comp.sources.values()) |comp_source| {
             if (comp_source.id == builtin_macros.id or comp_source.id == user_macros.id) continue;
             if (comp_source.id == .unused or comp_source.id == .generated) continue;
-            const duped_path = try dependencies_list.allocator.dupe(u8, comp_source.path);
-            errdefer dependencies_list.allocator.free(duped_path);
-            try dependencies_list.append(duped_path);
+            const duped_path = try dependencies.allocator.dupe(u8, comp_source.path);
+            errdefer dependencies.allocator.free(duped_path);
+            try dependencies.list.append(dependencies.allocator, duped_path);
         }
     }
 }
@@ -84,7 +85,7 @@ fn hasAnyErrors(comp: *aro.Compilation) bool {
 /// `arena` is used for temporary -D argument strings and the INCLUDE environment variable.
 /// The arena should be kept alive at least as long as `argv`.
 pub fn appendAroArgs(arena: Allocator, argv: *std.ArrayList([]const u8), options: cli.Options, system_include_paths: []const []const u8) !void {
-    try argv.appendSlice(&.{
+    try argv.appendSlice(arena, &.{
         "-E",
         "--comments",
         "-fuse-line-directives",
@@ -95,13 +96,13 @@ pub fn appendAroArgs(arena: Allocator, argv: *std.ArrayList([]const u8), options
         "-D_WIN32", // undocumented, but defined by default
     });
     for (options.extra_include_paths.items) |extra_include_path| {
-        try argv.append("-I");
-        try argv.append(extra_include_path);
+        try argv.append(arena, "-I");
+        try argv.append(arena, extra_include_path);
     }
 
     for (system_include_paths) |include_path| {
-        try argv.append("-isystem");
-        try argv.append(include_path);
+        try argv.append(arena, "-isystem");
+        try argv.append(arena, include_path);
     }
 
     if (!options.ignore_include_env_var) {
@@ -115,8 +116,8 @@ pub fn appendAroArgs(arena: Allocator, argv: *std.ArrayList([]const u8), options
         };
         var it = std.mem.tokenizeScalar(u8, INCLUDE, delimiter);
         while (it.next()) |include_path| {
-            try argv.append("-isystem");
-            try argv.append(include_path);
+            try argv.append(arena, "-isystem");
+            try argv.append(arena, include_path);
         }
     }
 
@@ -124,13 +125,13 @@ pub fn appendAroArgs(arena: Allocator, argv: *std.ArrayList([]const u8), options
     while (symbol_it.next()) |entry| {
         switch (entry.value_ptr.*) {
             .define => |value| {
-                try argv.append("-D");
+                try argv.append(arena, "-D");
                 const define_arg = try std.fmt.allocPrint(arena, "{s}={s}", .{ entry.key_ptr.*, value });
-                try argv.append(define_arg);
+                try argv.append(arena, define_arg);
             },
             .undefine => {
-                try argv.append("-U");
-                try argv.append(entry.key_ptr.*);
+                try argv.append(arena, "-U");
+                try argv.append(arena, entry.key_ptr.*);
             },
         }
     }

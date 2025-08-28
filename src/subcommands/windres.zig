@@ -98,8 +98,7 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
                 // - on its own is an error
                 else => {
                     var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = arg.optionAndAfterSpan() };
-                    var msg_writer = err_details.msg.writer(allocator);
-                    try msg_writer.print("invalid option: {s}", .{arg.prefixSlice()});
+                    try err_details.msg.print(allocator, "invalid option: {s}", .{arg.prefixSlice()});
                     try diagnostics.append(err_details);
                     arg_i += 1;
                     continue :next_arg;
@@ -111,13 +110,12 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
             const option_and_len = Option.fromArg(arg) catch |err| switch (err) {
                 error.InvalidOption => {
                     var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = arg.optionAndAfterSpan() };
-                    var msg_writer = err_details.msg.writer(allocator);
                     const option_len: u1 = switch (arg.prefix) {
                         .short => 1,
                         .long => 0, // means the full arg
                         .slash => unreachable,
                     };
-                    try msg_writer.print("invalid option: {s}{s}", .{ arg.prefixSlice(), arg.optionWithoutPrefix(option_len) });
+                    try err_details.msg.print(allocator, "invalid option: {s}{s}", .{ arg.prefixSlice(), arg.optionWithoutPrefix(option_len) });
                     try diagnostics.append(err_details);
                     if (arg.prefix == .short) {
                         arg.name_offset += 1;
@@ -133,8 +131,7 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
                 if (option_and_len.option.hasValue()) {
                     const value = arg.valuePosix(option_and_len.length, arg_i, args) catch {
                         var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = arg.missingSpan() };
-                        var msg_writer = err_details.msg.writer(allocator);
-                        try msg_writer.print("missing value after {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(option_and_len.length) });
+                        try err_details.msg.print(allocator, "missing value after {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(option_and_len.length) });
                         try diagnostics.append(err_details);
                         arg_i += 1;
                         break :next_arg;
@@ -163,8 +160,7 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
                     const value = maybe_value.?;
                     input_format = std.meta.stringToEnum(Options.InputFormat, value.slice) orelse blk: {
                         var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = value.argSpan(arg) };
-                        var msg_writer = err_details.msg.writer(allocator);
-                        try msg_writer.print("invalid input format setting: {s} ", .{value.slice});
+                        try err_details.msg.print(allocator, "invalid input format setting: {s} ", .{value.slice});
                         try diagnostics.append(err_details);
                         break :blk input_format;
                     };
@@ -176,8 +172,7 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
                     const value = maybe_value.?;
                     output_format = std.meta.stringToEnum(Options.OutputFormat, value.slice) orelse blk: {
                         var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = value.argSpan(arg) };
-                        var msg_writer = err_details.msg.writer(allocator);
-                        try msg_writer.print("invalid output format setting: {s} ", .{value.slice});
+                        try err_details.msg.print(allocator, "invalid output format setting: {s} ", .{value.slice});
                         try diagnostics.append(err_details);
                         break :blk output_format;
                     };
@@ -189,8 +184,7 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
                     const value = maybe_value.?;
                     const windres_target = std.meta.stringToEnum(Target, value.slice) orelse {
                         var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = value.argSpan(arg) };
-                        var msg_writer = err_details.msg.writer(allocator);
-                        try msg_writer.print("invalid or unsupported target: {s} ", .{value.slice});
+                        try err_details.msg.print(allocator, "invalid or unsupported target: {s} ", .{value.slice});
                         try diagnostics.append(err_details);
                         arg_i += value.index_increment;
                         continue :next_arg;
@@ -218,8 +212,7 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
                         try options.define(symbol, symbol_value);
                     } else {
                         var err_details = Diagnostics.ErrorDetails{ .type = .warning, .arg_index = arg_i, .arg_span = value.argSpan(arg) };
-                        var msg_writer = err_details.msg.writer(allocator);
-                        try msg_writer.print("symbol \"{s}\" is not a valid identifier and therefore cannot be defined", .{symbol});
+                        try err_details.msg.print(allocator, "symbol \"{s}\" is not a valid identifier and therefore cannot be defined", .{symbol});
                         try diagnostics.append(err_details);
                     }
                     arg_i += value.index_increment;
@@ -232,8 +225,7 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
                         try options.undefine(symbol);
                     } else {
                         var err_details = Diagnostics.ErrorDetails{ .type = .warning, .arg_index = arg_i, .arg_span = value.argSpan(arg) };
-                        var msg_writer = err_details.msg.writer(allocator);
-                        try msg_writer.print("symbol \"{s}\" is not a valid identifier and therefore cannot be undefined", .{symbol});
+                        try err_details.msg.print(allocator, "symbol \"{s}\" is not a valid identifier and therefore cannot be undefined", .{symbol});
                         try diagnostics.append(err_details);
                     }
                     arg_i += value.index_increment;
@@ -257,8 +249,7 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
                     //       harm in having support for those as well.
                     const code_page_id = std.fmt.parseUnsigned(u16, num_str, 0) catch {
                         var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = value.argSpan(arg) };
-                        var msg_writer = err_details.msg.writer(allocator);
-                        try msg_writer.print("invalid code page ID: {s}", .{num_str});
+                        try err_details.msg.print(allocator, "invalid code page ID: {s}", .{num_str});
                         try diagnostics.append(err_details);
                         arg_i += value.index_increment;
                         continue :next_arg;
@@ -266,16 +257,14 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
                     options.default_code_page = code_pages.getByIdentifierEnsureSupported(code_page_id) catch |err| switch (err) {
                         error.InvalidCodePage => {
                             var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = value.argSpan(arg) };
-                            var msg_writer = err_details.msg.writer(allocator);
-                            try msg_writer.print("invalid or unknown code page ID: {}", .{code_page_id});
+                            try err_details.msg.print(allocator, "invalid or unknown code page ID: {}", .{code_page_id});
                             try diagnostics.append(err_details);
                             arg_i += value.index_increment;
                             continue :next_arg;
                         },
                         error.UnsupportedCodePage => {
                             var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = value.argSpan(arg) };
-                            var msg_writer = err_details.msg.writer(allocator);
-                            try msg_writer.print("unsupported code page: {s} (id={})", .{
+                            try err_details.msg.print(allocator, "unsupported code page: {s} (id={})", .{
                                 @tagName(code_pages.getByIdentifier(code_page_id) catch unreachable),
                                 code_page_id,
                             });
@@ -293,8 +282,7 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
                     // Note: This uses the rc.exe behavior which may be more permissive than the windres behavior
                     options.default_language_id = lang.parseInt(num_str) catch {
                         var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = value.argSpan(arg) };
-                        var msg_writer = err_details.msg.writer(allocator);
-                        try msg_writer.print("invalid language ID: {s}", .{num_str});
+                        try err_details.msg.print(allocator, "invalid language ID: {s}", .{num_str});
                         try diagnostics.append(err_details);
                         arg_i += value.index_increment;
                         continue :next_arg;
@@ -326,7 +314,7 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
                     // This is only here to trick meson into thinking we're windres
                     // TODO: Formalize this, probably should be handled similarly to --help,
                     //       i.e. set something in options and return, print at the callsite.
-                    std.fs.File.stdout().deprecatedWriter().writeAll("Drop-in compatible with GNU windres.\n") catch {
+                    std.fs.File.stdout().writeAll("Drop-in compatible with GNU windres.\n") catch {
                         std.process.exit(1);
                     };
                     std.process.exit(0);
@@ -336,8 +324,7 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
                     const value = maybe_value.?;
                     options.auto_includes = std.meta.stringToEnum(Options.AutoIncludes, value.slice) orelse blk: {
                         var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = value.argSpan(arg) };
-                        var msg_writer = err_details.msg.writer(allocator);
-                        try msg_writer.print("invalid auto includes setting: {s} ", .{value.slice});
+                        try err_details.msg.print(allocator, "invalid auto includes setting: {s} ", .{value.slice});
                         try diagnostics.append(err_details);
                         break :blk options.auto_includes;
                     };
@@ -357,8 +344,7 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
 
     if (input_filename != null and output_filename != null and positionals.len > 0) {
         var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i + 1 };
-        var msg_writer = err_details.msg.writer(allocator);
-        try msg_writer.writeAll("input and output filenames already specified");
+        try err_details.msg.appendSlice(allocator, "input and output filenames already specified");
         try diagnostics.append(err_details);
         {
             var note_details = Diagnostics.ErrorDetails{
@@ -366,8 +352,7 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
                 .arg_index = input_filename_context.arg.index,
                 .arg_span = input_filename_context.arg.value.argSpan(input_filename_context.arg.arg),
             };
-            var note_writer = note_details.msg.writer(allocator);
-            try note_writer.writeAll("input filename previously specified here");
+            try note_details.msg.appendSlice(allocator, "input filename previously specified here");
             try diagnostics.append(note_details);
         }
         {
@@ -376,8 +361,7 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
                 .arg_index = output_filename_context.arg.index,
                 .arg_span = output_filename_context.arg.value.argSpan(output_filename_context.arg.arg),
             };
-            var note_writer = note_details.msg.writer(allocator);
-            try note_writer.writeAll("output filename previously specified here");
+            try note_details.msg.appendSlice(allocator, "output filename previously specified here");
             try diagnostics.append(note_details);
         }
     }
@@ -404,8 +388,7 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
                     .arg => |ctx| .{ .arg_index = ctx.index, .arg_span = ctx.value.argSpan(ctx.arg) },
                     .unspecified => unreachable,
                 };
-                var msg_writer = err_details.msg.writer(allocator);
-                try msg_writer.writeAll("unable to infer input format from input filename");
+                try err_details.msg.appendSlice(allocator, "unable to infer input format from input filename");
                 try diagnostics.append(err_details);
 
                 return error.ParseError;
@@ -417,8 +400,7 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
                         .arg => |ctx| .{ .arg_index = ctx.index, .arg_span = ctx.value.argSpan(ctx.arg), .print_args = false },
                         .unspecified => unreachable,
                     };
-                    var msg_writer = err_details.msg.writer(allocator);
-                    try msg_writer.print("the input format '{s}' is unsupported", .{@tagName(inferred_format)});
+                    try err_details.msg.print(allocator, "the input format '{s}' is unsupported", .{@tagName(inferred_format)});
                     try diagnostics.append(err_details);
 
                     var note_details: Diagnostics.ErrorDetails = switch (input_filename_context) {
@@ -426,8 +408,7 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
                         .arg => |ctx| .{ .type = .note, .arg_index = ctx.index, .arg_span = ctx.value.argSpan(ctx.arg) },
                         .unspecified => unreachable,
                     };
-                    var note_msg_writer = note_details.msg.writer(allocator);
-                    try note_msg_writer.writeAll("the input format was inferred from the input file");
+                    try note_details.msg.appendSlice(allocator, "the input format was inferred from the input file");
                     try diagnostics.append(note_details);
 
                     return error.ParseError;
@@ -448,8 +429,7 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
                     .arg => |ctx| .{ .arg_index = ctx.index, .arg_span = ctx.value.argSpan(ctx.arg) },
                     .unspecified => unreachable,
                 };
-                var msg_writer = err_details.msg.writer(allocator);
-                try msg_writer.writeAll("unable to infer output format from output filename");
+                try err_details.msg.appendSlice(allocator, "unable to infer output format from output filename");
                 try diagnostics.append(err_details);
 
                 return error.ParseError;
@@ -461,8 +441,7 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
                         .arg => |ctx| .{ .arg_index = ctx.index, .arg_span = ctx.value.argSpan(ctx.arg), .print_args = false },
                         .unspecified => unreachable,
                     };
-                    var msg_writer = err_details.msg.writer(allocator);
-                    try msg_writer.print("the output format '{s}' is unsupported", .{@tagName(inferred_format)});
+                    try err_details.msg.print(allocator, "the output format '{s}' is unsupported", .{@tagName(inferred_format)});
                     try diagnostics.append(err_details);
 
                     var note_details: Diagnostics.ErrorDetails = switch (output_filename_context) {
@@ -470,8 +449,7 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
                         .arg => |ctx| .{ .type = .note, .arg_index = ctx.index, .arg_span = ctx.value.argSpan(ctx.arg) },
                         .unspecified => unreachable,
                     };
-                    var note_msg_writer = note_details.msg.writer(allocator);
-                    try note_msg_writer.writeAll("the output format was inferred from the output filename");
+                    try note_details.msg.appendSlice(allocator, "the output format was inferred from the output filename");
                     try diagnostics.append(note_details);
 
                     return error.ParseError;
@@ -481,13 +459,11 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
             };
         } else {
             var err_details: Diagnostics.ErrorDetails = .{ .arg_index = arg_i, .print_args = false };
-            var msg_writer = err_details.msg.writer(allocator);
-            try msg_writer.writeAll("either the output filename or output format must be specified");
+            try err_details.msg.appendSlice(allocator, "either the output filename or output format must be specified");
             try diagnostics.append(err_details);
 
             var note_details: Diagnostics.ErrorDetails = .{ .type = .note, .arg_index = arg_i, .print_args = false };
-            var note_msg_writer = note_details.msg.writer(allocator);
-            try note_msg_writer.writeAll("the default output format 'rc' is not supported in this implementation");
+            try note_details.msg.appendSlice(allocator, "the default output format 'rc' is not supported in this implementation");
             try diagnostics.append(note_details);
 
             return error.ParseError;
@@ -500,8 +476,7 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
     // Check for incompatible options
     if (!cli.isSupportedTransformation(options.input_format, options.output_format)) {
         var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .print_args = false };
-        var msg_writer = err_details.msg.writer(allocator);
-        try msg_writer.print("converting input format '{s}' to output format '{s}' is unsupported", .{ @tagName(options.input_format), @tagName(options.output_format) });
+        try err_details.msg.print(allocator, "converting input format '{s}' to output format '{s}' is unsupported", .{ @tagName(options.input_format), @tagName(options.output_format) });
         try diagnostics.append(err_details);
     }
 

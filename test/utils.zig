@@ -154,7 +154,7 @@ pub fn getResinatorResultFromFile(allocator: Allocator, input_filepath: []const 
     result.processed_rc = final_input;
 
     // TODO: Somehow make this re-usable between calls
-    var output_buf = std.ArrayList(u8).init(allocator);
+    var output_buf: std.Io.Writer.Allocating = .init(allocator);
     defer output_buf.deinit();
 
     const compile_options = resinator.compile.CompileOptions{
@@ -168,7 +168,7 @@ pub fn getResinatorResultFromFile(allocator: Allocator, input_filepath: []const 
     };
 
     var did_error = false;
-    resinator.compile.compile(allocator, final_input, output_buf.writer(), compile_options) catch |err| switch (err) {
+    resinator.compile.compile(allocator, final_input, &output_buf.writer, compile_options) catch |err| switch (err) {
         error.ParseError, error.CompileError => {
             did_error = true;
         },
@@ -286,18 +286,18 @@ pub const ResinatorCvtResResult = struct {
 };
 
 pub fn getResinatorCvtResResult(allocator: Allocator, res_source: []const u8, options: GetCvtResResultOptions) !ResinatorCvtResResult {
-    var fbs = std.io.fixedBufferStream(res_source);
-    var resources = resinator.cvtres.parseRes(allocator, fbs.reader(), .{ .max_size = res_source.len }) catch |err| {
+    var fbs: std.Io.Reader = .fixed(res_source);
+    var resources = resinator.cvtres.parseRes(allocator, &fbs, .{ .max_size = res_source.len }) catch |err| {
         return .{
             .parse_err = err,
         };
     };
     defer resources.deinit();
 
-    var buf = try std.ArrayList(u8).initCapacity(allocator, 256);
+    var buf: std.Io.Writer.Allocating = try .initCapacity(allocator, 256);
     errdefer buf.deinit();
 
-    resinator.cvtres.writeCoff(allocator, buf.writer(), resources.list.items, .{
+    resinator.cvtres.writeCoff(allocator, &buf.writer, resources.list.items, .{
         .target = options.target,
         .read_only = options.read_only,
         .define_external_symbol = options.define_external_symbol,
@@ -309,7 +309,7 @@ pub fn getResinatorCvtResResult(allocator: Allocator, res_source: []const u8, op
         };
     };
 
-    try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_cvtres.resinator.obj", .data = buf.items });
+    try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_cvtres.resinator.obj", .data = buf.written() });
 
     return .{
         .obj = try buf.toOwnedSlice(),
@@ -335,7 +335,7 @@ pub fn getWin32CvtResResult(allocator: Allocator, res_source: []const u8, option
 }
 
 pub fn getWin32CvtResResultFromFile(allocator: Allocator, input_path: []const u8, options: GetCvtResResultOptions) !Win32CvtResResult {
-    var argv = try std.ArrayList([]const u8).initCapacity(allocator, 4);
+    var argv = try std.array_list.Managed([]const u8).initCapacity(allocator, 4);
     defer argv.deinit();
 
     // Note: This relies on `cvtres.exe` being in the PATH
@@ -391,11 +391,11 @@ pub fn getWin32CvtResResultFromFile(allocator: Allocator, input_path: []const u8
         errdefer if (obj) |v| allocator.free(v);
 
         if (obj) |obj_bytes| {
-            var fbs = std.io.fixedBufferStream(obj.?);
-            var stripped_buf = try std.ArrayList(u8).initCapacity(allocator, obj_bytes.len);
+            var fbs: std.Io.Reader = .fixed(obj_bytes);
+            var stripped_buf: std.Io.Writer.Allocating = try .initCapacity(allocator, obj_bytes.len);
             errdefer stripped_buf.deinit();
 
-            try stripAndFixupCoff(allocator, fbs.reader(), stripped_buf.writer(), .{});
+            try stripAndFixupCoff(allocator, &fbs, &stripped_buf.writer, .{});
             const stripped_obj = try stripped_buf.toOwnedSlice();
             allocator.free(obj_bytes);
             obj = stripped_obj;
@@ -425,10 +425,7 @@ const CoffFixups = struct {
 };
 
 // Not a general purpose implementation at all, only intended to work on the output of cvtres.exe
-pub fn stripAndFixupCoff(allocator: Allocator, reader: anytype, writer: anytype, fixups: CoffFixups) !void {
-    var counting_reader = std.io.countingReader(reader);
-    const r = counting_reader.reader();
-
+pub fn stripAndFixupCoff(allocator: Allocator, reader: *std.Io.Reader, writer: *std.Io.Writer, fixups: CoffFixups) !void {
     var stripped_bytes: u32 = 0;
     var stripped_symbols: u32 = 0;
     // Assume @comp.id exists
@@ -437,15 +434,15 @@ pub fn stripAndFixupCoff(allocator: Allocator, reader: anytype, writer: anytype,
         stripped_symbols += 1;
     }
     var stripped_sections: u16 = 0;
-    var header = try r.readStruct(std.coff.CoffHeader);
+    var header = try reader.takeStruct(std.coff.CoffHeader, .little);
     if (fixups.clear_timestamp) {
         header.time_date_stamp = 0;
     }
     const original_number_of_symbols = header.number_of_symbols;
-    var sections = std.ArrayList(std.coff.SectionHeader).init(allocator);
+    var sections = std.array_list.Managed(std.coff.SectionHeader).init(allocator);
     defer sections.deinit();
     for (0..header.number_of_sections) |_| {
-        var section_header = try r.readStruct(std.coff.SectionHeader);
+        var section_header = try reader.takeStruct(std.coff.SectionHeader, .little);
         if (std.mem.startsWith(u8, &section_header.name, ".rsrc")) {
             if (fixups.zero_pointer_to_relocations and section_header.number_of_relocations == 0) {
                 section_header.pointer_to_relocations = 0;
@@ -470,69 +467,61 @@ pub fn stripAndFixupCoff(allocator: Allocator, reader: anytype, writer: anytype,
     }
 
     const data_to_skip = stripped_bytes -| @sizeOf(std.coff.SectionHeader);
-    try r.skipBytes(data_to_skip, .{});
+    try reader.discardAll(data_to_skip);
 
-    try pumpBytes(r, writer, sections.items[0].size_of_raw_data);
+    try reader.streamExact(writer, sections.items[0].size_of_raw_data);
     for (0..sections.items[0].number_of_relocations) |_| {
         var relocation = std.coff.Relocation{
-            .virtual_address = try r.readInt(u32, .little),
-            .symbol_table_index = try r.readInt(u32, .little),
-            .type = try r.readInt(u16, .little),
+            .virtual_address = try reader.takeInt(u32, .little),
+            .symbol_table_index = try reader.takeInt(u32, .little),
+            .type = try reader.takeInt(u16, .little),
         };
         relocation.symbol_table_index -= stripped_symbols;
         try writer.writeInt(u32, relocation.virtual_address, .little);
         try writer.writeInt(u32, relocation.symbol_table_index, .little);
         try writer.writeInt(u16, relocation.type, .little);
     }
-    try pumpBytes(r, writer, sections.items[1].size_of_raw_data);
+    try reader.streamExact(writer, sections.items[1].size_of_raw_data);
 
     var symbol_i: usize = 0;
     while (symbol_i < original_number_of_symbols) : (symbol_i += 1) {
-        var symbol_bytes = try r.readBytesNoEof(std.coff.Symbol.sizeOf());
+        var symbol_bytes = try reader.takeArray(std.coff.Symbol.sizeOf());
         const name = symbol_bytes[0..8];
         const number_of_aux_symbols = symbol_bytes[17];
         const should_strip = std.mem.startsWith(u8, name, ".debug") or (fixups.strip_comp_id and std.mem.eql(u8, name, "@comp.id"));
         if (should_strip) {
             std.debug.assert(number_of_aux_symbols <= 1);
             if (number_of_aux_symbols == 1) {
-                try r.skipBytes(std.coff.Symbol.sizeOf(), .{ .buf_size = std.coff.Symbol.sizeOf() });
+                try reader.discardAll(std.coff.Symbol.sizeOf());
             }
         } else {
             const section_number: std.coff.SectionNumber = @enumFromInt(std.mem.readInt(u16, symbol_bytes[12..14], .little));
             if (name[0] != '@' and section_number != .UNDEFINED and section_number != .ABSOLUTE and section_number != .DEBUG) {
                 std.mem.writeInt(u16, symbol_bytes[12..14], @intFromEnum(section_number) - stripped_sections, .little);
             }
-            try writer.writeAll(&symbol_bytes);
+            try writer.writeAll(symbol_bytes);
             std.debug.assert(number_of_aux_symbols <= 1);
             if (number_of_aux_symbols == 1) {
-                symbol_bytes = try r.readBytesNoEof(std.coff.Symbol.sizeOf());
-                try writer.writeAll(&symbol_bytes);
+                symbol_bytes = try reader.takeArray(std.coff.Symbol.sizeOf());
+                try writer.writeAll(symbol_bytes);
             }
         }
         symbol_i += number_of_aux_symbols;
     }
 
-    var string_table_size = try r.readInt(u32, .little);
+    var string_table_size = try reader.takeInt(u32, .little);
     if (fixups.correct_string_table_length) {
         string_table_size = @max(4, string_table_size);
     }
     try writer.writeInt(u32, string_table_size, .little);
     if (string_table_size > 4) {
         const remaining_data = string_table_size - 4;
-        try pumpBytes(r, writer, remaining_data);
+        try reader.streamExact(writer, remaining_data);
     }
 }
 
-fn pumpBytes(reader: anytype, writer: anytype, num_bytes: usize) !void {
-    var limited_reader = std.io.limitedReader(reader, num_bytes);
-
-    const FifoBuffer = std.fifo.LinearFifo(u8, .{ .Static = 256 });
-    var fifo = FifoBuffer.init();
-    try fifo.pump(limited_reader.reader(), writer);
-}
-
 pub fn randomNumberLiteral(allocator: Allocator, rand: std.Random, comptime include_superscripts: bool) ![]const u8 {
-    var buf = std.ArrayList(u8).init(allocator);
+    var buf = std.array_list.Managed(u8).init(allocator);
     errdefer buf.deinit();
 
     const Prefix = enum { none, minus, complement };
@@ -633,7 +622,7 @@ pub fn randomOperator(rand: std.Random) u8 {
     return dict[index];
 }
 
-pub fn appendRandomStringLiteralSequence(rand: std.Random, buf: *std.ArrayList(u8), is_last: bool, comptime string_type: resinator.literals.StringType) !void {
+pub fn appendRandomStringLiteralSequence(rand: std.Random, buf: *std.array_list.Managed(u8), is_last: bool, comptime string_type: resinator.literals.StringType) !void {
     const SequenceType = enum { byte, non_ascii_codepoint, octal, hex };
     const sequence_type = rand.enumValue(SequenceType);
     switch (sequence_type) {
@@ -733,7 +722,7 @@ pub fn randomStringLiteralExact(
     rand: std.Random,
     num_sequences: u16,
 ) ![]const u8 {
-    var buf = try std.ArrayList(u8).initCapacity(allocator, 2 + num_sequences * 4);
+    var buf = try std.array_list.Managed(u8).initCapacity(allocator, 2 + num_sequences * 4);
     errdefer buf.deinit();
 
     if (string_type == .wide) try buf.append('L');
@@ -773,7 +762,7 @@ pub fn randomAlphanumExtendedBytes(allocator: Allocator, rand: std.Random) ![]co
     return buf;
 }
 
-pub fn appendNumberStr(buf: *std.ArrayList(u8), num: anytype) !void {
+pub fn appendNumberStr(buf: *std.array_list.Managed(u8), num: anytype) !void {
     const num_digits = if (num == 0) 1 else std.math.log10_int(num) + 1;
     try buf.ensureUnusedCapacity(num_digits);
     const unused_slice = buf.unusedCapacitySlice();
@@ -782,11 +771,11 @@ pub fn appendNumberStr(buf: *std.ArrayList(u8), num: anytype) !void {
     buf.items.len += num_digits;
 }
 
-pub fn writePreface(writer: anytype) !void {
+pub fn writePreface(writer: *std.Io.Writer) !void {
     try writer.writeAll("\x00\x00\x00\x00 \x00\x00\x00\xff\xff\x00\x00\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00");
 }
 
-pub fn writeRandomPotentiallyInvalidResource(allocator: Allocator, rand: std.Random, writer: anytype) !void {
+pub fn writeRandomPotentiallyInvalidResource(allocator: Allocator, rand: std.Random, writer: *std.Io.Writer) !void {
     const real_data_size = rand.uintAtMostBiased(u32, 150);
     const reported_data_size = switch (rand.uintLessThan(u8, 4)) {
         0 => real_data_size,
@@ -839,7 +828,7 @@ pub fn writeRandomPotentiallyInvalidResource(allocator: Allocator, rand: std.Ran
         2 => num_padding_bytes - rand.uintAtMost(u2, num_padding_bytes),
         else => unreachable,
     };
-    try writer.writeByteNTimes(0, num_padding_bytes);
+    try writer.splatByteAll(0, num_padding_bytes);
 }
 
 pub const RandomResourceOptions = struct {
@@ -850,7 +839,7 @@ pub const RandomResourceOptions = struct {
 };
 
 /// Returns the data size of the resource that was written
-pub fn writeRandomValidResource(allocator: Allocator, rand: std.Random, writer: anytype, options: RandomResourceOptions) !u32 {
+pub fn writeRandomValidResource(allocator: Allocator, rand: std.Random, writer: *std.Io.Writer, options: RandomResourceOptions) !u32 {
     const data_size: u32 = if (options.set_data) |data| @intCast(data.len) else rand.uintAtMostBiased(u32, 150);
     const type_value = options.set_type orelse try getRandomNameOrOrdinal(allocator, rand, 32);
     defer if (options.set_type == null) type_value.deinit(allocator);
@@ -892,7 +881,7 @@ pub fn writeRandomValidResource(allocator: Allocator, rand: std.Random, writer: 
         try writer.writeAll(data);
     }
     const num_padding_bytes = resinator.compile.Compiler.numPaddingBytesNeeded(data_size);
-    try writer.writeByteNTimes(0, num_padding_bytes);
+    try writer.splatByteAll(0, num_padding_bytes);
 
     return data_size;
 }

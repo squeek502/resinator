@@ -132,8 +132,8 @@ test "exhaustive tagToId" {
     }
     var buf: [32]u8 = undefined;
     inline for (valid_alternate_sorts) |parsed_sort| {
-        var fbs = std.io.fixedBufferStream(&buf);
-        const writer = fbs.writer();
+        var fbs: std.Io.Writer = .fixed(&buf);
+        const writer = &fbs;
         writer.writeAll(parsed_sort.language_code) catch unreachable;
         writer.writeAll("-") catch unreachable;
         writer.writeAll(parsed_sort.country_code.?) catch unreachable;
@@ -147,12 +147,12 @@ test "exhaustive tagToId" {
             break :field name_buf;
         };
         const expected = @field(LanguageId, &expected_field_name);
-        const id = tagToId(fbs.getWritten()) catch |err| {
-            std.debug.print("tag: {s}\n", .{fbs.getWritten()});
+        const id = tagToId(fbs.buffered()) catch |err| {
+            std.debug.print("tag: {s}\n", .{fbs.buffered()});
             return err;
         };
         try std.testing.expectEqual(expected, id orelse {
-            std.debug.print("tag: {s}, expected: {}, got null\n", .{ fbs.getWritten(), expected });
+            std.debug.print("tag: {s}, expected: {}, got null\n", .{ fbs.buffered(), expected });
             return error.TestExpectedEqual;
         });
     }

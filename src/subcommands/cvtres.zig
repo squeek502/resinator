@@ -64,8 +64,7 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
                 // - or / on its own is an error
                 else => {
                     var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = arg.optionAndAfterSpan() };
-                    var msg_writer = err_details.msg.writer(allocator);
-                    try msg_writer.print("invalid option: {s}", .{arg.prefixSlice()});
+                    try err_details.msg.print(allocator, "invalid option: {s}", .{arg.prefixSlice()});
                     try diagnostics.append(err_details);
                     arg_i += 1;
                     continue :next_arg;
@@ -100,8 +99,7 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
                         .prefix_len = arg.prefixSlice().len,
                         .value_offset = arg.name_offset + name_len,
                     } };
-                    var msg_writer = err_details.msg.writer(allocator);
-                    try msg_writer.print("missing value for {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(name_len) });
+                    try err_details.msg.print(allocator, "missing value for {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(name_len) });
                     try diagnostics.append(err_details);
                     arg_i += 1;
                     continue :next_arg;
@@ -112,8 +110,7 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
                         .prefix_len = arg.prefixSlice().len,
                         .value_offset = arg.name_offset + name_len,
                     } };
-                    var msg_writer = err_details.msg.writer(allocator);
-                    try msg_writer.print("invalid target architecture: {s}", .{value});
+                    try err_details.msg.print(allocator, "invalid target architecture: {s}", .{value});
                     try diagnostics.append(err_details);
                     arg_i += 1;
                     continue :next_arg;
@@ -131,8 +128,7 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
                         .prefix_len = arg.prefixSlice().len,
                         .value_offset = arg.name_offset + name_len,
                     } };
-                    var msg_writer = err_details.msg.writer(allocator);
-                    try msg_writer.print("missing value for {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(name_len) });
+                    try err_details.msg.print(allocator, "missing value for {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(name_len) });
                     try diagnostics.append(err_details);
                     arg_i += 1;
                     continue :next_arg;
@@ -153,8 +149,7 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
                         .prefix_len = arg.prefixSlice().len,
                         .value_offset = arg.name_offset + name_len,
                     } };
-                    var msg_writer = err_details.msg.writer(allocator);
-                    try msg_writer.print("missing value for {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(name_len) });
+                    try err_details.msg.print(allocator, "missing value for {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(name_len) });
                     try diagnostics.append(err_details);
                     arg_i += 1;
                     continue :next_arg;
@@ -169,8 +164,7 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
                 return options;
             } else {
                 var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = arg.optionAndAfterSpan() };
-                var msg_writer = err_details.msg.writer(allocator);
-                try msg_writer.print("invalid option: {s}{s}", .{ arg.prefixSlice(), arg.name() });
+                try err_details.msg.print(allocator, "invalid option: {s}{s}", .{ arg.prefixSlice(), arg.name() });
                 try diagnostics.append(err_details);
                 arg_i += 1;
                 continue :next_arg;
@@ -187,16 +181,14 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
 
     if (positionals.len == 0) {
         var err_details = Diagnostics.ErrorDetails{ .print_args = false, .arg_index = arg_i };
-        var msg_writer = err_details.msg.writer(allocator);
-        try msg_writer.writeAll("missing input filename");
+        try err_details.msg.appendSlice(allocator, "missing input filename");
         try diagnostics.append(err_details);
 
         if (args.len > 0) {
             const last_arg = args[args.len - 1];
             if (arg_i > 0 and last_arg.len > 0 and last_arg[0] == '/' and std.ascii.eqlIgnoreCase(std.fs.path.extension(last_arg), ".res")) {
                 var note_details = Diagnostics.ErrorDetails{ .type = .note, .print_args = true, .arg_index = arg_i - 1 };
-                var note_writer = note_details.msg.writer(allocator);
-                try note_writer.writeAll("if this argument was intended to be an input filename, adding -- in front of it will exclude it from option parsing");
+                try note_details.msg.appendSlice(allocator, "if this argument was intended to be an input filename, adding -- in front of it will exclude it from option parsing");
                 try diagnostics.append(note_details);
             }
         }
@@ -228,8 +220,7 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
 
     if (!target_specified) {
         var warning_details = Diagnostics.ErrorDetails{ .type = .warning, .arg_index = 0, .print_args = false };
-        var warning_writer = warning_details.msg.writer(allocator);
-        try warning_writer.writeAll("machine type not specified, assuming /MACHINE:X64");
+        try warning_details.msg.appendSlice(allocator, "machine type not specified, assuming /MACHINE:X64");
         try diagnostics.append(warning_details);
     }
 

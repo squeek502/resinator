@@ -1865,7 +1865,7 @@ test "parse errors" {
 }
 
 test "max nested menu level" {
-    var source_buffer = std.ArrayList(u8).init(std.testing.allocator);
+    var source_buffer = std.array_list.Managed(u8).init(std.testing.allocator);
     defer source_buffer.deinit();
 
     try source_buffer.appendSlice("1 MENU {\n");
@@ -1908,7 +1908,7 @@ test "max nested menu level" {
 }
 
 test "max nested versioninfo level" {
-    var source_buffer = std.ArrayList(u8).init(std.testing.allocator);
+    var source_buffer = std.array_list.Managed(u8).init(std.testing.allocator);
     defer source_buffer.deinit();
 
     try source_buffer.appendSlice("1 VERSIONINFO {\n");
@@ -1951,7 +1951,7 @@ test "max nested versioninfo level" {
 }
 
 test "max dialog controls" {
-    var source_buffer = std.ArrayList(u8).init(std.testing.allocator);
+    var source_buffer = std.array_list.Managed(u8).init(std.testing.allocator);
     defer source_buffer.deinit();
 
     const max_controls = std.math.maxInt(u16);
@@ -1987,7 +1987,7 @@ test "max dialog controls" {
 }
 
 test "max toolbar buttons" {
-    var source_buffer = std.ArrayList(u8).init(std.testing.allocator);
+    var source_buffer = std.array_list.Managed(u8).init(std.testing.allocator);
     defer source_buffer.deinit();
 
     const max_buttons = std.math.maxInt(u16);
@@ -2023,7 +2023,7 @@ test "max toolbar buttons" {
 }
 
 test "max expression level" {
-    var source_buffer = std.ArrayList(u8).init(std.testing.allocator);
+    var source_buffer = std.array_list.Managed(u8).init(std.testing.allocator);
     defer source_buffer.deinit();
 
     try source_buffer.appendSlice("1 RCDATA {\n");
@@ -2274,7 +2274,7 @@ fn testParse(source: []const u8, expected_ast_dump: []const u8) !void {
     defer buf.deinit();
 
     try tree.dump(&buf.writer);
-    try std.testing.expectEqualStrings(expected_ast_dump, buf.getWritten());
+    try std.testing.expectEqualStrings(expected_ast_dump, buf.written());
 }
 
 const ExpectedErrorDetails = struct {
@@ -2327,9 +2327,9 @@ fn testParseErrorDetails(expected_details: []const ExpectedErrorDetails, source:
             return e;
         };
         var buf: [256]u8 = undefined;
-        var fbs = std.io.fixedBufferStream(&buf);
-        try actual.render(fbs.writer(), source, diagnostics.strings.items);
-        try std.testing.expectEqualStrings(expected.str, fbs.getWritten());
+        var fbs: std.Io.Writer = .fixed(&buf);
+        try actual.render(&fbs, source, diagnostics.strings.items);
+        try std.testing.expectEqualStrings(expected.str, fbs.buffered());
     }
 
     if (maybe_expected_output) |expected_output| {
@@ -2337,6 +2337,6 @@ fn testParseErrorDetails(expected_details: []const ExpectedErrorDetails, source:
         defer buf.deinit();
 
         try tree.?.dump(&buf.writer);
-        try std.testing.expectEqualStrings(expected_output, buf.getWritten());
+        try std.testing.expectEqualStrings(expected_output, buf.written());
     }
 }

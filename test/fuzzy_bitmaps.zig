@@ -17,18 +17,18 @@ test "BITMAP fuzz" {
     var random = std.Random.DefaultPrng.init(0);
     var rand = random.random();
 
-    var image_buffer = std.ArrayList(u8).init(allocator);
+    var image_buffer: std.Io.Writer.Allocating = .init(allocator);
     defer image_buffer.deinit();
 
     const source = "1 BITMAP test.bin";
 
-    var buffer = std.ArrayList(u8).init(allocator);
+    var buffer: std.Io.Writer.Allocating = .init(allocator);
     defer buffer.deinit();
 
     var i: u64 = 0;
     while (iterations == 0 or i < iterations) : (i += 1) {
         image_buffer.shrinkRetainingCapacity(0);
-        const image_writer = image_buffer.writer();
+        const image_writer = &image_buffer.writer;
 
         const random_bytes_len = rand.uintLessThanBiased(u32, 1000);
 
@@ -70,22 +70,20 @@ test "BITMAP fuzz" {
         // and now a bunch of random bytes
         try image_buffer.ensureUnusedCapacity(random_bytes_len);
 
-        const slice_to_fill = image_buffer.unusedCapacitySlice()[0..random_bytes_len];
+        const slice_to_fill = try image_writer.writableSlice(random_bytes_len);
         rand.bytes(slice_to_fill);
 
-        image_buffer.items.len += random_bytes_len;
-
-        try tmp.dir.writeFile(.{ .sub_path = "test.bin", .data = image_buffer.items });
+        try tmp.dir.writeFile(.{ .sub_path = "test.bin", .data = image_buffer.written() });
 
         // also write it to the top-level tmp dir for debugging
         if (fuzzy_options.fuzzy_debug)
-            try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_bitmaps.bin", .data = image_buffer.items });
+            try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_bitmaps.bin", .data = image_buffer.written() });
 
         var diagnostics = resinator.errors.Diagnostics.init(allocator);
         defer diagnostics.deinit();
 
         buffer.shrinkRetainingCapacity(0);
-        if (resinator.compile.compile(allocator, source, buffer.writer(), .{ .cwd = tmp.dir, .diagnostics = &diagnostics })) {
+        if (resinator.compile.compile(allocator, source, &buffer.writer, .{ .cwd = tmp.dir, .diagnostics = &diagnostics })) {
             diagnostics.renderToStdErrDetectTTY(tmp.dir, source, null);
         } else |err| switch (err) {
             error.ParseError, error.CompileError => {

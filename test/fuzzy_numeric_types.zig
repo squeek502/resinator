@@ -10,8 +10,8 @@ test "raw data" {
     const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
     defer allocator.free(tmp_path);
 
-    var source_buffer = std.ArrayList(u8).init(allocator);
-    defer source_buffer.deinit();
+    var source_buffer: std.ArrayList(u8) = .empty;
+    defer source_buffer.deinit(allocator);
 
     var num: u8 = 0;
     while (num < 100) : (num += 1) {
@@ -20,8 +20,7 @@ test "raw data" {
 
         source_buffer.shrinkRetainingCapacity(0);
 
-        const source_writer = source_buffer.writer();
-        try source_writer.print("1 {d} {{ \"hello\" }}", .{num});
+        try source_buffer.print(allocator, "1 {d} {{ \"hello\" }}", .{num});
 
         const source = source_buffer.items;
 

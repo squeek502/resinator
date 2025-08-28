@@ -9,7 +9,6 @@ pub const comments = @import("comments.zig");
 pub const compile = @import("compile.zig");
 pub const disjoint_code_page = @import("disjoint_code_page.zig");
 pub const errors = @import("errors.zig");
-pub const fnt = @import("fnt.zig");
 pub const ico = @import("ico.zig");
 pub const lang = @import("lang.zig");
 pub const lex = @import("lex.zig");

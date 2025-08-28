@@ -14,7 +14,7 @@ test "ICON fuzz" {
     const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
     defer allocator.free(tmp_path);
 
-    var icon_buffer = std.ArrayList(u8).init(allocator);
+    var icon_buffer: std.Io.Writer.Allocating = .init(allocator);
     defer icon_buffer.deinit();
 
     const source = "1 ICON test.ico";
@@ -22,7 +22,7 @@ test "ICON fuzz" {
     var i: u64 = 0;
     while (iterations == 0 or i < iterations) : (i += 1) {
         icon_buffer.shrinkRetainingCapacity(0);
-        const icon_writer = icon_buffer.writer();
+        const icon_writer = &icon_buffer.writer;
         // reserved bytes, very occasionally make it random
         try icon_writer.writeInt(u16, if (rand.int(u8) == 0) rand.int(u16) else 0, .little);
         // icon is 1, cursor is 2, anything else is invalid
@@ -71,16 +71,14 @@ test "ICON fuzz" {
         // and now a bunch of random bytes
         try icon_buffer.ensureUnusedCapacity(random_bytes_len);
 
-        const slice_to_fill = icon_buffer.unusedCapacitySlice()[0..random_bytes_len];
+        const slice_to_fill = try icon_writer.writableSlice(random_bytes_len);
         rand.bytes(slice_to_fill);
 
-        icon_buffer.items.len += random_bytes_len;
-
-        try tmp.dir.writeFile(.{ .sub_path = "test.ico", .data = icon_buffer.items });
+        try tmp.dir.writeFile(.{ .sub_path = "test.ico", .data = icon_buffer.written() });
 
         // also write it to the top-level tmp dir for debugging
         if (fuzzy_options.fuzzy_debug)
-            try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_icons.ico", .data = icon_buffer.items });
+            try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_icons.ico", .data = icon_buffer.written() });
 
         try utils.expectSameResOutput(allocator, source, .{
             .cwd = tmp.dir,

@@ -1460,14 +1460,14 @@ fn testCompileWithOutput(source: []const u8, expected_output: []const u8, cwd: s
 }
 
 fn testCompileWithOutputAndOptions(source: []const u8, expected_output: []const u8, options: TestCompileOptions) !void {
-    var buffer = std.ArrayList(u8).init(std.testing.allocator);
+    var buffer: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer buffer.deinit();
 
     var diagnostics = resinator.errors.Diagnostics.init(std.testing.allocator);
     defer diagnostics.deinit();
 
     const disjoint_code_page = resinator.disjoint_code_page.hasDisjointCodePage(source, null, options.default_code_page);
-    resinator.compile.compile(std.testing.allocator, source, buffer.writer(), .{
+    resinator.compile.compile(std.testing.allocator, source, &buffer.writer, .{
         .cwd = options.cwd,
         .diagnostics = &diagnostics,
         .default_code_page = options.default_code_page,
@@ -1482,7 +1482,7 @@ fn testCompileWithOutputAndOptions(source: []const u8, expected_output: []const 
         else => return err,
     };
 
-    try std.testing.expectEqualSlices(u8, expected_output, buffer.items);
+    try std.testing.expectEqualSlices(u8, expected_output, buffer.written());
 }
 
 const ExpectedErrorDetails = struct {
@@ -1508,12 +1508,10 @@ const TestCompileOptions = struct {
 };
 
 fn testCompileErrorDetailsWithOptions(expected_details: []const ExpectedErrorDetails, source: []const u8, maybe_expected_output: ?[]const u8, options: TestCompileOptions) !void {
-    const allocator = std.testing.allocator;
-
-    var buffer = std.ArrayList(u8).init(std.testing.allocator);
+    var buffer: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer buffer.deinit();
 
-    var diagnostics = resinator.errors.Diagnostics.init(allocator);
+    var diagnostics = resinator.errors.Diagnostics.init(std.testing.allocator);
     defer diagnostics.deinit();
 
     const expect_fail = for (expected_details) |details| {
@@ -1522,7 +1520,7 @@ fn testCompileErrorDetailsWithOptions(expected_details: []const ExpectedErrorDet
 
     const did_fail = did_fail: {
         const disjoint_code_page = resinator.disjoint_code_page.hasDisjointCodePage(source, null, options.default_code_page);
-        resinator.compile.compile(std.testing.allocator, source, buffer.writer(), .{
+        resinator.compile.compile(std.testing.allocator, source, &buffer.writer, .{
             .cwd = options.cwd,
             .diagnostics = &diagnostics,
             .default_code_page = options.default_code_page,
@@ -1543,7 +1541,7 @@ fn testCompileErrorDetailsWithOptions(expected_details: []const ExpectedErrorDet
     };
     if (did_fail and !expect_fail) {
         std.debug.print("expected compile error, got .res:\n", .{});
-        std.testing.expectEqualSlices(u8, "", buffer.items) catch {};
+        std.testing.expectEqualSlices(u8, "", buffer.written()) catch {};
         return error.UnexpectedSuccess;
     }
 
@@ -1558,12 +1556,12 @@ fn testCompileErrorDetailsWithOptions(expected_details: []const ExpectedErrorDet
             return e;
         };
         var buf: [256]u8 = undefined;
-        var fbs = std.io.fixedBufferStream(&buf);
-        try actual.render(fbs.writer(), source, diagnostics.strings.items);
-        try std.testing.expectEqualStrings(expected.str, fbs.getWritten());
+        var fbs: std.Io.Writer = .fixed(&buf);
+        try actual.render(&fbs, source, diagnostics.strings.items);
+        try std.testing.expectEqualStrings(expected.str, fbs.buffered());
     }
 
     if (maybe_expected_output) |expected_output| {
-        try std.testing.expectEqualSlices(u8, expected_output, buffer.items);
+        try std.testing.expectEqualSlices(u8, expected_output, buffer.written());
     }
 }

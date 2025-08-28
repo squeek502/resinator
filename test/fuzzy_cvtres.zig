@@ -15,14 +15,14 @@ test "cvtres fuzz" {
     const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
     defer allocator.free(tmp_path);
 
-    var data_buffer = std.ArrayList(u8).init(allocator);
+    var data_buffer = std.array_list.Managed(u8).init(allocator);
     defer data_buffer.deinit();
 
-    var res_buffer = std.ArrayList(u8).init(allocator);
+    var res_buffer: std.Io.Writer.Allocating = .init(allocator);
     defer res_buffer.deinit();
 
-    try utils.writePreface(res_buffer.writer());
-    const preface_len = res_buffer.items.len;
+    try utils.writePreface(&res_buffer.writer);
+    const preface_len = res_buffer.written().len;
 
     var i: u64 = 0;
     while (iterations == 0 or i < iterations) : (i += 1) {
@@ -59,13 +59,13 @@ test "cvtres fuzz" {
             if (have_written_a_non_zero_data_resource and rand.float(f32) < 0.20) {
                 options.set_data = common_data;
             }
-            const written_data_size = try utils.writeRandomValidResource(allocator, rand, res_buffer.writer(), options);
+            const written_data_size = try utils.writeRandomValidResource(allocator, rand, &res_buffer.writer, options);
             if (written_data_size != 0) have_written_a_non_zero_data_resource = true;
         }
 
         // also write it to the top-level tmp dir for debugging
         if (fuzzy_options.fuzzy_debug)
-            try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_cvtres.res", .data = res_buffer.items });
+            try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_cvtres.res", .data = res_buffer.written() });
 
         const random_target: std.coff.MachineType = switch (rand.uintLessThan(u8, 8)) {
             0 => .X64,
@@ -95,7 +95,7 @@ test "cvtres fuzz" {
             .fold_duplicate_data = rand.boolean(),
         };
 
-        utils.expectSameCvtResOutput(allocator, res_buffer.items, options) catch |err| {
+        utils.expectSameCvtResOutput(allocator, res_buffer.written(), options) catch |err| {
             std.debug.print("options: {}\n", .{options});
             return err;
         };
@@ -113,18 +113,15 @@ test "all reserved types" {
     const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
     defer allocator.free(tmp_path);
 
-    var data_buffer = std.ArrayList(u8).init(allocator);
-    defer data_buffer.deinit();
-
-    var res_buffer = std.ArrayList(u8).init(allocator);
+    var res_buffer: std.Io.Writer.Allocating = .init(allocator);
     defer res_buffer.deinit();
 
-    try utils.writePreface(res_buffer.writer());
+    try utils.writePreface(&res_buffer.writer);
 
     // https://learn.microsoft.com/en-us/windows/win32/menurc/user-defined-resource
     // > The numbers 1 through 255 are reserved for existing and future predefined resource types.
     for (1..256) |predefined_type| {
-        _ = try utils.writeRandomValidResource(allocator, rand, res_buffer.writer(), .{
+        _ = try utils.writeRandomValidResource(allocator, rand, &res_buffer.writer, .{
             .set_type = .{ .ordinal = @intCast(predefined_type) },
             .set_data = "foo",
         });
@@ -132,9 +129,9 @@ test "all reserved types" {
 
     // also write it to the top-level tmp dir for debugging
     if (fuzzy_options.fuzzy_debug)
-        try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_cvtres_reserved_types.res", .data = res_buffer.items });
+        try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_cvtres_reserved_types.res", .data = res_buffer.written() });
 
-    try utils.expectSameCvtResOutput(allocator, res_buffer.items, .{
+    try utils.expectSameCvtResOutput(allocator, res_buffer.written(), .{
         .cwd = tmp.dir,
         .cwd_path = tmp_path,
     });

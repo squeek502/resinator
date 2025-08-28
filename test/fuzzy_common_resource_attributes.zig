@@ -17,8 +17,8 @@ test "RCDATA common resource attribute permutations" {
     const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
     defer allocator.free(tmp_path);
 
-    var source_buffer = std.ArrayList(u8).init(allocator);
-    defer source_buffer.deinit();
+    var source_buffer: std.ArrayList(u8) = .empty;
+    defer source_buffer.deinit(allocator);
 
     var permutations_iterator = utils.AllKPermutationsIterator(common_resource_attributes.len).init();
     var perm_i: usize = 0;
@@ -28,14 +28,13 @@ test "RCDATA common resource attribute permutations" {
 
         const is_batch_i = perm_i % 10000 == 0 or perm_i == num_permutations;
 
-        const source_writer = source_buffer.writer();
-        try source_writer.writeAll("1 RCDATA ");
+        try source_buffer.appendSlice(allocator, "1 RCDATA ");
         for (perm) |i| {
             const attribute = common_resource_attributes[i];
-            try source_writer.writeAll(attribute);
-            try source_writer.writeByte(' ');
+            try source_buffer.appendSlice(allocator, attribute);
+            try source_buffer.append(allocator, ' ');
         }
-        try source_writer.writeAll("{}\n");
+        try source_buffer.appendSlice(allocator, "{}\n");
 
         // With 9 common resource attributes, the total number of K-permutations is 986,410, so by
         // batching large amounts of permutations together we hugely reduce the amount of time it takes this

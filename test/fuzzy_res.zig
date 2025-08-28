@@ -16,7 +16,7 @@ test "res preface fuzz" {
     const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
     defer allocator.free(tmp_path);
 
-    var res_buffer = std.ArrayList(u8).init(allocator);
+    var res_buffer: std.Io.Writer.Allocating = .init(allocator);
     defer res_buffer.deinit();
 
     var i: u64 = 0;
@@ -24,17 +24,17 @@ test "res preface fuzz" {
         res_buffer.clearRetainingCapacity();
 
         switch (rand.boolean()) {
-            true => _ = try utils.writeRandomValidResource(allocator, rand, res_buffer.writer(), .{}),
-            false => try utils.writeRandomPotentiallyInvalidResource(allocator, rand, res_buffer.writer()),
+            true => _ = try utils.writeRandomValidResource(allocator, rand, &res_buffer.writer, .{}),
+            false => try utils.writeRandomPotentiallyInvalidResource(allocator, rand, &res_buffer.writer),
         }
 
         // also write it to the top-level tmp dir for debugging
         if (fuzzy_options.fuzzy_debug)
-            try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_res_preface.res", .data = res_buffer.items });
+            try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_res_preface.res", .data = res_buffer.written() });
 
-        var fbs = std.io.fixedBufferStream(res_buffer.items);
-        var resources = resinator.cvtres.parseRes(allocator, fbs.reader(), .{
-            .max_size = res_buffer.items.len,
+        var fbs: std.Io.Reader = .fixed(res_buffer.written());
+        var resources = resinator.cvtres.parseRes(allocator, &fbs, .{
+            .max_size = res_buffer.written().len,
         }) catch continue;
         defer resources.deinit();
     }
@@ -51,11 +51,11 @@ test "res fuzz" {
     const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
     defer allocator.free(tmp_path);
 
-    var res_buffer = std.ArrayList(u8).init(allocator);
+    var res_buffer: std.Io.Writer.Allocating = .init(allocator);
     defer res_buffer.deinit();
 
-    try utils.writePreface(res_buffer.writer());
-    const preface_len = res_buffer.items.len;
+    try utils.writePreface(&res_buffer.writer);
+    const preface_len = res_buffer.written().len;
 
     var i: u64 = 0;
     while (iterations == 0 or i < iterations) : (i += 1) {
@@ -63,16 +63,16 @@ test "res fuzz" {
 
         const num_resources = rand.intRangeAtMost(usize, 1, 16);
         for (0..num_resources) |_| {
-            try utils.writeRandomPotentiallyInvalidResource(allocator, rand, res_buffer.writer());
+            try utils.writeRandomPotentiallyInvalidResource(allocator, rand, &res_buffer.writer);
         }
 
         // also write it to the top-level tmp dir for debugging
         if (fuzzy_options.fuzzy_debug)
-            try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_res.res", .data = res_buffer.items });
+            try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_res.res", .data = res_buffer.written() });
 
-        var fbs = std.io.fixedBufferStream(res_buffer.items);
-        var resources = resinator.cvtres.parseRes(allocator, fbs.reader(), .{
-            .max_size = res_buffer.items.len,
+        var fbs: std.Io.Reader = .fixed(res_buffer.written());
+        var resources = resinator.cvtres.parseRes(allocator, &fbs, .{
+            .max_size = res_buffer.written().len,
         }) catch continue;
         defer resources.deinit();
     }

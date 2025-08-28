@@ -14,18 +14,17 @@ test "fuzz" {
     const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
     defer allocator.free(tmp_path);
 
-    var source_buffer = std.ArrayList(u8).init(allocator);
-    defer source_buffer.deinit();
+    var source_buffer: std.ArrayList(u8) = .empty;
+    defer source_buffer.deinit(allocator);
 
     var i: u64 = 0;
     while (iterations == 0 or i < iterations) : (i += 1) {
         source_buffer.shrinkRetainingCapacity(0);
         const literal = try utils.randomStringLiteral(.ascii, allocator, rand, 256);
         defer allocator.free(literal);
-        var source_writer = source_buffer.writer();
-        try source_writer.print("STRINGTABLE {{ 1, {s} }}\n", .{literal});
-        try source_writer.print("#pragma code_page(65001)\n", .{});
-        try source_writer.print("STRINGTABLE {{ 2, {s} }}\n", .{literal});
+        try source_buffer.print(allocator, "STRINGTABLE {{ 1, {s} }}\n", .{literal});
+        try source_buffer.print(allocator, "#pragma code_page(65001)\n", .{});
+        try source_buffer.print(allocator, "STRINGTABLE {{ 2, {s} }}\n", .{literal});
 
         const source = source_buffer.items;
 
