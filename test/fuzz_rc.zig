@@ -38,7 +38,7 @@ pub fn zigMain() !void {
     var prng = std.Random.DefaultPrng.init(prng_seed);
     const rand = prng.random();
 
-    const stderr_config = std.io.tty.detectConfig(std.io.getStdErr());
+    const stderr_config = std.Io.tty.detectConfig(std.Io.getStdErr());
 
     const language_id = rand.int(u16);
     const code_page: resinator.code_pages.SupportedCodePage = if (rand.boolean()) .utf8 else .windows1252;

@@ -17,7 +17,7 @@ pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, ret_
     _ = error_return_trace;
     _ = ret_addr;
 
-    const stderr = std.io.getStdErr().writer();
+    const stderr = std.Io.getStdErr().writer();
     stderr.print("panic: ", .{}) catch abort();
     stderr.print("{s}\n", .{msg}) catch abort();
     abort();

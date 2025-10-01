@@ -130,7 +130,7 @@ pub fn getResinatorResult(allocator: Allocator, source: []const u8, options: Get
 pub fn getResinatorResultFromFile(allocator: Allocator, input_filepath: []const u8, options: GetResultOptions) !ResinatorResult {
     var result = ResinatorResult{
         .diagnostics = resinator.errors.Diagnostics.init(allocator),
-        .rc_data = try options.cwd.readFileAlloc(allocator, input_filepath, std.math.maxInt(usize)),
+        .rc_data = try options.cwd.readFileAlloc(input_filepath, allocator, .unlimited),
     };
     errdefer result.deinit(allocator);
 
@@ -223,7 +223,7 @@ pub fn getWin32ResultFromFile(allocator: Allocator, input_path: []const u8, opti
 
     var result = Win32Result{ .exec = exec_result };
     if (exec_result.term == .Exited and exec_result.term.Exited == 0) {
-        result.res = options.cwd.readFileAlloc(allocator, output_path, std.math.maxInt(usize)) catch |err| blk: {
+        result.res = options.cwd.readFileAlloc(output_path, allocator, .unlimited) catch |err| blk: {
             std.debug.print("expected file at {s} but got: {}", .{ output_path, err });
             break :blk null;
         };
@@ -384,7 +384,7 @@ pub fn getWin32CvtResResultFromFile(allocator: Allocator, input_path: []const u8
 
     var result = Win32CvtResResult{ .exec = exec_result };
     if (exec_result.term == .Exited and exec_result.term.Exited == 0) {
-        var obj = options.cwd.readFileAlloc(allocator, output_path, std.math.maxInt(usize)) catch |err| blk: {
+        var obj = options.cwd.readFileAlloc(output_path, allocator, .unlimited) catch |err| blk: {
             std.debug.print("expected file at {s} but got: {}", .{ output_path, err });
             break :blk null;
         };

@@ -22,7 +22,8 @@ pub fn preprocess(
     var macro_buf: std.ArrayList(u8) = .empty;
     defer macro_buf.deinit(comp.gpa);
 
-    var discarding: std.Io.Writer.Discarding = .init(&.{});
+    var discard_buffer: [64]u8 = undefined;
+    var discarding: std.Io.Writer.Discarding = .init(&discard_buffer);
     _ = driver.parseArgs(&discarding.writer, &macro_buf, argv) catch |err| switch (err) {
         error.FatalError => return error.ArgError,
         error.OutOfMemory => |e| return e,
@@ -89,6 +90,7 @@ pub fn appendAroArgs(arena: Allocator, argv: *std.ArrayList([]const u8), options
         "-E",
         "--comments",
         "-fuse-line-directives",
+        "-fgnuc-version=4.2.1",
         "--target=x86_64-windows-msvc",
         "--emulate=msvc",
         "-nostdinc",

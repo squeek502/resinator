@@ -36,7 +36,7 @@ pub fn extractMingwIncludes(allocator: Allocator, maybe_progress: ?std.Progress.
     const buffer_len = std.compress.zstd.default_window_len + std.compress.zstd.block_size_max;
     const buffer = try allocator.alloc(u8, buffer_len);
     defer allocator.free(buffer);
-    var in: std.io.Reader = .fixed(compressed_mingw_includes);
+    var in: std.Io.Reader = .fixed(compressed_mingw_includes);
     var decompress: std.compress.zstd.Decompress = .init(&in, buffer, .{
         .verify_checksum = false,
     });
@@ -269,7 +269,7 @@ pub const LatestMsvcToolsDir = struct {
             writer.writeByte(std.fs.path.sep) catch unreachable;
             writer.writeAll("state.json") catch unreachable;
 
-            const json_contents = instances_dir.readFileAlloc(allocator, fbs.buffered(), std.math.maxInt(usize)) catch continue;
+            const json_contents = instances_dir.readFileAlloc(fbs.buffered(), allocator, .unlimited) catch continue;
             defer allocator.free(json_contents);
 
             var parsed = std.json.parseFromSlice(std.json.Value, allocator, json_contents, .{}) catch continue;

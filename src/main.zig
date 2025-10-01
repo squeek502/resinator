@@ -33,7 +33,7 @@ pub fn main() !void {
         _ = std.os.windows.kernel32.SetConsoleOutputCP(65001);
     }
     const stderr_handle = std.fs.File.stderr();
-    const stderr_config = std.io.tty.detectConfig(stderr_handle);
+    const stderr_config = std.Io.tty.detectConfig(stderr_handle);
     var stderr_writer = stderr_handle.writer(&.{});
     const stderr = &stderr_writer.interface;
 
@@ -165,7 +165,7 @@ pub fn main() !void {
 
     const full_input = full_input: {
         if (options.input_format == .rc and options.preprocess != .no) {
-            var preprocessed_buf: std.io.Writer.Allocating = .init(allocator);
+            var preprocessed_buf: std.Io.Writer.Allocating = .init(allocator);
             errdefer preprocessed_buf.deinit();
 
             // We're going to throw away everything except the final preprocessed output anyway,
@@ -229,13 +229,14 @@ pub fn main() !void {
         } else {
             switch (options.input_source) {
                 .stdio => |file| {
-                    break :full_input file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
+                    var file_reader = file.reader(&.{});
+                    break :full_input file_reader.interface.allocRemaining(allocator, .unlimited) catch |err| {
                         try renderErrorMessage(stderr, stderr_config, .err, "unable to read input from stdin: {s}", .{@errorName(err)});
                         std.process.exit(1);
                     };
                 },
                 .filename => |input_filename| {
-                    break :full_input std.fs.cwd().readFileAlloc(allocator, input_filename, std.math.maxInt(usize)) catch |err| {
+                    break :full_input std.fs.cwd().readFileAlloc(input_filename, allocator, .unlimited) catch |err| {
                         try renderErrorMessage(stderr, stderr_config, .err, "unable to read input file path '{s}': {s}", .{ input_filename, @errorName(err) });
                         std.process.exit(1);
                     };
@@ -585,7 +586,10 @@ const IoStream = struct {
         pub fn readAll(self: Source, allocator: std.mem.Allocator) !Data {
             return switch (self) {
                 inline .file, .stdio => |file| .{
-                    .bytes = try file.readToEndAlloc(allocator, std.math.maxInt(usize)),
+                    .bytes = b: {
+                        var file_reader = file.reader(&.{});
+                        break :b try file_reader.interface.allocRemaining(allocator, .unlimited);
+                    },
                     .needs_free = true,
                 },
                 .memory => |list| .{ .bytes = list.items, .needs_free = false },

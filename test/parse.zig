@@ -2270,7 +2270,7 @@ fn testParse(source: []const u8, expected_ast_dump: []const u8) !void {
     };
     defer tree.deinit();
 
-    var buf: std.io.Writer.Allocating = .init(allocator);
+    var buf: std.Io.Writer.Allocating = .init(allocator);
     defer buf.deinit();
 
     try tree.dump(&buf.writer);
@@ -2333,7 +2333,7 @@ fn testParseErrorDetails(expected_details: []const ExpectedErrorDetails, source:
     }
 
     if (maybe_expected_output) |expected_output| {
-        var buf: std.io.Writer.Allocating = .init(allocator);
+        var buf: std.Io.Writer.Allocating = .init(allocator);
         defer buf.deinit();
 
         try tree.?.dump(&buf.writer);

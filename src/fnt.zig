@@ -210,10 +210,10 @@ pub const FontDirEntry = struct {
 };
 
 fn testFont(buf: []u8, expected_entry: FontDirEntry, expected_device_name: []const u8, expected_face_name: []const u8) !void {
-    var buf_fbs = std.io.fixedBufferStream(buf);
+    var buf_fbs = std.Io.fixedBufferStream(buf);
     try expected_entry.write(buf_fbs.writer());
 
-    var fbs = std.io.fixedBufferStream(buf);
+    var fbs = std.Io.fixedBufferStream(buf);
 
     const font = try read(std.testing.allocator, fbs.reader(), buf.len);
     defer font.deinit();
@@ -283,7 +283,7 @@ test "name errors" {
 
 test "too short of a file" {
     var buf = [_]u8{0} ** 100;
-    var fbs = std.io.fixedBufferStream(&buf);
+    var fbs = std.Io.fixedBufferStream(&buf);
 
     try std.testing.expectError(
         error.UnexpectedEOF,
