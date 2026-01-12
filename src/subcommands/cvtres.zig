@@ -228,7 +228,7 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
 }
 
 pub const machine_options = std.StaticStringMapWithEql(
-    std.coff.MachineType,
+    std.coff.IMAGE.FILE.MACHINE,
     std.static_string_map.eqlAsciiIgnoreCase,
 ).initComptime(.{
     .{ "ARM", .ARMNT },
@@ -237,7 +237,7 @@ pub const machine_options = std.StaticStringMapWithEql(
     .{ "ARM64X", .ARM64X },
     .{ "EBC", .EBC },
     .{ "IA64", .IA64 },
-    .{ "X64", .X64 },
+    .{ "X64", .AMD64 },
     .{ "X86", .I386 },
 });
 

@@ -5,6 +5,7 @@ const iterations = fuzzy_options.max_iterations;
 const resinator = @import("resinator");
 
 test "cvtres fuzz" {
+    const io = std.testing.io;
     const allocator = std.testing.allocator;
     var random = std.Random.DefaultPrng.init(std.testing.random_seed);
     const rand = random.random();
@@ -12,7 +13,7 @@ test "cvtres fuzz" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
+    const tmp_path = try tmp.dir.realPathFileAlloc(io, ".", allocator);
     defer allocator.free(tmp_path);
 
     var data_buffer = std.array_list.Managed(u8).init(allocator);
@@ -65,10 +66,10 @@ test "cvtres fuzz" {
 
         // also write it to the top-level tmp dir for debugging
         if (fuzzy_options.fuzzy_debug)
-            try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_cvtres.res", .data = res_buffer.written() });
+            try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ".zig-cache/tmp/fuzzy_cvtres.res", .data = res_buffer.written() });
 
-        const random_target: std.coff.MachineType = switch (rand.uintLessThan(u8, 8)) {
-            0 => .X64,
+        const random_target: std.coff.IMAGE.FILE.MACHINE = switch (rand.uintLessThan(u8, 8)) {
+            0 => .AMD64,
             1 => .I386,
             2 => .ARMNT,
             3 => .ARM64,
@@ -95,7 +96,7 @@ test "cvtres fuzz" {
             .fold_duplicate_data = rand.boolean(),
         };
 
-        utils.expectSameCvtResOutput(allocator, res_buffer.written(), options) catch |err| {
+        utils.expectSameCvtResOutput(allocator, io, res_buffer.written(), options) catch |err| {
             std.debug.print("options: {}\n", .{options});
             return err;
         };
@@ -103,6 +104,7 @@ test "cvtres fuzz" {
 }
 
 test "all reserved types" {
+    const io = std.testing.io;
     const allocator = std.testing.allocator;
     var random = std.Random.DefaultPrng.init(std.testing.random_seed);
     const rand = random.random();
@@ -110,7 +112,7 @@ test "all reserved types" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
+    const tmp_path = try tmp.dir.realPathFileAlloc(io, ".", allocator);
     defer allocator.free(tmp_path);
 
     var res_buffer: std.Io.Writer.Allocating = .init(allocator);
@@ -129,9 +131,9 @@ test "all reserved types" {
 
     // also write it to the top-level tmp dir for debugging
     if (fuzzy_options.fuzzy_debug)
-        try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_cvtres_reserved_types.res", .data = res_buffer.written() });
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ".zig-cache/tmp/fuzzy_cvtres_reserved_types.res", .data = res_buffer.written() });
 
-    try utils.expectSameCvtResOutput(allocator, res_buffer.written(), .{
+    try utils.expectSameCvtResOutput(allocator, io, res_buffer.written(), .{
         .cwd = tmp.dir,
         .cwd_path = tmp_path,
     });

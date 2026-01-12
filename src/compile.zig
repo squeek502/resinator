@@ -1,6 +1,12 @@
-const std = @import("std");
 const builtin = @import("builtin");
+const native_endian = builtin.cpu.arch.endian();
+
+const std = @import("std");
+const Io = std.Io;
 const Allocator = std.mem.Allocator;
+const WORD = std.os.windows.WORD;
+const DWORD = std.os.windows.DWORD;
+
 const Node = @import("ast.zig").Node;
 const lex = @import("lex.zig");
 const Parser = @import("parse.zig").Parser;
@@ -17,8 +23,6 @@ const res = @import("res.zig");
 const ico = @import("ico.zig");
 const ani = @import("ani.zig");
 const bmp = @import("bmp.zig");
-const WORD = std.os.windows.WORD;
-const DWORD = std.os.windows.DWORD;
 const utils = @import("utils.zig");
 const NameOrOrdinal = res.NameOrOrdinal;
 const SupportedCodePage = @import("code_pages.zig").SupportedCodePage;
@@ -28,10 +32,9 @@ const windows1252 = @import("windows1252.zig");
 const lang = @import("lang.zig");
 const code_pages = @import("code_pages.zig");
 const errors = @import("errors.zig");
-const native_endian = builtin.cpu.arch.endian();
 
 pub const CompileOptions = struct {
-    cwd: std.fs.Dir,
+    cwd: std.Io.Dir,
     diagnostics: *Diagnostics,
     source_mappings: ?*SourceMappings = null,
     /// List of paths (absolute or relative to `cwd`) for every file that the resources within the .rc file depend on.
@@ -56,6 +59,7 @@ pub const CompileOptions = struct {
     max_string_literal_codepoints: u15 = lex.default_max_string_literal_codepoints,
     silent_duplicate_control_ids: bool = false,
     warn_instead_of_error_on_invalid_code_page: bool = false,
+    include_env_value: ?[]const u8 = null,
 };
 
 pub const Dependencies = struct {
@@ -77,7 +81,7 @@ pub const Dependencies = struct {
     }
 };
 
-pub fn compile(allocator: Allocator, source: []const u8, writer: *std.Io.Writer, options: CompileOptions) !void {
+pub fn compile(allocator: Allocator, io: Io, source: []const u8, writer: *std.Io.Writer, options: CompileOptions) !void {
     var lexer = lex.Lexer.init(source, .{
         .default_code_page = options.default_code_page,
         .source_mappings = options.source_mappings,
@@ -93,7 +97,7 @@ pub fn compile(allocator: Allocator, source: []const u8, writer: *std.Io.Writer,
     var search_dirs: std.ArrayList(SearchDir) = .empty;
     defer {
         for (search_dirs.items) |*search_dir| {
-            search_dir.deinit(allocator);
+            search_dir.deinit(allocator, io);
         }
         search_dirs.deinit(allocator);
     }
@@ -103,13 +107,13 @@ pub fn compile(allocator: Allocator, source: []const u8, writer: *std.Io.Writer,
         // If dirname returns null, then the root path will be the same as
         // the cwd so we don't need to add it as a distinct search path.
         if (std.fs.path.dirname(root_path)) |root_dir_path| {
-            var root_dir = try options.cwd.openDir(root_dir_path, .{});
-            errdefer root_dir.close();
+            var root_dir = try options.cwd.openDir(io, root_dir_path, .{});
+            errdefer root_dir.close(io);
             try search_dirs.append(allocator, .{ .dir = root_dir, .path = try allocator.dupe(u8, root_dir_path) });
         }
     }
-    // Re-open the passed in cwd since we want to be able to close it (std.fs.cwd() shouldn't be closed)
-    const cwd_dir = options.cwd.openDir(".", .{}) catch |err| {
+    // Re-open the passed in cwd since we want to be able to close it (Io.Dir.cwd() shouldn't be closed)
+    const cwd_dir = options.cwd.openDir(io, ".", .{}) catch |err| {
         try options.diagnostics.append(.{
             .err = .failed_to_open_cwd,
             .token = .{
@@ -129,24 +133,23 @@ pub fn compile(allocator: Allocator, source: []const u8, writer: *std.Io.Writer,
     };
     try search_dirs.append(allocator, .{ .dir = cwd_dir, .path = null });
     for (options.extra_include_paths) |extra_include_path| {
-        var dir = openSearchPathDir(options.cwd, extra_include_path) catch {
+        var dir = openSearchPathDir(options.cwd, io, extra_include_path) catch {
             // TODO: maybe a warning that the search path is skipped?
             continue;
         };
-        errdefer dir.close();
+        errdefer dir.close(io);
         try search_dirs.append(allocator, .{ .dir = dir, .path = try allocator.dupe(u8, extra_include_path) });
     }
     for (options.system_include_paths) |system_include_path| {
-        var dir = openSearchPathDir(options.cwd, system_include_path) catch {
+        var dir = openSearchPathDir(options.cwd, io, system_include_path) catch {
             // TODO: maybe a warning that the search path is skipped?
             continue;
         };
-        errdefer dir.close();
+        errdefer dir.close(io);
         try search_dirs.append(allocator, .{ .dir = dir, .path = try allocator.dupe(u8, system_include_path) });
     }
     if (!options.ignore_include_env_var) {
-        const INCLUDE = std.process.getEnvVarOwned(allocator, "INCLUDE") catch "";
-        defer allocator.free(INCLUDE);
+        const INCLUDE = options.include_env_value orelse "";
 
         // The only precedence here is llvm-rc which also uses the platform-specific
         // delimiter. There's no precedence set by `rc.exe` since it's Windows-only.
@@ -156,8 +159,8 @@ pub fn compile(allocator: Allocator, source: []const u8, writer: *std.Io.Writer,
         };
         var it = std.mem.tokenizeScalar(u8, INCLUDE, delimiter);
         while (it.next()) |search_path| {
-            var dir = openSearchPathDir(options.cwd, search_path) catch continue;
-            errdefer dir.close();
+            var dir = openSearchPathDir(options.cwd, io, search_path) catch continue;
+            errdefer dir.close(io);
             try search_dirs.append(allocator, .{ .dir = dir, .path = try allocator.dupe(u8, search_path) });
         }
     }
@@ -166,10 +169,11 @@ pub fn compile(allocator: Allocator, source: []const u8, writer: *std.Io.Writer,
     defer arena_allocator.deinit();
     const arena = arena_allocator.allocator();
 
-    var compiler = Compiler{
+    var compiler: Compiler = .{
         .source = source,
         .arena = arena,
         .allocator = allocator,
+        .io = io,
         .cwd = options.cwd,
         .diagnostics = options.diagnostics,
         .dependencies = options.dependencies,
@@ -191,7 +195,8 @@ pub const Compiler = struct {
     source: []const u8,
     arena: Allocator,
     allocator: Allocator,
-    cwd: std.fs.Dir,
+    io: Io,
+    cwd: std.Io.Dir,
     state: State = .{},
     diagnostics: *Diagnostics,
     dependencies: ?*Dependencies,
@@ -383,7 +388,9 @@ pub const Compiler = struct {
     ///       matching file is invalid. That is, it does not do the `cmd` PATH searching
     ///       thing of continuing to look for matching files until it finds a valid
     ///       one if a matching file is invalid.
-    fn searchForFile(self: *Compiler, path: []const u8) !std.fs.File {
+    fn searchForFile(self: *Compiler, path: []const u8) !std.Io.File {
+        const io = self.io;
+
         // If the path is absolute, then it is not resolved relative to any search
         // paths, so there's no point in checking them.
         //
@@ -399,8 +406,8 @@ pub const Compiler = struct {
         // `/test.bin` relative to include paths and instead only treats it as
         // an absolute path.
         if (std.fs.path.isAbsolute(path)) {
-            const file = try utils.openFileNotDir(std.fs.cwd(), path, .{});
-            errdefer file.close();
+            const file = try Io.Dir.cwd().openFile(io, path, .{ .allow_directory = false });
+            errdefer file.close(io);
 
             if (self.dependencies) |dependencies| {
                 const duped_path = try dependencies.allocator.dupe(u8, path);
@@ -409,10 +416,10 @@ pub const Compiler = struct {
             }
         }
 
-        var first_error: ?std.fs.File.OpenError = null;
+        var first_error: ?(std.Io.File.OpenError || std.Io.File.StatError) = null;
         for (self.search_dirs) |search_dir| {
-            if (utils.openFileNotDir(search_dir.dir, path, .{})) |file| {
-                errdefer file.close();
+            if (search_dir.dir.openFile(io, path, .{ .allow_directory = false })) |file| {
+                errdefer file.close(io);
 
                 if (self.dependencies) |dependencies| {
                     const searched_file_path = try std.fs.path.join(dependencies.allocator, &.{
@@ -496,6 +503,8 @@ pub const Compiler = struct {
     }
 
     pub fn writeResourceExternal(self: *Compiler, node: *Node.ResourceExternal, writer: *std.Io.Writer) !void {
+        const io = self.io;
+
         // Init header with data size zero for now, will need to fill it in later
         var header = try self.resourceHeader(node.id, node.type, .{});
         defer header.deinit(self.allocator);
@@ -580,9 +589,9 @@ pub const Compiler = struct {
                 });
             },
         };
-        defer file_handle.close();
+        defer file_handle.close(io);
         var file_buffer: [2048]u8 = undefined;
-        var file_reader = file_handle.reader(&file_buffer);
+        var file_reader = file_handle.reader(io, &file_buffer);
 
         if (maybe_predefined_type) |predefined_type| {
             switch (predefined_type) {
@@ -2885,13 +2894,13 @@ pub const Compiler = struct {
     }
 };
 
-pub const OpenSearchPathError = std.fs.Dir.OpenError;
+pub const OpenSearchPathError = std.Io.Dir.OpenError;
 
-fn openSearchPathDir(dir: std.fs.Dir, path: []const u8) OpenSearchPathError!std.fs.Dir {
+fn openSearchPathDir(dir: std.Io.Dir, io: Io, path: []const u8) OpenSearchPathError!std.Io.Dir {
     // Validate the search path to avoid possible unreachable on invalid paths,
     // see https://github.com/ziglang/zig/issues/15607 for why this is currently necessary.
     try validateSearchPath(path);
-    return dir.openDir(path, .{});
+    return dir.openDir(io, path, .{});
 }
 
 /// Very crude attempt at validating a path. This is imperfect
@@ -2907,7 +2916,7 @@ fn validateSearchPath(path: []const u8) error{BadPathName}!void {
             // (e.g. the NT \??\ prefix, the device \\.\ prefix, etc).
             // Those path types are something of an unavoidable way to
             // still hit unreachable during the openDir call.
-            var component_iterator = try std.fs.path.componentIterator(path);
+            var component_iterator = std.fs.path.componentIterator(path);
             while (component_iterator.next()) |component| {
                 // https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file
                 if (std.mem.indexOfAny(u8, component.name, "\x00<>:\"|?*") != null) return error.BadPathName;
@@ -2920,11 +2929,11 @@ fn validateSearchPath(path: []const u8) error{BadPathName}!void {
 }
 
 pub const SearchDir = struct {
-    dir: std.fs.Dir,
+    dir: std.Io.Dir,
     path: ?[]const u8,
 
-    pub fn deinit(self: *SearchDir, allocator: Allocator) void {
-        self.dir.close();
+    pub fn deinit(self: *SearchDir, allocator: Allocator, io: Io) void {
+        self.dir.close(io);
         if (self.path) |path| {
             allocator.free(path);
         }

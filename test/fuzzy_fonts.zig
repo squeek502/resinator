@@ -4,6 +4,7 @@ const iterations = fuzzy_options.max_iterations;
 const resinator = @import("resinator");
 
 test "FONT fuzz" {
+    const io = std.testing.io;
     const allocator = std.testing.allocator;
     var random = std.Random.DefaultPrng.init(0);
     var rand = random.random();
@@ -11,7 +12,7 @@ test "FONT fuzz" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
+    const tmp_path = try tmp.dir.realPathFileAlloc(io, ".", allocator);
     defer allocator.free(tmp_path);
 
     const max_file_len = 1000;
@@ -34,20 +35,20 @@ test "FONT fuzz" {
         rand.bytes(slice_to_fill);
         font_buffer.items.len += random_bytes_len;
 
-        try tmp.dir.writeFile(.{ .sub_path = "test.fnt", .data = font_buffer.items });
+        try tmp.dir.writeFile(io, .{ .sub_path = "test.fnt", .data = font_buffer.items });
 
         // also write it to the top-level tmp dir for debugging
-        try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_fonts.fnt", .data = font_buffer.items });
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ".zig-cache/tmp/fuzzy_fonts.fnt", .data = font_buffer.items });
 
         var diagnostics = resinator.errors.Diagnostics.init(allocator);
         defer diagnostics.deinit();
 
         buffer.shrinkRetainingCapacity(0);
-        if (resinator.compile.compile(allocator, source, &buffer.writer, .{ .cwd = tmp.dir, .diagnostics = &diagnostics })) {
-            diagnostics.renderToStdErrDetectTTY(tmp.dir, source, null);
+        if (resinator.compile.compile(allocator, io, source, &buffer.writer, .{ .cwd = tmp.dir, .diagnostics = &diagnostics })) {
+            try diagnostics.renderToStderr(io, tmp.dir, source, null);
         } else |err| switch (err) {
             error.ParseError, error.CompileError => {
-                diagnostics.renderToStdErrDetectTTY(tmp.dir, source, null);
+                try diagnostics.renderToStderr(io, tmp.dir, source, null);
             },
             else => return err,
         }

@@ -5,6 +5,7 @@ const fuzzy_options = @import("fuzzy_options");
 const iterations = fuzzy_options.max_iterations;
 
 test "fuzz" {
+    const io = std.testing.io;
     const allocator = std.testing.allocator;
     var random = std.Random.DefaultPrng.init(0);
     const rand = random.random();
@@ -12,7 +13,7 @@ test "fuzz" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
+    const tmp_path = try tmp.dir.realPathFileAlloc(io, ".", allocator);
     defer allocator.free(tmp_path);
 
     var source_buffer: std.ArrayList(u8) = .empty;
@@ -50,7 +51,7 @@ test "fuzz" {
 
             const source = source_buffer.items;
 
-            utils.expectSameResOutput(allocator, source, .{
+            utils.expectSameResOutput(allocator, io, source, .{
                 .cwd = tmp.dir,
                 .cwd_path = tmp_path,
                 .default_code_page = switch (variation) {
@@ -74,19 +75,20 @@ test "fuzz" {
                 try cache_path_buffer.appendSlice(".rc");
 
                 // write out the source file to disk for debugging
-                try std.fs.cwd().writeFile(.{ .sub_path = cache_path_buffer.items, .data = source });
+                try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = cache_path_buffer.items, .data = source });
             };
         }
     }
 }
 
 test "octal escapes, ascii string literal" {
+    const io = std.testing.io;
     const allocator = std.testing.allocator;
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
+    const tmp_path = try tmp.dir.realPathFileAlloc(io, ".", allocator);
     defer allocator.free(tmp_path);
 
     var source_buf = "1 DLGINCLUDE \"\\???\"".*;
@@ -96,7 +98,7 @@ test "octal escapes, ascii string literal" {
     while (true) : (value += 1) {
         _ = std.fmt.bufPrint(source[byte_index..], "{o:0>3}", .{value}) catch unreachable;
 
-        utils.expectSameResOutput(allocator, source, .{
+        utils.expectSameResOutput(allocator, io, source, .{
             .cwd = tmp.dir,
             .cwd_path = tmp_path,
         }) catch {
@@ -108,12 +110,14 @@ test "octal escapes, ascii string literal" {
 }
 
 test "octal escapes, wide string literal" {
+    const io = std.testing.io;
+
     const allocator = std.testing.allocator;
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
+    const tmp_path = try tmp.dir.realPathFileAlloc(io, ".", allocator);
     defer allocator.free(tmp_path);
 
     var source_buf = "1 DLGINCLUDE L\"\\???\"".*;
@@ -123,7 +127,7 @@ test "octal escapes, wide string literal" {
     while (true) : (value += 1) {
         _ = std.fmt.bufPrint(source[byte_index..], "{o:0>3}", .{value}) catch unreachable;
 
-        utils.expectSameResOutput(allocator, source, .{
+        utils.expectSameResOutput(allocator, io, source, .{
             .cwd = tmp.dir,
             .cwd_path = tmp_path,
         }) catch {

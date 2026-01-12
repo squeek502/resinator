@@ -4,6 +4,7 @@ const Diagnostics = cli.Diagnostics;
 const Arg = cli.Arg;
 const Options = cli.Options;
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 const code_pages = @import("../code_pages.zig");
 const lang = @import("../lang.zig");
 
@@ -56,13 +57,13 @@ pub fn writeUsage(writer: *std.Io.Writer, command_name: []const u8) !void {
     try writer.writeAll(usage_string_after_command_name);
 }
 
-pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Diagnostics) cli.ParseError!Options {
+pub fn parseCli(allocator: Allocator, io: Io, args: []const []const u8, diagnostics: *Diagnostics) cli.ParseError!Options {
     var options = Options{
         .allocator = allocator,
         .input_format = .res,
         .output_format = .coff,
-        .input_source = .{ .stdio = std.fs.File.stdin() },
-        .output_source = .{ .stdio = std.fs.File.stdout() },
+        .input_source = .{ .stdio = .stdin() },
+        .output_source = .{ .stdio = .stdout() },
         .ignore_include_env_var = true,
         .subcommand = .windres,
     };
@@ -311,13 +312,10 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
                     }
                 },
                 .version => {
-                    // This is only here to trick meson into thinking we're windres
-                    // TODO: Formalize this, probably should be handled similarly to --help,
-                    //       i.e. set something in options and return, print at the callsite.
-                    std.fs.File.stdout().writeAll("Drop-in compatible with GNU windres.\n") catch {
-                        std.process.exit(1);
-                    };
-                    std.process.exit(0);
+                    options.print_version_and_exit = true;
+                    // If there's been an error to this point, then we still want to fail
+                    if (diagnostics.hasError()) return error.ParseError;
+                    return options;
                 },
                 .r => arg.name_offset += option_and_len.length,
                 .auto_includes => {
@@ -382,7 +380,7 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
 
     if (input_format == null) {
         if (input_filename) |filename| {
-            const inferred_format = formatFromFilename(filename, .input) orelse {
+            const inferred_format = formatFromFilename(io, filename, .input) orelse {
                 var err_details: Diagnostics.ErrorDetails = switch (input_filename_context) {
                     .positional => |i| .{ .arg_index = i },
                     .arg => |ctx| .{ .arg_index = ctx.index, .arg_span = ctx.value.argSpan(ctx.arg) },
@@ -423,7 +421,7 @@ pub fn parseCli(allocator: Allocator, args: []const []const u8, diagnostics: *Di
 
     if (output_format == null) {
         if (output_filename) |filename| {
-            const inferred_format = formatFromFilename(filename, .output) orelse {
+            const inferred_format = formatFromFilename(io, filename, .output) orelse {
                 var err_details: Diagnostics.ErrorDetails = switch (output_filename_context) {
                     .positional => |i| .{ .arg_index = i },
                     .arg => |ctx| .{ .arg_index = ctx.index, .arg_span = ctx.value.argSpan(ctx.arg) },
@@ -513,17 +511,17 @@ const ext_to_format = std.StaticStringMapWithEql(Format, std.static_string_map.e
 
 /// Intended to be equivalent to windres.c's format_from_filename.
 /// `null` being returned means that the format could not be inferred.
-pub fn formatFromFilename(filename: []const u8, io: enum { input, output }) ?Format {
+pub fn formatFromFilename(io: Io, filename: []const u8, direction: enum { input, output }) ?Format {
     const extension = std.fs.path.extension(filename);
     if (ext_to_format.get(extension)) |format| {
         return format;
     }
 
     // Assume output files are coff if we can't infer the type from the name
-    if (io == .output) return .coff;
+    if (direction == .output) return .coff;
 
     var buf: [5]u8 = undefined;
-    const bytes = std.fs.cwd().readFile(filename, &buf) catch return null;
+    const bytes = Io.Dir.cwd().readFile(io, filename, &buf) catch return null;
     if (bytes.len != buf.len) return null;
 
     // PE executable
@@ -560,9 +558,9 @@ pub const Target = enum {
     @"pe-x86-64",
     @"pe-i386",
 
-    pub fn toCoffMachine(self: Target) std.coff.MachineType {
+    pub fn toCoffMachine(self: Target) std.coff.IMAGE.FILE.MACHINE {
         return switch (self) {
-            .@"pe-x86-64" => .X64,
+            .@"pe-x86-64" => .AMD64,
             .@"pe-i386" => .I386,
         };
     }

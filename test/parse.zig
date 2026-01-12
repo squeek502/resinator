@@ -2256,6 +2256,7 @@ test "code page of printed tokens in errors" {
 
 fn testParse(source: []const u8, expected_ast_dump: []const u8) !void {
     const allocator = std.testing.allocator;
+    const io = std.testing.io;
     var diagnostics = resinator.errors.Diagnostics.init(allocator);
     defer diagnostics.deinit();
     // TODO: test different code pages
@@ -2263,7 +2264,7 @@ fn testParse(source: []const u8, expected_ast_dump: []const u8) !void {
     var parser = resinator.parse.Parser.init(&lexer, .{});
     var tree = parser.parse(allocator, &diagnostics) catch |err| switch (err) {
         error.ParseError => {
-            diagnostics.renderToStdErrDetectTTY(std.fs.cwd(), source, null);
+            try diagnostics.renderToStderr(io, .cwd(), source, null);
             return err;
         },
         else => |e| return e,
@@ -2283,6 +2284,7 @@ const ExpectedErrorDetails = struct {
 };
 
 fn testParseErrorDetails(expected_details: []const ExpectedErrorDetails, source: []const u8, maybe_expected_output: ?[]const u8) !void {
+    const io = std.testing.io;
     const allocator = std.testing.allocator;
     var diagnostics = resinator.errors.Diagnostics.init(allocator);
     defer diagnostics.deinit();
@@ -2298,7 +2300,7 @@ fn testParseErrorDetails(expected_details: []const ExpectedErrorDetails, source:
             error.OutOfMemory => |e| return e,
             error.ParseError => {
                 if (!expect_fail) {
-                    diagnostics.renderToStdErrDetectTTY(std.fs.cwd(), source, null);
+                    try diagnostics.renderToStderr(io, .cwd(), source, null);
                     return err;
                 }
                 break :tree null;
@@ -2310,20 +2312,20 @@ fn testParseErrorDetails(expected_details: []const ExpectedErrorDetails, source:
 
     if (tree != null and expect_fail) {
         std.debug.print("expected parse error, got tree:\n", .{});
-        const stderr = std.debug.lockStderrWriter(&.{});
-        defer std.debug.unlockStderrWriter();
-        try tree.?.dump(stderr);
+        const stderr = std.debug.lockStderr(&.{});
+        defer std.debug.unlockStderr();
+        try tree.?.dump(&stderr.file_writer.interface);
         return error.UnexpectedSuccess;
     }
 
     if (expected_details.len != diagnostics.errors.items.len) {
         std.debug.print("expected {} error details, got {}:\n", .{ expected_details.len, diagnostics.errors.items.len });
-        diagnostics.renderToStdErrDetectTTY(std.fs.cwd(), source, null);
+        try diagnostics.renderToStderr(io, .cwd(), source, null);
         return error.ErrorDetailMismatch;
     }
     for (diagnostics.errors.items, expected_details) |actual, expected| {
         std.testing.expectEqual(expected.type, actual.type) catch |e| {
-            diagnostics.renderToStdErrDetectTTY(std.fs.cwd(), source, null);
+            try diagnostics.renderToStderr(io, .cwd(), source, null);
             return e;
         };
         var buf: [256]u8 = undefined;

@@ -4,6 +4,7 @@ const fuzzy_options = @import("fuzzy_options");
 const iterations = fuzzy_options.max_iterations;
 
 test "ICON fuzz" {
+    const io = std.testing.io;
     const allocator = std.testing.allocator;
     var random = std.Random.DefaultPrng.init(0);
     var rand = random.random();
@@ -11,7 +12,7 @@ test "ICON fuzz" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
+    const tmp_path = try tmp.dir.realPathFileAlloc(io, ".", allocator);
     defer allocator.free(tmp_path);
 
     var icon_buffer: std.Io.Writer.Allocating = .init(allocator);
@@ -74,13 +75,13 @@ test "ICON fuzz" {
         const slice_to_fill = try icon_writer.writableSlice(random_bytes_len);
         rand.bytes(slice_to_fill);
 
-        try tmp.dir.writeFile(.{ .sub_path = "test.ico", .data = icon_buffer.written() });
+        try tmp.dir.writeFile(io, .{ .sub_path = "test.ico", .data = icon_buffer.written() });
 
         // also write it to the top-level tmp dir for debugging
         if (fuzzy_options.fuzzy_debug)
-            try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_icons.ico", .data = icon_buffer.written() });
+            try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ".zig-cache/tmp/fuzzy_icons.ico", .data = icon_buffer.written() });
 
-        try utils.expectSameResOutput(allocator, source, .{
+        try utils.expectSameResOutput(allocator, io, source, .{
             .cwd = tmp.dir,
             .cwd_path = tmp_path,
         });

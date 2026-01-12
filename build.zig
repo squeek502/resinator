@@ -39,17 +39,24 @@ pub fn build(b: *std.Build) void {
     });
     const run_exe_tests = b.addRunArtifact(exe_tests);
 
-    const reference_tests = b.addTest(.{
+    var reference_files = b.addWriteFiles();
+    const reference_files_dir = reference_files.addCopyDirectory(b.path("test/data/files"), ".", .{});
+    const reference_tests = b.addExecutable(.{
         .name = "reference",
         .root_module = b.createModule(.{
             .root_source_file = b.path("test/reference.zig"),
             .target = target,
             .optimize = mode,
         }),
-        .filters = test_filters,
     });
     reference_tests.root_module.addImport("resinator", resinator);
     const run_reference_tests = b.addRunArtifact(reference_tests);
+    run_reference_tests.addDirectoryArg(reference_files_dir);
+    run_reference_tests.expectStdErrEqual("");
+    run_reference_tests.expectStdOutEqual("");
+
+    const ref_test_step = b.step("test-reference", "Run reference test");
+    ref_test_step.dependOn(&run_reference_tests.step);
 
     const parser_tests = b.addTest(.{
         .name = "parse",
@@ -402,7 +409,7 @@ fn addFuzzer(
         }),
     });
     fuzz_lib.root_module.addImport("resinator", resinator);
-    fuzz_lib.want_lto = true;
+    fuzz_lib.lto = .full;
     fuzz_lib.bundle_compiler_rt = true;
     fuzz_lib.root_module.pic = true;
 

@@ -7,6 +7,8 @@ const resinator = @import("resinator");
 // Note: This does not test against the Win32 compiler since it can easily run into
 //       infinite or pseudo-infinite loops on malformed bitmaps.
 test "BITMAP fuzz" {
+    const io = std.testing.io;
+
     // Use a single tmp dir to avoid creating and cleaning up a dir for each RC invocation
     // Unfortunately there doesn't seem to be a way to avoid hitting the filesystem,
     // the Windows RC compiler doesn't seem to like named pipes for either input or output
@@ -73,21 +75,21 @@ test "BITMAP fuzz" {
         const slice_to_fill = try image_writer.writableSlice(random_bytes_len);
         rand.bytes(slice_to_fill);
 
-        try tmp.dir.writeFile(.{ .sub_path = "test.bin", .data = image_buffer.written() });
+        try tmp.dir.writeFile(io, .{ .sub_path = "test.bin", .data = image_buffer.written() });
 
         // also write it to the top-level tmp dir for debugging
         if (fuzzy_options.fuzzy_debug)
-            try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_bitmaps.bin", .data = image_buffer.written() });
+            try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ".zig-cache/tmp/fuzzy_bitmaps.bin", .data = image_buffer.written() });
 
         var diagnostics = resinator.errors.Diagnostics.init(allocator);
         defer diagnostics.deinit();
 
         buffer.shrinkRetainingCapacity(0);
-        if (resinator.compile.compile(allocator, source, &buffer.writer, .{ .cwd = tmp.dir, .diagnostics = &diagnostics })) {
-            diagnostics.renderToStdErrDetectTTY(tmp.dir, source, null);
+        if (resinator.compile.compile(allocator, io, source, &buffer.writer, .{ .cwd = tmp.dir, .diagnostics = &diagnostics })) {
+            try diagnostics.renderToStderr(io, tmp.dir, source, null);
         } else |err| switch (err) {
             error.ParseError, error.CompileError => {
-                diagnostics.renderToStdErrDetectTTY(tmp.dir, source, null);
+                try diagnostics.renderToStderr(io, tmp.dir, source, null);
             },
             else => return err,
         }

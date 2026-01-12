@@ -9,12 +9,13 @@ const common_resource_attributes: []const []const u8 = &.{
 
 // TODO: For each resource type as well
 test "RCDATA common resource attribute permutations" {
+    const io = std.testing.io;
     const allocator = std.testing.allocator;
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
+    const tmp_path = try tmp.dir.realPathFileAlloc(io, ".", allocator);
     defer allocator.free(tmp_path);
 
     var source_buffer: std.ArrayList(u8) = .empty;
@@ -42,7 +43,7 @@ test "RCDATA common resource attribute permutations" {
         if (is_batch_i) {
             const source = source_buffer.items;
 
-            try utils.expectSameResOutput(allocator, source, .{
+            try utils.expectSameResOutput(allocator, io, source, .{
                 .cwd = tmp.dir,
                 .cwd_path = tmp_path,
             });
@@ -56,12 +57,13 @@ test "ICON common resource attribute permutations" {
     // This takes a long time so it's disabled by default
     if (true) return error.SkipZigTest;
 
+    const io = std.testing.io;
     const allocator = std.testing.allocator;
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
+    const tmp_path = try tmp.dir.realPathFileAlloc(io, ".", allocator);
     defer allocator.free(tmp_path);
 
     try tmp.dir.writeFile(.{ .sub_path = "test.ico", .data = "\x00\x00\x01\x00\x01\x00\x01\x01\x00\x00\x01\x00 \x000\x00\x00\x00\x16\x00\x00\x00(\x00\x00\x00\x01\x00\x00\x00\x02\x00\x00\x00\x01\x00 \x00\x00\x00\x00\x00\x04\x00\x00\x00\x12\x0b\x00\x00\x12\x0b\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff\xff\xff\x00\x00\x00\x00" });
@@ -103,7 +105,7 @@ test "ICON common resource attribute permutations" {
             std.debug.print("{}\n", .{perm_i});
             const source = source_buffer.items;
 
-            try utils.expectSameResOutput(allocator, source, .{
+            try utils.expectSameResOutput(allocator, io, source, .{
                 .cwd = tmp.dir,
                 .cwd_path = tmp_path,
             });

@@ -1,21 +1,22 @@
 const std = @import("std");
 const resinator = @import("resinator");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
-pub fn expectSameResOutput(allocator: Allocator, source: []const u8, options: GetResultOptions) !void {
+pub fn expectSameResOutput(allocator: Allocator, io: Io, source: []const u8, options: GetResultOptions) !void {
     const input_filepath = "test.rc";
-    try options.cwd.writeFile(.{ .sub_path = input_filepath, .data = source });
+    try options.cwd.writeFile(io, .{ .sub_path = input_filepath, .data = source });
 
-    var resinator_result = try getResinatorResultFromFile(allocator, input_filepath, options);
+    var resinator_result = try getResinatorResultFromFile(allocator, io, input_filepath, options);
     defer resinator_result.deinit(allocator);
 
-    var win32_result = try getWin32ResultFromFile(allocator, input_filepath, options);
+    var win32_result = try getWin32ResultFromFile(allocator, io, input_filepath, options);
     defer win32_result.deinit(allocator);
 
-    try compare(&win32_result, &resinator_result);
+    try compare(io, &win32_result, &resinator_result);
 }
 
-pub fn compare(win32_result: *Win32Result, resinator_result: *ResinatorResult) !void {
+pub fn compare(io: std.Io, win32_result: *Win32Result, resinator_result: *ResinatorResult) !void {
     // Both erroring is fine
     if (win32_result.res == null and resinator_result.res == null) {
         return;
@@ -60,7 +61,7 @@ pub fn compare(win32_result: *Win32Result, resinator_result: *ResinatorResult) !
                 }
             }
         }
-        resinator_result.diagnostics.renderToStdErrDetectTTY(std.fs.cwd(), source, null);
+        try resinator_result.diagnostics.renderToStderr(io, .cwd(), source, null);
         return error.DidNotExpectErrorButGotOne;
     }
 
@@ -79,7 +80,7 @@ pub fn compare(win32_result: *Win32Result, resinator_result: *ResinatorResult) !
             std.debug.print("intentional difference, ignoring\n", .{});
             return;
         }
-        resinator_result.diagnostics.renderToStdErrDetectTTY(std.fs.cwd(), source, null);
+        try resinator_result.diagnostics.renderToStderr(io, .cwd(), source, null);
         return err;
     };
 }
@@ -114,23 +115,23 @@ fn inputContainsKnownPreprocessorDifference(data: []const u8) bool {
 }
 
 pub const GetResultOptions = struct {
-    cwd: std.fs.Dir,
+    cwd: std.Io.Dir,
     cwd_path: []const u8,
     default_code_page: enum { windows1252, utf8 } = .windows1252,
     /// Only used in the Win32 version
     output_path: ?[]const u8 = null,
 };
 
-pub fn getResinatorResult(allocator: Allocator, source: []const u8, options: GetResultOptions) !ResinatorResult {
+pub fn getResinatorResult(allocator: Allocator, io: Io, source: []const u8, options: GetResultOptions) !ResinatorResult {
     // TODO: Bypass the intermediate file
-    try options.cwd.writeFile(.{ .sub_path = "test.rc", .data = source });
-    return getResinatorResultFromFile(allocator, "test.rc", options);
+    try options.cwd.writeFile(io, .{ .sub_path = "test.rc", .data = source });
+    return getResinatorResultFromFile(allocator, io, "test.rc", options);
 }
 
-pub fn getResinatorResultFromFile(allocator: Allocator, input_filepath: []const u8, options: GetResultOptions) !ResinatorResult {
+pub fn getResinatorResultFromFile(allocator: Allocator, io: Io, input_filepath: []const u8, options: GetResultOptions) !ResinatorResult {
     var result = ResinatorResult{
         .diagnostics = resinator.errors.Diagnostics.init(allocator),
-        .rc_data = try options.cwd.readFileAlloc(input_filepath, allocator, .unlimited),
+        .rc_data = try options.cwd.readFileAlloc(io, input_filepath, allocator, .unlimited),
     };
     errdefer result.deinit(allocator);
 
@@ -168,7 +169,7 @@ pub fn getResinatorResultFromFile(allocator: Allocator, input_filepath: []const 
     };
 
     var did_error = false;
-    resinator.compile.compile(allocator, final_input, &output_buf.writer, compile_options) catch |err| switch (err) {
+    resinator.compile.compile(allocator, io, final_input, &output_buf.writer, compile_options) catch |err| switch (err) {
         error.ParseError, error.CompileError => {
             did_error = true;
         },
@@ -183,7 +184,7 @@ pub fn getResinatorResultFromFile(allocator: Allocator, input_filepath: []const 
 
 pub const Win32Result = struct {
     res: ?[]const u8 = null,
-    exec: std.process.Child.RunResult,
+    exec: std.process.RunResult,
 
     pub fn deinit(self: *Win32Result, allocator: Allocator) void {
         if (self.res) |res| {
@@ -194,15 +195,14 @@ pub const Win32Result = struct {
     }
 };
 
-pub fn getWin32Result(allocator: Allocator, source: []const u8, options: GetResultOptions) !Win32Result {
-    try options.cwd.writeFile(.{ .sub_path = "test.rc", .data = source });
-    return getWin32ResultFromFile(allocator, "test.rc", options);
+pub fn getWin32Result(allocator: Allocator, io: Io, source: []const u8, options: GetResultOptions) !Win32Result {
+    try options.cwd.writeFile(io, .{ .sub_path = "test.rc", .data = source });
+    return getWin32ResultFromFile(allocator, io, "test.rc", options);
 }
 
-pub fn getWin32ResultFromFile(allocator: Allocator, input_path: []const u8, options: GetResultOptions) !Win32Result {
+pub fn getWin32ResultFromFile(allocator: Allocator, io: Io, input_path: []const u8, options: GetResultOptions) !Win32Result {
     const output_path = options.output_path orelse "test_win32.res";
-    const exec_result = try std.process.Child.run(.{
-        .allocator = allocator,
+    const exec_result = try std.process.run(allocator, io, .{
         .argv = &[_][]const u8{
             // Note: This relies on `rc.exe` being in the PATH
             "rc.exe",
@@ -222,8 +222,8 @@ pub fn getWin32ResultFromFile(allocator: Allocator, input_path: []const u8, opti
     errdefer allocator.free(exec_result.stderr);
 
     var result = Win32Result{ .exec = exec_result };
-    if (exec_result.term == .Exited and exec_result.term.Exited == 0) {
-        result.res = options.cwd.readFileAlloc(output_path, allocator, .unlimited) catch |err| blk: {
+    if (exec_result.term == .exited and exec_result.term.exited == 0) {
+        result.res = options.cwd.readFileAlloc(io, output_path, allocator, .unlimited) catch |err| blk: {
             std.debug.print("expected file at {s} but got: {}", .{ output_path, err });
             break :blk null;
         };
@@ -231,11 +231,11 @@ pub fn getWin32ResultFromFile(allocator: Allocator, input_path: []const u8, opti
     return result;
 }
 
-pub fn expectSameCvtResOutput(allocator: Allocator, res_source: []const u8, options: GetCvtResResultOptions) !void {
-    var resinator_result = try getResinatorCvtResResult(allocator, res_source, options);
+pub fn expectSameCvtResOutput(allocator: Allocator, io: Io, res_source: []const u8, options: GetCvtResResultOptions) !void {
+    var resinator_result = try getResinatorCvtResResult(allocator, io, res_source, options);
     defer resinator_result.deinit(allocator);
 
-    var win32_result = try getWin32CvtResResult(allocator, res_source, options);
+    var win32_result = try getWin32CvtResResult(allocator, io, res_source, options);
     defer win32_result.deinit(allocator);
 
     try compareCvtRes(&win32_result, &resinator_result);
@@ -263,11 +263,11 @@ pub fn compareCvtRes(win32_result: *Win32CvtResResult, resinator_result: *Resina
 }
 
 pub const GetCvtResResultOptions = struct {
-    cwd: std.fs.Dir,
+    cwd: Io.Dir,
     cwd_path: []const u8,
     /// Only used in the Win32 version
     output_path: ?[]const u8 = null,
-    target: std.coff.MachineType = .X64,
+    target: std.coff.IMAGE.FILE.MACHINE = .AMD64,
     read_only: bool = false,
     define_external_symbol: ?[]const u8 = null,
     fold_duplicate_data: bool = false,
@@ -285,7 +285,7 @@ pub const ResinatorCvtResResult = struct {
     }
 };
 
-pub fn getResinatorCvtResResult(allocator: Allocator, res_source: []const u8, options: GetCvtResResultOptions) !ResinatorCvtResResult {
+pub fn getResinatorCvtResResult(allocator: Allocator, io: Io, res_source: []const u8, options: GetCvtResResultOptions) !ResinatorCvtResResult {
     var fbs: std.Io.Reader = .fixed(res_source);
     var resources = resinator.cvtres.parseRes(allocator, &fbs, .{ .max_size = res_source.len }) catch |err| {
         return .{
@@ -309,7 +309,7 @@ pub fn getResinatorCvtResResult(allocator: Allocator, res_source: []const u8, op
         };
     };
 
-    try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_cvtres.resinator.obj", .data = buf.written() });
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = ".zig-cache/tmp/fuzzy_cvtres.resinator.obj", .data = buf.written() });
 
     return .{
         .obj = try buf.toOwnedSlice(),
@@ -318,7 +318,7 @@ pub fn getResinatorCvtResResult(allocator: Allocator, res_source: []const u8, op
 
 pub const Win32CvtResResult = struct {
     obj: ?[]const u8 = null,
-    exec: std.process.Child.RunResult,
+    exec: std.process.RunResult,
 
     pub fn deinit(self: *Win32CvtResResult, allocator: Allocator) void {
         if (self.obj) |obj| {
@@ -329,12 +329,12 @@ pub const Win32CvtResResult = struct {
     }
 };
 
-pub fn getWin32CvtResResult(allocator: Allocator, res_source: []const u8, options: GetCvtResResultOptions) !Win32CvtResResult {
-    try options.cwd.writeFile(.{ .sub_path = "test.res", .data = res_source });
-    return getWin32CvtResResultFromFile(allocator, "test.res", options);
+pub fn getWin32CvtResResult(allocator: Allocator, io: Io, res_source: []const u8, options: GetCvtResResultOptions) !Win32CvtResResult {
+    try options.cwd.writeFile(io, .{ .sub_path = "test.res", .data = res_source });
+    return getWin32CvtResResultFromFile(allocator, io, "test.res", options);
 }
 
-pub fn getWin32CvtResResultFromFile(allocator: Allocator, input_path: []const u8, options: GetCvtResResultOptions) !Win32CvtResResult {
+pub fn getWin32CvtResResultFromFile(allocator: Allocator, io: Io, input_path: []const u8, options: GetCvtResResultOptions) !Win32CvtResResult {
     var argv = try std.array_list.Managed([]const u8).initCapacity(allocator, 4);
     defer argv.deinit();
 
@@ -374,8 +374,7 @@ pub fn getWin32CvtResResultFromFile(allocator: Allocator, input_path: []const u8
 
     try argv.append(input_path);
 
-    const exec_result = try std.process.Child.run(.{
-        .allocator = allocator,
+    const exec_result = try std.process.run(allocator, io, .{
         .argv = argv.items,
         .cwd = options.cwd_path,
     });
@@ -383,8 +382,8 @@ pub fn getWin32CvtResResultFromFile(allocator: Allocator, input_path: []const u8
     errdefer allocator.free(exec_result.stderr);
 
     var result = Win32CvtResResult{ .exec = exec_result };
-    if (exec_result.term == .Exited and exec_result.term.Exited == 0) {
-        var obj = options.cwd.readFileAlloc(output_path, allocator, .unlimited) catch |err| blk: {
+    if (exec_result.term == .exited and exec_result.term.exited == 0) {
+        var obj = options.cwd.readFileAlloc(io, output_path, allocator, .unlimited) catch |err| blk: {
             std.debug.print("expected file at {s} but got: {}", .{ output_path, err });
             break :blk null;
         };
@@ -434,7 +433,7 @@ pub fn stripAndFixupCoff(allocator: Allocator, reader: *std.Io.Reader, writer: *
         stripped_symbols += 1;
     }
     var stripped_sections: u16 = 0;
-    var header = try reader.takeStruct(std.coff.CoffHeader, .little);
+    var header = try reader.takeStruct(std.coff.Header, .little);
     if (fixups.clear_timestamp) {
         header.time_date_stamp = 0;
     }

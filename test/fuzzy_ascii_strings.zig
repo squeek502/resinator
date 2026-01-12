@@ -4,12 +4,13 @@ const fuzzy_options = @import("fuzzy_options");
 const iterations = fuzzy_options.max_iterations;
 
 test "single chars" {
+    const io = std.testing.io;
     const allocator = std.testing.allocator;
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
+    const tmp_path = try tmp.dir.realPathFileAlloc(io, ".", allocator);
     defer allocator.free(tmp_path);
 
     var source_buf = "1 RCDATA { \"?\" }".*;
@@ -22,7 +23,7 @@ test "single chars" {
 
         source[byte_index] = byte;
 
-        try utils.expectSameResOutput(allocator, source, .{
+        try utils.expectSameResOutput(allocator, io, source, .{
             .cwd = tmp.dir,
             .cwd_path = tmp_path,
         });
@@ -32,12 +33,13 @@ test "single chars" {
 }
 
 test "single char escapes" {
+    const io = std.testing.io;
     const allocator = std.testing.allocator;
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
+    const tmp_path = try tmp.dir.realPathFileAlloc(io, ".", allocator);
     defer allocator.free(tmp_path);
 
     var source_buf = "1 RCDATA { \"\\?\" }".*;
@@ -52,7 +54,7 @@ test "single char escapes" {
 
         source[escaped_byte_index] = escaped_byte;
 
-        try utils.expectSameResOutput(allocator, source, .{
+        try utils.expectSameResOutput(allocator, io, source, .{
             .cwd = tmp.dir,
             .cwd_path = tmp_path,
         });
@@ -62,6 +64,7 @@ test "single char escapes" {
 }
 
 test "fuzz" {
+    const io = std.testing.io;
     const allocator = std.testing.allocator;
     var random = std.Random.DefaultPrng.init(0);
     const rand = random.random();
@@ -69,7 +72,7 @@ test "fuzz" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
+    const tmp_path = try tmp.dir.realPathFileAlloc(io, ".", allocator);
     defer allocator.free(tmp_path);
 
     var source_buffer: std.ArrayList(u8) = .empty;
@@ -86,9 +89,9 @@ test "fuzz" {
 
         // write out the source file to disk for debugging
         if (fuzzy_options.fuzzy_debug)
-            try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_ascii_strings.rc", .data = source });
+            try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ".zig-cache/tmp/fuzzy_ascii_strings.rc", .data = source });
 
-        try utils.expectSameResOutput(allocator, source, .{
+        try utils.expectSameResOutput(allocator, io, source, .{
             .cwd = tmp.dir,
             .cwd_path = tmp_path,
         });

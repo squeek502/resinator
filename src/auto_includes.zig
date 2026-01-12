@@ -1,22 +1,23 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 const windows = std.os.windows;
 const L = std.unicode.utf8ToUtf16LeStringLiteral;
 
 const compressed_mingw_includes = @import("compressed_mingw_includes").data;
 const include_ver = 2;
 
-pub fn extractMingwIncludes(allocator: Allocator, maybe_progress: ?std.Progress.Node) ![]const u8 {
-    const resinator_cache_path = try getCachePath(allocator, "resinator") orelse return error.CannotResolveCachePath;
+pub fn extractMingwIncludes(allocator: Allocator, io: Io, env_map: *std.process.Environ.Map, maybe_progress: ?std.Progress.Node) ![]const u8 {
+    const resinator_cache_path = try getCachePath(allocator, "resinator", env_map) orelse return error.CannotResolveCachePath;
     defer allocator.free(resinator_cache_path);
 
-    var resinator_cache_dir = try std.fs.cwd().makeOpenPath(resinator_cache_path, .{});
-    defer resinator_cache_dir.close();
+    var resinator_cache_dir = try Io.Dir.cwd().createDirPathOpen(io, resinator_cache_path, .{});
+    defer resinator_cache_dir.close(io);
 
     existing_ver: {
         var manifest_buffer: [32]u8 = undefined;
-        if (resinator_cache_dir.readFile("include_ver", &manifest_buffer)) |ver_bytes| {
+        if (resinator_cache_dir.readFile(io, "include_ver", &manifest_buffer)) |ver_bytes| {
             var it = std.mem.splitAny(u8, ver_bytes, " \t\r\n");
             const existing_ver = std.fmt.parseInt(u16, it.first(), 10) catch break :existing_ver;
             if (existing_ver >= include_ver) return std.fs.path.join(allocator, &.{ resinator_cache_path, "include" });
@@ -31,7 +32,7 @@ pub fn extractMingwIncludes(allocator: Allocator, maybe_progress: ?std.Progress.
 
     // delete any previously existing include dir since it's either out-of-date
     // or in a weird state and we should just start over.
-    resinator_cache_dir.deleteTree("include") catch {};
+    resinator_cache_dir.deleteTree(io, "include") catch {};
 
     const buffer_len = std.compress.zstd.default_window_len + std.compress.zstd.block_size_max;
     const buffer = try allocator.alloc(u8, buffer_len);
@@ -41,49 +42,44 @@ pub fn extractMingwIncludes(allocator: Allocator, maybe_progress: ?std.Progress.
         .verify_checksum = false,
     });
 
-    try std.tar.pipeToFileSystem(resinator_cache_dir, &decompress.reader, .{ .mode_mode = .ignore });
+    try std.tar.pipeToFileSystem(io, resinator_cache_dir, &decompress.reader, .{ .mode_mode = .ignore });
     const include_ver_contents = std.fmt.comptimePrint("{}", .{include_ver});
-    try resinator_cache_dir.writeFile(.{ .sub_path = "include_ver", .data = include_ver_contents });
+    try resinator_cache_dir.writeFile(io, .{ .sub_path = "include_ver", .data = include_ver_contents });
 
     return std.fs.path.join(allocator, &.{ resinator_cache_path, "include" });
 }
 
-pub fn getCachePath(allocator: Allocator, appname: []const u8) error{OutOfMemory}!?[]const u8 {
+pub fn getCachePath(allocator: Allocator, appname: []const u8, env_map: *std.process.Environ.Map) error{OutOfMemory}!?[]const u8 {
     switch (builtin.os.tag) {
         .windows => {
-            const local_app_data = std.process.getEnvVarOwned(allocator, "LOCALAPPDATA") catch |err| switch (err) {
-                error.EnvironmentVariableNotFound => return null,
-                error.InvalidWtf8 => unreachable,
-                else => |e| return e,
-            };
-            defer allocator.free(local_app_data);
+            const local_app_data = env_map.get("LOCALAPPDATA") orelse return null;
             return try std.fs.path.join(allocator, &.{ local_app_data, "Temp", appname });
         },
         .macos => {
-            if (std.posix.getenv("XDG_CACHE_HOME")) |cache| {
+            if (env_map.get("XDG_CACHE_HOME")) |cache| {
                 return try std.fs.path.join(allocator, &.{ cache, appname });
             }
-            const home = std.posix.getenv("HOME") orelse return null;
+            const home = env_map.get("HOME") orelse return null;
             return try std.fs.path.join(allocator, &.{ home, "Library/Caches", appname });
         },
         else => {
-            if (std.posix.getenv("XDG_CACHE_HOME")) |cache| {
+            if (env_map.get("XDG_CACHE_HOME")) |cache| {
                 return try std.fs.path.join(allocator, &.{ cache, appname });
             }
-            const home = std.posix.getenv("HOME") orelse return null;
+            const home = env_map.get("HOME") orelse return null;
             return try std.fs.path.join(allocator, &.{ home, ".cache", appname });
         },
     }
 }
 
-pub fn getMsvcIncludePaths(allocator: Allocator) error{ OutOfMemory, MsvcIncludesNotFound }![]const []const u8 {
+pub fn getMsvcIncludePaths(allocator: Allocator, io: Io) error{ OutOfMemory, MsvcIncludesNotFound }![]const []const u8 {
     var list = try std.ArrayList([]const u8).initCapacity(allocator, 5);
     errdefer {
         for (list.items) |path| allocator.free(path);
         list.deinit(allocator);
     }
 
-    const msvc_tools_path = LatestMsvcToolsDir.find(allocator) catch |err| switch (err) {
+    const msvc_tools_path = LatestMsvcToolsDir.find(allocator, io) catch |err| switch (err) {
         error.PathNotFound => return error.MsvcIncludesNotFound,
         else => |e| return e,
     };
@@ -95,7 +91,7 @@ pub fn getMsvcIncludePaths(allocator: Allocator) error{ OutOfMemory, MsvcInclude
     const atlmfc_include = try std.fs.path.join(allocator, &.{ msvc_tools_path, "atlmfc", "include" });
     list.appendAssumeCapacity(atlmfc_include);
 
-    const sdk_include_path = LatestSdkIncludeDir.find(allocator) catch |err| switch (err) {
+    const sdk_include_path = LatestSdkIncludeDir.find(allocator, io) catch |err| switch (err) {
         error.PathNotFound => return error.MsvcIncludesNotFound,
         else => |e| return e,
     };
@@ -118,16 +114,17 @@ const HKEY_CURRENT_USER: windows.HKEY = @ptrFromInt(0x80000001);
 
 /// Based on Common7\Tools\vsdevcmd\core\winsdk.bat of a MSVC installation
 pub const LatestSdkIncludeDir = struct {
-    pub fn find(allocator: Allocator) error{ OutOfMemory, PathNotFound }![]const u8 {
-        return find10(allocator) catch |err| switch (err) {
+    pub fn find(allocator: Allocator, io: Io) error{ OutOfMemory, PathNotFound }![]const u8 {
+        return find10(allocator, io) catch |err| switch (err) {
             error.OutOfMemory => |e| return e,
-            error.PathNotFound => find8_1(allocator),
+            error.PathNotFound => find8_1(allocator, io),
         };
     }
 
-    pub fn find8_1(allocator: Allocator) error{ OutOfMemory, PathNotFound }![]const u8 {
-        var dir = try findInstallationIncludeDir("v8.1");
-        defer dir.close();
+    pub fn find8_1(allocator: Allocator, io: Io) error{ OutOfMemory, PathNotFound }![]const u8 {
+        const dir_handle = try findInstallationIncludeDir("v8.1");
+        defer _ = windows.ntdll.NtClose(dir_handle);
+        var dir: Io.Dir = .{ .handle = dir_handle };
 
         // SDK v8.1 doesn't have subdirs with different SDK versions in its Include dir,
         // so we can just return the path to the Include dir.
@@ -135,20 +132,22 @@ pub const LatestSdkIncludeDir = struct {
         // then get the path from the dir, but oh well.
 
         var fd_path_buf: [std.fs.max_path_bytes]u8 = undefined;
-        const dir_path = std.os.getFdPath(dir.fd, &fd_path_buf) catch return error.PathNotFound;
+        const fd_path_len = dir.realPath(io, &fd_path_buf) catch return error.PathNotFound;
+        const dir_path = fd_path_buf[0..fd_path_len];
         return allocator.dupe(u8, dir_path);
     }
 
-    pub fn find10(allocator: Allocator) error{ OutOfMemory, PathNotFound }![]const u8 {
-        var dir = try findInstallationIncludeDir("v10.0");
-        defer dir.close();
+    pub fn find10(allocator: Allocator, io: Io) error{ OutOfMemory, PathNotFound }![]const u8 {
+        const dir_handle = try findInstallationIncludeDir("v10.0");
+        defer _ = windows.ntdll.NtClose(dir_handle);
+        var dir: Io.Dir = .{ .handle = dir_handle };
 
         var subpath_buf: [std.fs.max_name_bytes]u8 = undefined;
         var latest_version_dir = std.ArrayList(u8).initBuffer(&subpath_buf);
 
         var latest_version: u64 = 0;
         var dir_it = dir.iterateAssumeFirstIteration();
-        while (dir_it.next() catch return error.PathNotFound) |entry| {
+        while (dir_it.next(io) catch return error.PathNotFound) |entry| {
             if (entry.kind != .directory) continue;
 
             const parsed_version = parseVersionQuad(entry.name) catch continue;
@@ -157,7 +156,7 @@ pub const LatestSdkIncludeDir = struct {
             if (parsed_version <= latest_version) continue;
 
             // Verify that the SDK has at least some of the expected files
-            if (!verifySdk(dir, entry.name)) continue;
+            if (!verifySdk(io, dir, entry.name)) continue;
 
             latest_version_dir.clearRetainingCapacity();
             latest_version_dir.appendSliceAssumeCapacity(entry.name);
@@ -167,22 +166,23 @@ pub const LatestSdkIncludeDir = struct {
         if (latest_version == 0) return error.PathNotFound;
 
         var fd_path_buf: [std.fs.max_path_bytes]u8 = undefined;
-        const dir_path = std.os.getFdPath(dir.fd, &fd_path_buf) catch return error.PathNotFound;
+        const fd_path_len = dir.realPath(io, &fd_path_buf) catch return error.PathNotFound;
+        const dir_path = fd_path_buf[0..fd_path_len];
         return std.fs.path.join(allocator, &.{ dir_path, latest_version_dir.items });
     }
 
-    fn verifySdk(installation_dir: std.fs.Dir, sdk_ver: []const u8) bool {
-        var dir = installation_dir.openDir(sdk_ver, .{}) catch return false;
-        defer dir.close();
+    fn verifySdk(io: Io, installation_dir: Io.Dir, sdk_ver: []const u8) bool {
+        var dir = installation_dir.openDir(io, sdk_ver, .{}) catch return false;
+        defer dir.close(io);
 
         // winsdk.bat checks for winsdkver.h by default, or Windows.h if the app platform
         // is set to UWP. We just check for the existence of either one and call that good enough.
         winsdkver_h: {
-            const stat = dir.statFile("um/winsdkver.h") catch break :winsdkver_h;
+            const stat = dir.statFile(io, "um/winsdkver.h", .{}) catch break :winsdkver_h;
             if (stat.kind == .file) return true;
         }
         windows_h: {
-            const stat = dir.statFile("um/Windows.h") catch break :windows_h;
+            const stat = dir.statFile(io, "um/Windows.h", .{}) catch break :windows_h;
             if (stat.kind == .file) return true;
         }
 
@@ -190,7 +190,7 @@ pub const LatestSdkIncludeDir = struct {
     }
 
     /// Returns a Dir with iterate permissions.
-    pub fn findInstallationIncludeDir(comptime version: []const u8) error{PathNotFound}!std.fs.Dir {
+    pub fn findInstallationIncludeDir(comptime version: []const u8) error{PathNotFound}!windows.HANDLE {
         const KeyAndOptions = struct { root_key: windows.HKEY, options: OpenKeyOptions };
         const variants = [_]KeyAndOptions{
             .{ .root_key = windows.HKEY_LOCAL_MACHINE, .options = .{ .wow64_32 = true } },
@@ -200,7 +200,7 @@ pub const LatestSdkIncludeDir = struct {
         };
         for (&variants) |variant| {
             const installation_path = findInstallationIncludePath(version, variant.root_key, variant.options) catch continue;
-            return std.fs.openDirAbsoluteW(installation_path.span(), .{ .iterate = true }) catch continue;
+            return ntOpenDirAbsolute(installation_path.span(), .{ .iterate = true }) catch continue;
         }
         return error.PathNotFound;
     }
@@ -245,13 +245,14 @@ pub const LatestMsvcToolsDir = struct {
     ///
     /// The logic in this function is intended to match what ISetupConfiguration does
     /// under-the-hood, as verified using Procmon.
-    pub fn find(allocator: Allocator) error{ OutOfMemory, PathNotFound }![]const u8 {
+    pub fn find(allocator: Allocator, io: Io) error{ OutOfMemory, PathNotFound }![]const u8 {
         // Typically `%PROGRAMDATA%\Microsoft\VisualStudio\Packages\_Instances`
         // This will contain directories with names of instance IDs like 80a758ca,
         // which will contain `state.json` files that have the version and
         // installation directory.
-        var instances_dir = try findInstancesDir();
-        defer instances_dir.close();
+        const instances_dir_handle = try findInstancesDir();
+        defer _ = windows.ntdll.NtClose(instances_dir_handle);
+        var instances_dir: Io.Dir = .{ .handle = instances_dir_handle };
 
         var state_subpath_buf: [std.fs.max_name_bytes + 32]u8 = undefined;
         var latest_version_dir: std.ArrayList(u8) = .empty;
@@ -259,7 +260,7 @@ pub const LatestMsvcToolsDir = struct {
 
         var latest_version: u64 = 0;
         var instances_dir_it = instances_dir.iterateAssumeFirstIteration();
-        while (instances_dir_it.next() catch return error.PathNotFound) |entry| {
+        while (instances_dir_it.next(io) catch return error.PathNotFound) |entry| {
             if (entry.kind != .directory) continue;
 
             var fbs: std.Io.Writer = .fixed(&state_subpath_buf);
@@ -269,7 +270,7 @@ pub const LatestMsvcToolsDir = struct {
             writer.writeByte(std.fs.path.sep) catch unreachable;
             writer.writeAll("state.json") catch unreachable;
 
-            const json_contents = instances_dir.readFileAlloc(fbs.buffered(), allocator, .unlimited) catch continue;
+            const json_contents = instances_dir.readFileAlloc(io, fbs.buffered(), allocator, .unlimited) catch continue;
             defer allocator.free(json_contents);
 
             var parsed = std.json.parseFromSlice(std.json.Value, allocator, json_contents, .{}) catch continue;
@@ -289,7 +290,7 @@ pub const LatestMsvcToolsDir = struct {
             const installation_path = parsed.value.object.get("installationPath") orelse continue;
             if (installation_path != .string) continue;
 
-            const tools_dir_path = toolsDirFromInstallationPath(allocator, installation_path.string) catch |err| switch (err) {
+            const tools_dir_path = toolsDirFromInstallationPath(allocator, io, installation_path.string) catch |err| switch (err) {
                 error.OutOfMemory => |e| return e,
                 error.PathNotFound => continue,
             };
@@ -304,7 +305,7 @@ pub const LatestMsvcToolsDir = struct {
         return latest_version_dir.toOwnedSlice(allocator);
     }
 
-    fn toolsDirFromInstallationPath(allocator: Allocator, installation_path: []const u8) error{ OutOfMemory, PathNotFound }![]const u8 {
+    fn toolsDirFromInstallationPath(allocator: Allocator, io: Io, installation_path: []const u8) error{ OutOfMemory, PathNotFound }![]const u8 {
         var lib_dir_buf = try std.ArrayList(u8).initCapacity(allocator, installation_path.len + 64);
         errdefer lib_dir_buf.deinit(allocator);
 
@@ -317,7 +318,7 @@ pub const LatestMsvcToolsDir = struct {
 
         lib_dir_buf.appendSliceAssumeCapacity("VC\\Auxiliary\\Build\\Microsoft.VCToolsVersion.default.txt");
         var default_tools_version_buf: [512]u8 = undefined;
-        const default_tools_version_contents = std.fs.cwd().readFile(lib_dir_buf.items, &default_tools_version_buf) catch {
+        const default_tools_version_contents = Io.Dir.cwd().readFile(io, lib_dir_buf.items, &default_tools_version_buf) catch {
             return error.PathNotFound;
         };
         var tokenizer = std.mem.tokenizeAny(u8, default_tools_version_contents, " \r\n");
@@ -330,7 +331,7 @@ pub const LatestMsvcToolsDir = struct {
         return lib_dir_buf.toOwnedSlice(allocator);
     }
 
-    fn findInstancesDirViaSetup() error{PathNotFound}!std.fs.Dir {
+    fn findInstancesDirViaSetup() error{PathNotFound}!windows.HANDLE {
         const vs_setup_key_path = L("SOFTWARE\\Microsoft\\VisualStudio\\Setup");
         const vs_setup_key = openKey(windows.HKEY_LOCAL_MACHINE, vs_setup_key_path, .{}) catch |err| switch (err) {
             error.KeyNotFound => return error.PathNotFound,
@@ -348,7 +349,7 @@ pub const LatestMsvcToolsDir = struct {
         const packages_path = getRegistryStringValue(path_buf.data[path_buf.len..], vs_setup_key, L("CachePath")) catch return error.PathNotFound;
         path_buf.len += packages_path.len;
 
-        if (!std.fs.path.isAbsoluteWindowsWTF16(packages_path)) return error.PathNotFound;
+        if (!std.fs.path.isAbsoluteWindowsWtf16(packages_path)) return error.PathNotFound;
 
         const instances_subpath_with_preceding_sep = L("\\_Instances");
         const has_trailing_sep = packages_path[packages_path.len - 1] == '\\' or packages_path[packages_path.len - 1] == '/';
@@ -357,10 +358,10 @@ pub const LatestMsvcToolsDir = struct {
         @memcpy(path_buf.data[path_buf.len..][0 .. instances_subpath.len + 1], instances_subpath[0 .. instances_subpath.len + 1]);
         path_buf.len += instances_subpath.len;
 
-        return std.fs.openDirAbsoluteW(path_buf.span(), .{ .iterate = true }) catch return error.PathNotFound;
+        return ntOpenDirAbsolute(path_buf.span(), .{ .iterate = true }) catch return error.PathNotFound;
     }
 
-    fn findInstancesDirViaCLSID() error{PathNotFound}!std.fs.Dir {
+    fn findInstancesDirViaCLSID() error{PathNotFound}!windows.HANDLE {
         const setup_configuration_clsid = "{177f0c4a-1cd3-4de7-a32c-71dbbb9fa36d}";
         const key_path = L("CLSID\\" ++ setup_configuration_clsid ++ "\\InprocServer32");
         const setup_config_key = openKey(windows.HKEY_CLASSES_ROOT, key_path, .{}) catch return error.PathNotFound;
@@ -379,13 +380,13 @@ pub const LatestMsvcToolsDir = struct {
 
         // dll_path will be something like `C:\ProgramData\Microsoft\VisualStudio\Setup\x64\Microsoft.VisualStudio.Setup.Configuration.Native.dll`
         // but we just want the portion up to and including `VisualStudio`
-        var path_it = std.fs.path.ComponentIterator(.windows, u16).init(dll_path) catch return error.PathNotFound;
+        var path_it = std.fs.path.ComponentIterator(.windows, u16).init(dll_path);
         // Path must be absolute
         if (path_it.root() == null) return error.PathNotFound;
         // the .dll filename
         _ = path_it.last();
         const root_path = while (path_it.previous()) |dir_component| {
-            if (windows.eqlIgnoreCaseWTF16(dir_component.name, L("VisualStudio"))) {
+            if (windows.eqlIgnoreCaseWtf16(dir_component.name, L("VisualStudio"))) {
                 break dir_component.path;
             }
         } else {
@@ -400,10 +401,10 @@ pub const LatestMsvcToolsDir = struct {
         @memcpy(path_buf.data[path_buf.len..][0 .. instances_subpath.len + 1], instances_subpath[0 .. instances_subpath.len + 1]);
         path_buf.len += instances_subpath.len;
 
-        return std.fs.openDirAbsoluteW(path_buf.span(), .{ .iterate = true }) catch return error.PathNotFound;
+        return ntOpenDirAbsolute(path_buf.span(), .{ .iterate = true }) catch return error.PathNotFound;
     }
 
-    fn findInstancesDir() error{PathNotFound}!std.fs.Dir {
+    fn findInstancesDir() error{PathNotFound}!windows.HANDLE {
         // First, try getting the packages cache path from the registry.
         // This only seems to exist when the path is different from the default.
         method1: {
@@ -421,9 +422,11 @@ pub const LatestMsvcToolsDir = struct {
         // If that can't be found, fall back to manually appending
         // `Microsoft\VisualStudio\Packages\_Instances` to %PROGRAMDATA%
         method3: {
-            const program_data = std.process.getenvW(L("PROGRAMDATA")) orelse break :method3;
+            // The PEB is queried on demand, there's no state stored so we can just create a dummy value.
+            const environ: std.process.Environ = .{ .block = {} };
+            const program_data = environ.getWindows(L("PROGRAMDATA")) orelse break :method3;
             // Must be an absolute path
-            if (!std.fs.path.isAbsoluteWindowsWTF16(program_data)) break :method3;
+            if (!std.fs.path.isAbsoluteWindowsWtf16(program_data)) break :method3;
 
             var instances_path = windows.PathSpace{ .data = undefined, .len = 0 };
             // Pre-populate the NT prefix. This avoids putting a redundant PathSpace on the stack
@@ -443,7 +446,7 @@ pub const LatestMsvcToolsDir = struct {
             @memcpy(instances_path.data[instances_path.len..][0 .. instances_subpath.len + 1], instances_subpath[0 .. instances_subpath.len + 1]);
             instances_path.len += instances_subpath.len;
 
-            return std.fs.openDirAbsoluteW(instances_path.span(), .{ .iterate = true }) catch break :method3;
+            return ntOpenDirAbsolute(instances_path.span(), .{ .iterate = true }) catch break :method3;
         }
         return error.PathNotFound;
     }
@@ -495,13 +498,14 @@ const OpenKeyOptions = struct {
 
 fn openKey(root_key: windows.HKEY, key_path: [:0]const u16, options: OpenKeyOptions) error{KeyNotFound}!windows.HKEY {
     var key: windows.HKEY = undefined;
-    var access_attributes: windows.REGSAM = windows.KEY_QUERY_VALUE;
-    if (options.wow64_32) access_attributes |= windows.KEY_WOW64_32KEY;
     const open_result = std.os.windows.advapi32.RegOpenKeyExW(
         root_key,
         key_path,
         0,
-        access_attributes,
+        .{ .SPECIFIC = .{ .KEY = .{
+            .QUERY_VALUE = true,
+            .WOW64_32KEY = options.wow64_32,
+        } } },
         &key,
     );
     switch (@as(windows.Win32Error, @enumFromInt(open_result))) {
@@ -543,4 +547,68 @@ fn getRegistryStringValue(
         .MORE_DATA => return error.BufferTooSmall,
         else => |err| return windows.unexpectedError(err),
     }
+}
+
+const NtOpenDirAbsoluteError = error{ PathNotAbsolute, BadPathName, FileNotFound, NotDir, AccessDenied, Unexpected };
+
+fn ntOpenDirAbsolute(path: []const u16, options: Io.Dir.OpenOptions) NtOpenDirAbsoluteError!windows.HANDLE {
+    if (!std.fs.path.isAbsoluteWindowsWtf16(path)) return error.PathNotAbsolute;
+
+    const path_len_bytes: u16 = @intCast(path.len * 2);
+    var nt_name: windows.UNICODE_STRING = .{
+        .Length = path_len_bytes,
+        .MaximumLength = path_len_bytes,
+        .Buffer = @constCast(path.ptr),
+    };
+    var io_status_block: windows.IO_STATUS_BLOCK = undefined;
+    var handle: windows.HANDLE = undefined;
+
+    const rc = windows.ntdll.NtCreateFile(
+        &handle,
+        .{
+            .SPECIFIC = .{ .FILE_DIRECTORY = .{
+                .LIST = options.iterate,
+                .READ_EA = true,
+                .TRAVERSE = true,
+                .READ_ATTRIBUTES = true,
+            } },
+            .STANDARD = .{
+                .RIGHTS = .READ,
+                .SYNCHRONIZE = true,
+            },
+        },
+        &.{
+            .Length = @sizeOf(windows.OBJECT_ATTRIBUTES),
+            .RootDirectory = null,
+            .Attributes = .{},
+            .ObjectName = &nt_name,
+            .SecurityDescriptor = null,
+            .SecurityQualityOfService = null,
+        },
+        &io_status_block,
+        null,
+        .{ .NORMAL = true },
+        .VALID_FLAGS,
+        .OPEN,
+        .{
+            .DIRECTORY_FILE = true,
+            .IO = .SYNCHRONOUS_NONALERT,
+            .OPEN_FOR_BACKUP_INTENT = true,
+            .OPEN_REPARSE_POINT = !options.follow_symlinks,
+        },
+        null,
+        0,
+    );
+    switch (rc) {
+        .SUCCESS => {},
+        .OBJECT_NAME_INVALID => return error.BadPathName,
+        .OBJECT_NAME_NOT_FOUND => return error.FileNotFound,
+        .OBJECT_PATH_NOT_FOUND => return error.FileNotFound,
+        .NOT_A_DIRECTORY => return error.NotDir,
+        // This can happen if the directory has 'List folder contents' permission set to 'Deny'
+        // and the directory is trying to be opened for iteration.
+        .ACCESS_DENIED => return error.AccessDenied,
+        else => return windows.unexpectedStatus(rc),
+    }
+    return handle;
 }

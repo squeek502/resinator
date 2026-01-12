@@ -2,12 +2,13 @@ const std = @import("std");
 const utils = @import("test_utils");
 
 test "raw data" {
+    const io = std.testing.io;
     const allocator = std.testing.allocator;
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
+    const tmp_path = try tmp.dir.realPathFileAlloc(io, ".", allocator);
     defer allocator.free(tmp_path);
 
     var source_buffer: std.ArrayList(u8) = .empty;
@@ -24,7 +25,7 @@ test "raw data" {
 
         const source = source_buffer.items;
 
-        try utils.expectSameResOutput(allocator, source, .{
+        try utils.expectSameResOutput(allocator, io, source, .{
             .cwd = tmp.dir,
             .cwd_path = tmp_path,
         });

@@ -6,6 +6,7 @@ const resinator = @import("resinator");
 const Allocator = std.mem.Allocator;
 
 test "res preface fuzz" {
+    const io = std.testing.io;
     const allocator = std.testing.allocator;
     var random = std.Random.DefaultPrng.init(0);
     var rand = random.random();
@@ -13,7 +14,7 @@ test "res preface fuzz" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
+    const tmp_path = try tmp.dir.realPathFileAlloc(io, ".", allocator);
     defer allocator.free(tmp_path);
 
     var res_buffer: std.Io.Writer.Allocating = .init(allocator);
@@ -30,7 +31,7 @@ test "res preface fuzz" {
 
         // also write it to the top-level tmp dir for debugging
         if (fuzzy_options.fuzzy_debug)
-            try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_res_preface.res", .data = res_buffer.written() });
+            try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ".zig-cache/tmp/fuzzy_res_preface.res", .data = res_buffer.written() });
 
         var fbs: std.Io.Reader = .fixed(res_buffer.written());
         var resources = resinator.cvtres.parseRes(allocator, &fbs, .{
@@ -41,6 +42,7 @@ test "res preface fuzz" {
 }
 
 test "res fuzz" {
+    const io = std.testing.io;
     const allocator = std.testing.allocator;
     var random = std.Random.DefaultPrng.init(0);
     var rand = random.random();
@@ -48,7 +50,7 @@ test "res fuzz" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
+    const tmp_path = try tmp.dir.realPathFileAlloc(io, ".", allocator);
     defer allocator.free(tmp_path);
 
     var res_buffer: std.Io.Writer.Allocating = .init(allocator);
@@ -68,7 +70,7 @@ test "res fuzz" {
 
         // also write it to the top-level tmp dir for debugging
         if (fuzzy_options.fuzzy_debug)
-            try std.fs.cwd().writeFile(.{ .sub_path = ".zig-cache/tmp/fuzzy_res.res", .data = res_buffer.written() });
+            try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ".zig-cache/tmp/fuzzy_res.res", .data = res_buffer.written() });
 
         var fbs: std.Io.Reader = .fixed(res_buffer.written());
         var resources = resinator.cvtres.parseRes(allocator, &fbs, .{

@@ -17,12 +17,13 @@ test "literal in raw data block" {
 }
 
 fn testAllBytes(source: []u8) !void {
+    const io = std.testing.io;
     const allocator = std.testing.allocator;
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const tmp_path = try tmp.dir.realpathAlloc(allocator, ".");
+    const tmp_path = try tmp.dir.realPathFileAlloc(io, ".", allocator);
     defer allocator.free(tmp_path);
 
     const byte_index = std.mem.indexOfScalar(u8, source, '?').?;
@@ -39,7 +40,7 @@ fn testAllBytes(source: []u8) !void {
 
         source[byte_index] = byte;
 
-        utils.expectSameResOutput(allocator, source, .{
+        utils.expectSameResOutput(allocator, io, source, .{
             .cwd = tmp.dir,
             .cwd_path = tmp_path,
         }) catch |err| {
