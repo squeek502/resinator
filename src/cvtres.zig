@@ -410,7 +410,7 @@ pub const ResourceDirectoryTable = extern struct {
 };
 
 pub const ResourceDirectoryEntry = extern struct {
-    entry: packed union {
+    entry: packed union(u32) {
         name_offset: packed struct(u32) {
             address: u31,
             /// This is undocumented in the PE/COFF spec, but the high bit

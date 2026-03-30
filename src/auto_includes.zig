@@ -4,6 +4,7 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const windows = std.os.windows;
 const L = std.unicode.utf8ToUtf16LeStringLiteral;
+const WindowsPathSpace = std.Io.Threaded.WindowsPathSpace;
 
 const compressed_mingw_includes = @import("compressed_mingw_includes").data;
 const include_ver = 2;
@@ -206,11 +207,11 @@ pub const LatestSdkIncludeDir = struct {
     }
 
     /// Returns an NT-prefixed absolute path if the installation path was found.
-    pub fn findInstallationIncludePath(comptime version: []const u8, root_key: windows.HKEY, options: OpenKeyOptions) error{PathNotFound}!windows.PathSpace {
+    pub fn findInstallationIncludePath(comptime version: []const u8, root_key: windows.HKEY, options: OpenKeyOptions) error{PathNotFound}!WindowsPathSpace {
         const key = openKey(root_key, L("SOFTWARE\\Microsoft\\Microsoft SDKs\\Windows\\" ++ version), options) catch return error.PathNotFound;
-        defer _ = std.os.windows.advapi32.RegCloseKey(key);
+        defer _ = RegCloseKey(key);
 
-        var installation_path = windows.PathSpace{ .data = undefined, .len = 0 };
+        var installation_path = WindowsPathSpace{ .data = undefined, .len = 0 };
 
         // Pre-populate the NT prefix. This avoids putting a redundant PathSpace on the stack
         // since we avoid the need to call windows.wToPrefixedFileW.
@@ -336,9 +337,9 @@ pub const LatestMsvcToolsDir = struct {
         const vs_setup_key = openKey(windows.HKEY_LOCAL_MACHINE, vs_setup_key_path, .{}) catch |err| switch (err) {
             error.KeyNotFound => return error.PathNotFound,
         };
-        defer _ = std.os.windows.advapi32.RegCloseKey(vs_setup_key);
+        defer _ = RegCloseKey(vs_setup_key);
 
-        var path_buf = windows.PathSpace{ .data = undefined, .len = 0 };
+        var path_buf = WindowsPathSpace{ .data = undefined, .len = 0 };
         // Pre-populate the NT prefix. This avoids putting a redundant PathSpace on the stack
         // since we avoid the need to call windows.wToPrefixedFileW.
         const nt_prefix = L("\\??\\");
@@ -365,9 +366,9 @@ pub const LatestMsvcToolsDir = struct {
         const setup_configuration_clsid = "{177f0c4a-1cd3-4de7-a32c-71dbbb9fa36d}";
         const key_path = L("CLSID\\" ++ setup_configuration_clsid ++ "\\InprocServer32");
         const setup_config_key = openKey(windows.HKEY_CLASSES_ROOT, key_path, .{}) catch return error.PathNotFound;
-        defer _ = std.os.windows.advapi32.RegCloseKey(setup_config_key);
+        defer _ = RegCloseKey(setup_config_key);
 
-        var path_buf = windows.PathSpace{ .data = undefined, .len = 0 };
+        var path_buf = WindowsPathSpace{ .data = undefined, .len = 0 };
         // Pre-populate the NT prefix. This avoids putting a redundant PathSpace on the stack
         // since we avoid the need to call windows.wToPrefixedFileW.
         const nt_prefix = L("\\??\\");
@@ -423,12 +424,12 @@ pub const LatestMsvcToolsDir = struct {
         // `Microsoft\VisualStudio\Packages\_Instances` to %PROGRAMDATA%
         method3: {
             // The PEB is queried on demand, there's no state stored so we can just create a dummy value.
-            const environ: std.process.Environ = .{ .block = {} };
+            const environ: std.process.Environ = .{ .block = .global };
             const program_data = environ.getWindows(L("PROGRAMDATA")) orelse break :method3;
             // Must be an absolute path
             if (!std.fs.path.isAbsoluteWindowsWtf16(program_data)) break :method3;
 
-            var instances_path = windows.PathSpace{ .data = undefined, .len = 0 };
+            var instances_path = WindowsPathSpace{ .data = undefined, .len = 0 };
             // Pre-populate the NT prefix. This avoids putting a redundant PathSpace on the stack
             // since we avoid the need to call windows.wToPrefixedFileW.
             const nt_prefix = L("\\??\\");
@@ -498,7 +499,7 @@ const OpenKeyOptions = struct {
 
 fn openKey(root_key: windows.HKEY, key_path: [:0]const u16, options: OpenKeyOptions) error{KeyNotFound}!windows.HKEY {
     var key: windows.HKEY = undefined;
-    const open_result = std.os.windows.advapi32.RegOpenKeyExW(
+    const open_result = RegOpenKeyExW(
         root_key,
         key_path,
         0,
@@ -520,10 +521,10 @@ fn getRegistryStringValue(
     key: windows.HKEY,
     value_name: [:0]const u16,
 ) error{ NotAString, FileNotFound, BufferTooSmall, Unexpected }![:0]u16 {
-    var value_type: windows.DWORD = undefined;
+    var value_type: windows.REG.ValueType = undefined;
     var value_size: windows.DWORD = @intCast(value_buf.len * 2);
     const buf = std.mem.sliceAsBytes(value_buf);
-    const query_result = windows.advapi32.RegQueryValueExW(
+    const query_result = RegQueryValueExW(
         key,
         value_name,
         null,
@@ -534,7 +535,7 @@ fn getRegistryStringValue(
     switch (@as(windows.Win32Error, @enumFromInt(query_result))) {
         .SUCCESS => {
             switch (value_type) {
-                windows.REG.SZ, windows.REG.EXPAND_SZ => {},
+                .SZ, .EXPAND_SZ => {},
                 else => return error.NotAString,
             }
             const code_unit_len = value_size / 2 - 1;
@@ -554,12 +555,6 @@ const NtOpenDirAbsoluteError = error{ PathNotAbsolute, BadPathName, FileNotFound
 fn ntOpenDirAbsolute(path: []const u16, options: Io.Dir.OpenOptions) NtOpenDirAbsoluteError!windows.HANDLE {
     if (!std.fs.path.isAbsoluteWindowsWtf16(path)) return error.PathNotAbsolute;
 
-    const path_len_bytes: u16 = @intCast(path.len * 2);
-    var nt_name: windows.UNICODE_STRING = .{
-        .Length = path_len_bytes,
-        .MaximumLength = path_len_bytes,
-        .Buffer = @constCast(path.ptr),
-    };
     var io_status_block: windows.IO_STATUS_BLOCK = undefined;
     var handle: windows.HANDLE = undefined;
 
@@ -578,12 +573,8 @@ fn ntOpenDirAbsolute(path: []const u16, options: Io.Dir.OpenOptions) NtOpenDirAb
             },
         },
         &.{
-            .Length = @sizeOf(windows.OBJECT_ATTRIBUTES),
             .RootDirectory = null,
-            .Attributes = .{},
-            .ObjectName = &nt_name,
-            .SecurityDescriptor = null,
-            .SecurityQualityOfService = null,
+            .ObjectName = @constCast(&windows.UNICODE_STRING.init(path)),
         },
         &io_status_block,
         null,
@@ -612,3 +603,22 @@ fn ntOpenDirAbsolute(path: []const u16, options: Io.Dir.OpenOptions) NtOpenDirAb
     }
     return handle;
 }
+
+extern "advapi32" fn RegOpenKeyExW(
+    hKey: windows.HKEY,
+    lpSubKey: windows.LPCWSTR,
+    ulOptions: windows.DWORD,
+    samDesired: windows.REGSAM,
+    phkResult: *windows.HKEY,
+) callconv(.winapi) windows.LSTATUS;
+
+extern "advapi32" fn RegQueryValueExW(
+    hKey: windows.HKEY,
+    lpValueName: windows.LPCWSTR,
+    lpReserved: ?*windows.DWORD,
+    lpType: ?*windows.REG.ValueType,
+    lpData: ?*windows.BYTE,
+    lpcbData: ?*windows.DWORD,
+) callconv(.winapi) windows.LSTATUS;
+
+extern "advapi32" fn RegCloseKey(hKey: windows.HKEY) callconv(.winapi) windows.LSTATUS;

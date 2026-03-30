@@ -21,6 +21,8 @@ const aro = @import("aro");
 const subcommands = @import("subcommands.zig");
 const fmtResourceType = @import("res.zig").NameOrOrdinal.fmtResourceType;
 
+extern "kernel32" fn SetConsoleOutputCP(wCodePageID: std.os.windows.UINT) callconv(.winapi) std.os.windows.BOOL;
+
 pub fn main(init: std.process.Init.Minimal) !void {
     var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
     defer std.debug.assert(debug_allocator.deinit() == .ok);
@@ -43,7 +45,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     // Set the codepage to UTF-8 unconditionally to ensure that everything renders okay
     // TODO: Reset codepage afterwards?
     if (builtin.os.tag == .windows) {
-        _ = std.os.windows.kernel32.SetConsoleOutputCP(65001);
+        _ = SetConsoleOutputCP(65001);
     }
 
     var stderr_buf: [512]u8 = undefined;
@@ -209,7 +211,13 @@ pub fn main(init: std.process.Init.Minimal) !void {
             } };
             defer diagnostics.deinit();
 
-            var comp = aro.Compilation.init(aro_arena, aro_arena, io, &diagnostics, Io.Dir.cwd());
+            var comp = try aro.Compilation.init(.{
+                .gpa = aro_arena,
+                .arena = aro_arena,
+                .io = io,
+                .diagnostics = &diagnostics,
+                .environ_map = &environ_map,
+            });
             defer comp.deinit();
 
             var argv: std.ArrayList([]const u8) = .empty;
@@ -703,6 +711,7 @@ fn getIncludePaths(allocator: std.mem.Allocator, io: Io, env_map: *std.process.E
                     const root_node = std.Progress.start(io, .{
                         .root_name = "auto includes",
                     });
+                    defer root_node.end();
                     break :include_path try auto_includes.extractMingwIncludes(allocator, io, env_map, root_node);
                 };
                 errdefer allocator.free(include_path);

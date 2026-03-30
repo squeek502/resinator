@@ -216,7 +216,7 @@ pub fn getWin32ResultFromFile(allocator: Allocator, io: Io, input_path: []const 
             output_path,
             input_path,
         },
-        .cwd = options.cwd_path,
+        .cwd = .{ .path = options.cwd_path },
     });
     errdefer allocator.free(exec_result.stdout);
     errdefer allocator.free(exec_result.stderr);
@@ -376,7 +376,7 @@ pub fn getWin32CvtResResultFromFile(allocator: Allocator, io: Io, input_path: []
 
     const exec_result = try std.process.run(allocator, io, .{
         .argv = argv.items,
-        .cwd = options.cwd_path,
+        .cwd = .{ .path = options.cwd_path },
     });
     errdefer allocator.free(exec_result.stdout);
     errdefer allocator.free(exec_result.stderr);

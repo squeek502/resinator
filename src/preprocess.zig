@@ -14,8 +14,6 @@ pub fn preprocess(
     argv: []const []const u8,
     maybe_dependencies: ?*Dependencies,
 ) PreprocessError!void {
-    try comp.addDefaultPragmaHandlers();
-
     var driver: aro.Driver = .{ .comp = comp, .diagnostics = comp.diagnostics, .aro_name = "arocc" };
     defer driver.deinit();
 
@@ -47,7 +45,7 @@ pub fn preprocess(
     if (hasAnyErrors(comp)) return error.GeneratedSourceError;
 
     comp.generated_buf.items.len = 0;
-    var pp = aro.Preprocessor.initDefault(comp) catch |err| switch (err) {
+    var pp = aro.Preprocessor.init(comp, .{ .base_file = source.id }) catch |err| switch (err) {
         error.FatalError => return error.GeneratedSourceError,
         error.OutOfMemory => |e| return e,
     };
