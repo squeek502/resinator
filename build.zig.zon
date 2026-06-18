@@ -4,8 +4,8 @@
     .fingerprint = 0xf8223bb821ba5ab2,
     .dependencies = .{
         .aro = .{
-            .url = "https://github.com/Vexu/arocc/archive/a08e2ca4b0e83059c3892b8b3e026754467e0ed1.tar.gz",
-            .hash = "aro-0.0.0-JSD1QiDQNgA23aZYr2Htc_T8M7NwBIAX6ZrYN69VXuzA",
+            .url = "https://github.com/Vexu/arocc/archive/c982d61e7a0eb60d3760b1283fc9faecc770dfb2.tar.gz",
+            .hash = "aro-0.0.0-JSD1Qs4EOwCtOUnmc8C89oCp9y5xLGlP0KqyHsPjLJXB",
         },
         .compressed_mingw_includes = .{
             .url = "https://github.com/squeek502/compressed_mingw_includes/releases/download/1.0.3/compressed_mingw_includes.tar",

@@ -178,19 +178,20 @@ pub const FontDirEntry = struct {
 
     pub const len = len: {
         var val: comptime_int = 0;
-        for (@typeInfo(FontDirEntry).@"struct".fields) |field| {
-            val += @sizeOf(field.type);
+        for (@typeInfo(FontDirEntry).@"struct".field_types) |field_type| {
+            val += @sizeOf(field_type);
         }
         break :len val;
     };
 
     pub fn read(reader: anytype) !FontDirEntry {
         var entry: FontDirEntry = undefined;
-        inline for (@typeInfo(FontDirEntry).@"struct".fields) |field| {
-            switch (field.type) {
-                u8 => @field(entry, field.name) = try reader.readByte(),
-                u16, u32 => @field(entry, field.name) = try reader.readInt(field.type, .little),
-                [60]u8 => @field(entry, field.name) = try reader.readBytesNoEof(60),
+        const info = @typeInfo(FontDirEntry).@"struct";
+        inline for (info.field_names, info.field_types) |field_name, field_type| {
+            switch (field_type) {
+                u8 => @field(entry, field_name) = try reader.readByte(),
+                u16, u32 => @field(entry, field_name) = try reader.readInt(field_type, .little),
+                [60]u8 => @field(entry, field_name) = try reader.readBytesNoEof(60),
                 else => @compileError("unknown field in FontDirEntry"),
             }
         }
@@ -198,11 +199,12 @@ pub const FontDirEntry = struct {
     }
 
     pub fn write(entry: FontDirEntry, writer: anytype) !void {
-        inline for (@typeInfo(FontDirEntry).@"struct".fields) |field| {
-            switch (field.type) {
-                u8 => try writer.writeByte(@field(entry, field.name)),
-                u16, u32 => try writer.writeInt(field.type, @field(entry, field.name), .little),
-                [60]u8 => try writer.writeAll(&@field(entry, field.name)),
+        const info = @typeInfo(FontDirEntry).@"struct";
+        inline for (info.field_names, info.field_types) |field_name, field_type| {
+            switch (field_type) {
+                u8 => try writer.writeByte(@field(entry, field_name)),
+                u16, u32 => try writer.writeInt(field_type, @field(entry, field_name), .little),
+                [60]u8 => try writer.writeAll(&@field(entry, field_name)),
                 else => @compileError("unknown field in FontDirEntry"),
             }
         }
@@ -233,7 +235,7 @@ const TestData = struct {
     var face_name = "font face name";
 
     pub fn init() [256]u8 {
-        var buf = [_]u8{0xFF} ** 256;
+        var buf: [256]u8 = @splat(0xFF);
         (buf[device_offset..][0 .. device_name.len + 1]).* = device_name[0 .. device_name.len + 1].*;
         (buf[face_offset..][0 .. face_name.len + 1]).* = face_name[0 .. face_name.len + 1].*;
         return buf;

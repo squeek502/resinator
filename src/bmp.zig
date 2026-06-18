@@ -241,8 +241,9 @@ pub const Compression = enum(u32) {
 };
 
 fn structFieldsLittleToNative(comptime T: type, x: *T) void {
-    inline for (@typeInfo(T).@"struct".fields) |field| {
-        @field(x, field.name) = std.mem.littleToNative(field.type, @field(x, field.name));
+    const info = @typeInfo(T).@"struct";
+    inline for (info.field_names, info.field_types) |field_name, field_type| {
+        @field(x, field_name) = std.mem.littleToNative(field_type, @field(x, field_name));
     }
 }
 

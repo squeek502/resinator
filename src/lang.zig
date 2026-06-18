@@ -87,8 +87,8 @@ pub fn tagToId(tag: []const u8) error{InvalidLanguageTag}!?LanguageId {
     if (parsed.multiple_suffixes) return null;
     const longest_known_tag = comptime blk: {
         var len = 0;
-        for (@typeInfo(LanguageId).@"enum".fields) |field| {
-            if (field.name.len > len) len = field.name.len;
+        for (@typeInfo(LanguageId).@"enum".field_names) |field_name| {
+            if (field_name.len > len) len = field_name.len;
         }
         break :blk len;
     };
@@ -120,13 +120,13 @@ test tagToId {
 
 test "exhaustive tagToId" {
     @setEvalBranchQuota(2000);
-    inline for (@typeInfo(LanguageId).@"enum".fields) |field| {
-        const id = tagToId(field.name) catch |err| {
-            std.debug.print("tag: {s}\n", .{field.name});
+    inline for (@typeInfo(LanguageId).@"enum".field_names) |field_name| {
+        const id = tagToId(field_name) catch |err| {
+            std.debug.print("tag: {s}\n", .{field_name});
             return err;
         };
-        try std.testing.expectEqual(@field(LanguageId, field.name), id orelse {
-            std.debug.print("tag: {s}, got null\n", .{field.name});
+        try std.testing.expectEqual(@field(LanguageId, field_name), id orelse {
+            std.debug.print("tag: {s}, got null\n", .{field_name});
             return error.TestExpectedEqual;
         });
     }

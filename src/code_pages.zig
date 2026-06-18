@@ -178,19 +178,20 @@ pub const UnsupportedCodePage = enum(u16) {
 };
 
 pub const CodePage = blk: {
-    const fields = @typeInfo(SupportedCodePage).@"enum".fields ++ @typeInfo(UnsupportedCodePage).@"enum".fields;
-    var field_names: [fields.len][]const u8 = undefined;
-    var field_values: [fields.len]u16 = undefined;
-    for (fields, &field_names, &field_values) |field, *name, *val| {
-        name.* = field.name;
-        val.* = field.value;
+    const field_names = @typeInfo(SupportedCodePage).@"enum".field_names ++ @typeInfo(UnsupportedCodePage).@"enum".field_names;
+    const field_values = @typeInfo(SupportedCodePage).@"enum".field_values ++ @typeInfo(UnsupportedCodePage).@"enum".field_values;
+    var cp_field_names: [field_names.len][]const u8 = undefined;
+    var cp_field_values: [field_names.len]u16 = undefined;
+    for (field_names, field_values, &cp_field_names, &cp_field_values) |field_name, field_value, *name, *val| {
+        name.* = field_name;
+        val.* = field_value;
     }
-    break :blk @Enum(u16, .exhaustive, &field_names, &field_values);
+    break :blk @Enum(u16, .exhaustive, &cp_field_names, &cp_field_values);
 };
 
 pub fn isSupported(code_page: CodePage) bool {
-    inline for (@typeInfo(SupportedCodePage).@"enum".fields) |enumField| {
-        if (@intFromEnum(code_page) == @intFromEnum(@field(SupportedCodePage, enumField.name))) {
+    inline for (@typeInfo(SupportedCodePage).@"enum".field_names) |field_name| {
+        if (@intFromEnum(code_page) == @intFromEnum(@field(SupportedCodePage, field_name))) {
             return true;
         }
     }
@@ -200,9 +201,10 @@ pub fn isSupported(code_page: CodePage) bool {
 pub fn getByIdentifier(identifier: u16) !CodePage {
     // There's probably a more efficient way to do this (e.g. ComptimeHashMap?) but
     // this should be fine, especially since this function likely won't be called much.
-    inline for (@typeInfo(CodePage).@"enum".fields) |enumField| {
-        if (identifier == enumField.value) {
-            return @field(CodePage, enumField.name);
+    const info = @typeInfo(CodePage).@"enum";
+    inline for (info.field_names, info.field_values) |field_name, field_value| {
+        if (identifier == field_value) {
+            return @field(CodePage, field_name);
         }
     }
     return error.InvalidCodePage;

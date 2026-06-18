@@ -312,7 +312,7 @@ pub const LatestMsvcToolsDir = struct {
 
         lib_dir_buf.appendSliceAssumeCapacity(installation_path);
 
-        if (!std.fs.path.isSep(lib_dir_buf.getLast())) {
+        if (!std.fs.path.isSep(lib_dir_buf.getLast() orelse return error.PathNotFound)) {
             lib_dir_buf.appendAssumeCapacity('\\');
         }
         const installation_path_with_trailing_sep_len = lib_dir_buf.items.len;

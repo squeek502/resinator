@@ -644,11 +644,11 @@ const Option = enum {
 
     /// Only contains options that have a long arg
     const sorted_options_by_long_arg_len_desc = blk: {
-        const fields = @typeInfo(Option).@"enum".fields;
+        const fields = @typeInfo(Option).@"enum".field_names;
         var long_args: [fields.len]Option = undefined;
         var i: usize = 0;
-        for (fields) |enum_field| {
-            const option = @field(Option, enum_field.name);
+        for (fields) |field_name| {
+            const option = @field(Option, field_name);
             if (option.longArg() == null) continue;
             long_args[i] = option;
             i += 1;

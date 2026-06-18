@@ -18,7 +18,7 @@ jobs:
           submodules: true
       - uses: mlugg/setup-zig@v2
         with:
-          version: 0.16.0-dev.3039+b490412cd
+          version: 0.17.0-dev.877+a3ae499dc
       - uses: ilammy/msvc-dev-cmd@v1
         if: ${{ matrix.os == 'windows-latest' }}
         with:
@@ -49,7 +49,7 @@ jobs:
 
       - name: Fuzzy Tests
         if: ${{ matrix.os == 'windows-latest' }}
-        run: zig build test_fuzzy
+        run: zig build test_fuzzy --test-timeout 10m
 
       - name: Test big endian (mips)
         # TODO: Disabled due to segfault when running the compiled resinator
