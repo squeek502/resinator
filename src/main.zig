@@ -58,10 +58,10 @@ pub fn main(init: std.process.Init.Minimal) !void {
         const all_args = try init.args.toSlice(arena);
         const args = all_args[1..]; // skip past the executable name
 
-        if (args.len > 0 and std.mem.eql(u8, args[0], "targets")) {
+        if (args.len > 0 and std.mem.eql(u8, args[0], ":targets")) {
             try subcommands.targets.run(io);
             return;
-        } else if (args.len > 0 and std.mem.eql(u8, args[0], "cvtres")) {
+        } else if (args.len > 0 and std.mem.eql(u8, args[0], ":cvtres")) {
             const subcommand_args = args[1..];
             var cli_diagnostics = cli.Diagnostics.init(gpa);
             defer cli_diagnostics.deinit();
@@ -86,13 +86,13 @@ pub fn main(init: std.process.Init.Minimal) !void {
             }
 
             if (options.print_help_and_exit) {
-                try subcommands.cvtres.writeUsage(stdout, "resinator cvtres");
+                try subcommands.cvtres.writeUsage(stdout, "resinator :cvtres");
                 try stdout.flush();
                 return;
             }
 
             break :options options;
-        } else if (args.len > 0 and std.mem.eql(u8, args[0], "windres")) {
+        } else if (args.len > 0 and std.mem.eql(u8, args[0], ":windres")) {
             const subcommand_args = args[1..];
             var cli_diagnostics = cli.Diagnostics.init(gpa);
             defer cli_diagnostics.deinit();
@@ -117,7 +117,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             }
 
             if (options.print_help_and_exit) {
-                try subcommands.windres.writeUsage(stdout, "resinator windres");
+                try subcommands.windres.writeUsage(stdout, "resinator :windres");
                 try stdout.flush();
                 return;
             }

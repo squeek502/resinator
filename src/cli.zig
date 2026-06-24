@@ -19,7 +19,7 @@ pub const usage_string2_after_command_name =
     \\ <subcommand> [options]
     \\
     \\The sequence -- can be used to signify when to stop parsing options.
-    \\This is necessary when the input path begins with a forward slash.
+    \\This avoids ambiguity when the input path begins with a forward slash.
     \\
     \\Supported option prefixes are /, -, and --, so e.g. /h, -h, and --h all work.
     \\Drop-in compatible with the Microsoft Resource Compiler.
@@ -83,15 +83,15 @@ pub const usage_string2_after_command_name =
     \\                            Use the targets subcommand to see the list of all
     \\                            supported target architectures.
     \\
-    \\Note: For compatibility reasons, all custom options start with :
-    \\
     \\Subcommands:
-    \\  targets            Output a list of all supported /:target values.
-    \\  cvtres             A .res to .obj (COFF object file) converter that
+    \\  :targets           Output a list of all supported /:target values.
+    \\  :cvtres            A .res to .obj (COFF object file) converter that
     \\                     has drop-in CLI compatibility with cvtres.exe.
     \\                     Use the /? option with this subcommand to see the usage.
-    \\  windres            Drop-in CLI compatibility with GNU windres.
+    \\  :windres           Drop-in CLI compatibility with GNU windres.
     \\                     Use the -h option with this subcommand to see the usage.
+    \\
+    \\Note: For compatibility reasons, all custom options and subcommands start with :
     \\
 ;
 
