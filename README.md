@@ -62,7 +62,7 @@ This behavior can be controlled with the `/:auto-includes` CLI option.
 | CLI compatibility with `rc.exe` | ✅ | ❌ | ✅ | ✅ |
 | Includes preprocessor | ✅ | ❌ | ❌ | ✅ |
 | Support for outputting `.rc` files | ❌ | ✅ | ❌ | ❌ |
-| Support for outputting COFF object files | ❌ <sup>[(TODO)](https://github.com/squeek502/resinator/issues/7)</sup> | ✅ | ❌ | ❌ |
+| Support for outputting COFF object files | ✅ | ✅ | ❌ | ❌ |
 
 #### An example of the differences between the implementations
 
