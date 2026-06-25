@@ -439,9 +439,9 @@ pub const ResourceDataEntry = extern struct {
 
 /// type -> name -> language
 const ResourceTree = struct {
-    type_to_name_map: std.ArrayHashMapUnmanaged(NameOrOrdinal, NameToLanguageMap, NameOrOrdinalHashContext, true),
-    rsrc_string_table: std.ArrayHashMapUnmanaged(NameOrOrdinal, void, NameOrOrdinalHashContext, true),
-    deduplicated_data: std.StringArrayHashMapUnmanaged(u32),
+    type_to_name_map: std.array_hash_map.Custom(NameOrOrdinal, NameToLanguageMap, NameOrOrdinalHashContext, true),
+    rsrc_string_table: std.array_hash_map.Custom(NameOrOrdinal, void, NameOrOrdinalHashContext, true),
+    deduplicated_data: std.array_hash_map.String(u32),
     data_offsets: std.ArrayList(u32),
     rsrc02_len: u32,
     coff_options: CoffOptions,
@@ -451,8 +451,8 @@ const ResourceTree = struct {
         resource: *const Resource,
         original_index: usize,
     };
-    const LanguageToResourceMap = std.AutoArrayHashMapUnmanaged(Language, RelocatableResource);
-    const NameToLanguageMap = std.ArrayHashMapUnmanaged(NameOrOrdinal, LanguageToResourceMap, NameOrOrdinalHashContext, true);
+    const LanguageToResourceMap = std.array_hash_map.Auto(Language, RelocatableResource);
+    const NameToLanguageMap = std.array_hash_map.Custom(NameOrOrdinal, LanguageToResourceMap, NameOrOrdinalHashContext, true);
 
     const NameOrOrdinalHashContext = struct {
         pub fn hash(self: @This(), v: NameOrOrdinal) u32 {
@@ -1107,14 +1107,14 @@ pub const supported_targets = struct {
         // Enforce two things:
         // 1. Arch enum field names are all lowercase (necessary for how fromStringIgnoreCase is implemented)
         // 2. All enum fields in Arch have an associated RVA relocation type when converted to a coff.IMAGE.FILE.MACHINE
-        for (@typeInfo(Arch).@"enum".field_names) |enum_field_name| {
-            const all_lower = all_lower: for (enum_field_name) |c| {
+        for (@typeInfo(Arch).@"enum".field_names) |field_name| {
+            const all_lower = all_lower: for (field_name) |c| {
                 if (std.ascii.isUpper(c)) break :all_lower false;
             } else break :all_lower true;
-            if (!all_lower) @compileError(std.fmt.comptimePrint("Arch field is not all lowercase: {s}", .{enum_field_name}));
-            const coff_machine = @field(Arch, enum_field_name).toCoffMachineType();
+            if (!all_lower) @compileError(std.fmt.comptimePrint("Arch field is not all lowercase: {s}", .{field_name}));
+            const coff_machine = @field(Arch, field_name).toCoffMachineType();
             _ = rvaRelocationTypeIndicator(coff_machine) orelse {
-                @compileError(std.fmt.comptimePrint("No RVA relocation for Arch: {s}", .{enum_field_name}));
+                @compileError(std.fmt.comptimePrint("No RVA relocation for Arch: {s}", .{field_name}));
             };
         }
     }

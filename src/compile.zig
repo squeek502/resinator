@@ -3049,7 +3049,7 @@ pub const StringTablesByLanguage = struct {
     /// when the first STRINGTABLE for the language was defined, and all blocks for a given
     /// language are written contiguously.
     /// Using an ArrayHashMap here gives us this property for free.
-    tables: std.AutoArrayHashMapUnmanaged(res.Language, StringTable) = .empty,
+    tables: std.array_hash_map.Auto(res.Language, StringTable) = .empty,
 
     pub fn deinit(self: *StringTablesByLanguage, allocator: Allocator) void {
         self.tables.deinit(allocator);
@@ -3080,11 +3080,11 @@ pub const StringTable = struct {
     /// was added to the block (i.e. `STRINGTABLE { 16 "b" 0 "a" }` would then get written
     /// with block ID 2 (the one with "b") first and block ID 1 (the one with "a") second).
     /// Using an ArrayHashMap here gives us this property for free.
-    blocks: std.AutoArrayHashMapUnmanaged(u16, Block) = .empty,
+    blocks: std.array_hash_map.Auto(u16, Block) = .empty,
 
     pub const Block = struct {
         strings: std.ArrayList(Token) = .empty,
-        set_indexes: std.bit_set.IntegerBitSet(16) = .{ .mask = 0 },
+        set_indexes: std.bit_set.Integer(16) = .{ .mask = 0 },
         memory_flags: MemoryFlags = MemoryFlags.defaults(res.RT.STRING),
         characteristics: u32,
         version: u32,
