@@ -158,7 +158,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     defer options.deinit();
 
     if (options.print_help_and_exit) {
-        try cli.writeUsage(stdout, "zig rc");
+        try cli.writeUsage(stdout, "resinator");
         try stdout.flush();
         return;
     }
