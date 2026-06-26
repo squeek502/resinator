@@ -20,6 +20,7 @@ const cvtres = @import("cvtres.zig");
 const aro = @import("aro");
 const subcommands = @import("subcommands.zig");
 const fmtResourceType = @import("res.zig").NameOrOrdinal.fmtResourceType;
+const depfile = @import("depfile.zig");
 
 extern "kernel32" fn SetConsoleOutputCP(wCodePageID: std.os.windows.UINT) callconv(.winapi) std.os.windows.BOOL;
 
@@ -426,29 +427,30 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
                 // write the depfile
                 if (options.depfile_path) |depfile_path| {
-                    var depfile = Io.Dir.cwd().createFile(io, depfile_path, .{}) catch |err| {
+                    var deps_file = Io.Dir.cwd().createFile(io, depfile_path, .{}) catch |err| {
                         try renderErrorMessageToStderr(io, .err, "unable to create depfile '{s}': {t}", .{ depfile_path, err });
                         std.process.exit(1);
                     };
-                    defer depfile.close(io);
+                    defer deps_file.close(io);
 
                     var depfile_buffer: [1024]u8 = undefined;
-                    var depfile_writer = depfile.writer(io, &depfile_buffer);
-                    switch (options.depfile_fmt) {
-                        .json => {
-                            var write_stream: std.json.Stringify = .{
-                                .writer = &depfile_writer.interface,
-                                .options = .{ .whitespace = .indent_2 },
-                            };
-
-                            try write_stream.beginArray();
-                            for (dependencies.list.items) |dep_path| {
-                                try write_stream.write(dep_path);
-                            }
-                            try write_stream.endArray();
+                    var depfile_writer = deps_file.writer(io, &depfile_buffer);
+                    depfile.write(&depfile_writer.interface, .{
+                        .target = switch (options.output_source) {
+                            .filename => |s| s,
+                            .stdio => "<stdout>", // TODO: something better
                         },
-                    }
-                    try depfile_writer.interface.flush();
+                        .deps = dependencies.list.items,
+                        .fmt = options.depfile_fmt,
+                    }) catch |err| {
+                        const real_err = depfile_writer.err orelse err;
+                        try renderErrorMessageToStderr(io, .err, "unable to write depfile '{s}': {t}", .{ depfile_path, real_err });
+                        std.process.exit(1);
+                    };
+                    depfile_writer.interface.flush() catch |err| {
+                        try renderErrorMessageToStderr(io, .err, "unable to flush depfile '{s}': {t}", .{ depfile_path, err });
+                        std.process.exit(1);
+                    };
                 }
             }
 

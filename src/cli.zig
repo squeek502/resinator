@@ -66,6 +66,7 @@ pub const usage_string2_after_command_name =
     \\                            the .rc includes or otherwise depends on.
     \\  /:depfile-fmt <value>     Output format of the depfile, if /:depfile is set.
     \\    json                    (default) A top-level JSON array of paths
+    \\    make                    GNU Makefile syntax (target: prereq ...)
     \\  /:input-format <value>    If not specified, the input format is inferred.
     \\    rc                      (default if input format cannot be inferred)
     \\    res                     Compiled .rc file, implies /:output-format coff
@@ -201,7 +202,7 @@ pub const Options = struct {
     };
     pub const Subcommand = enum { none, targets, cvtres, windres };
     pub const AutoIncludes = enum { any, msvc, gnu, none };
-    pub const DepfileFormat = enum { json };
+    pub const DepfileFormat = enum { json, make };
     pub const InputFormat = enum { rc, res, rcpp };
     pub const OutputFormat = enum {
         res,
