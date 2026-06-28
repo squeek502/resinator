@@ -1,4 +1,5 @@
 const builtin = @import("builtin");
+const build_options = @import("build_options");
 
 const std = @import("std");
 const Io = std.Io;
@@ -174,24 +175,12 @@ pub fn main(init: std.process.Init.Minimal) !void {
     defer dependencies.deinit();
     const maybe_dependencies: ?*Dependencies = if (options.depfile_path != null) &dependencies else null;
 
-    const include_paths = getIncludePaths(arena, io, &environ_map, options.auto_includes) catch |err| switch (err) {
-        error.OutOfMemory => |e| return e,
-        else => {
-            switch (err) {
-                error.MsvcIncludesNotFound => {
-                    try renderErrorMessageToStderr(io, .err, "MSVC include paths could not be automatically detected", .{});
-                },
-                error.CannotResolveCachePath => {
-                    try renderErrorMessageToStderr(io, .err, "could not resolve global cache path (for MinGW auto includes)", .{});
-                },
-                // All other errors are related to MinGW includes
-                else => {
-                    try renderErrorMessageToStderr(io, .err, "failed to find / extract cached MinGW includes: {s}", .{@errorName(err)});
-                },
-            }
-            try renderErrorMessageToStderr(io, .note, "to disable auto includes, use the option /:auto-includes none", .{});
-            std.process.exit(1);
-        },
+    var include_paths = LazyIncludePaths{
+        .arena = arena,
+        .io = io,
+        .auto_includes_option = options.auto_includes,
+        .zig_lib_dir = options.zig_lib_dir,
+        .target_machine_type = options.coff_options.target,
     };
 
     const full_input = full_input: {
@@ -225,7 +214,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
             defer argv.deinit(aro_arena);
 
             try argv.append(aro_arena, "arocc"); // dummy command name
-            try preprocess.appendAroArgs(aro_arena, &argv, options, include_paths, environ_map.get("INCLUDE"));
+            const resolved_include_paths = try include_paths.get(&environ_map);
+            try preprocess.appendAroArgs(aro_arena, &argv, options, resolved_include_paths, environ_map.get("INCLUDE"));
             try argv.append(aro_arena, switch (options.input_source) {
                 .stdio => "-",
                 .filename => |filename| filename,
@@ -392,7 +382,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                     .dependencies = maybe_dependencies,
                     .ignore_include_env_var = options.ignore_include_env_var,
                     .extra_include_paths = options.extra_include_paths.items,
-                    .system_include_paths = include_paths,
+                    .system_include_paths = try include_paths.get(&environ_map),
                     .default_language_id = options.default_language_id,
                     .default_code_page = default_code_page,
                     .disjoint_code_page = has_disjoint_code_page,
@@ -676,7 +666,77 @@ const IoStream = struct {
     };
 };
 
-fn getIncludePaths(allocator: std.mem.Allocator, io: Io, env_map: *std.process.Environ.Map, auto_includes_option: cli.Options.AutoIncludes) ![]const []const u8 {
+const LazyIncludePaths = struct {
+    arena: Allocator,
+    io: Io,
+    auto_includes_option: cli.Options.AutoIncludes,
+    zig_lib_dir: cli.Options.ZigLibDir,
+    target_machine_type: std.coff.IMAGE.FILE.MACHINE,
+    resolved_include_paths: ?[]const []const u8 = null,
+
+    /// On non-allocation-related failure, prints errors and exits.
+    pub fn get(
+        self: *LazyIncludePaths,
+        environ_map: *const std.process.Environ.Map,
+    ) ![]const []const u8 {
+        const io = self.io;
+
+        if (self.resolved_include_paths == null) {
+            self.resolved_include_paths = getIncludePaths(
+                self.arena,
+                io,
+                environ_map,
+                self.auto_includes_option,
+                self.zig_lib_dir,
+                self.target_machine_type,
+            ) catch |err| switch (err) {
+                error.OutOfMemory => |e| return e,
+                else => |e| {
+                    switch (e) {
+                        error.MsvcIncludesNotFound => {
+                            try renderErrorMessageToStderr(io, .err, "MSVC include paths could not be automatically detected", .{});
+                        },
+                        error.CannotResolveCachePath => {
+                            try renderErrorMessageToStderr(io, .err, "could not resolve global cache path (for MinGW auto includes)", .{});
+                        },
+                        error.MingwIncludesNotFound => {
+                            try renderErrorMessageToStderr(io, .err, "MinGW include paths could not be automatically detected", .{});
+                        },
+                        error.UnsupportedAutoIncludesMachineType => {
+                            try renderErrorMessageToStderr(io, .err, "automatic include path detection is not supported for target '{s}'", .{@tagName(self.target_machine_type)});
+                        },
+                        // All other errors are related to MinGW includes
+                        error.MingwIncludesExtractionFailed => {
+                            try renderErrorMessageToStderr(io, .err, "failed to find / extract cached MinGW includes: {s}", .{@errorName(err)});
+                        },
+                    }
+                    try renderErrorMessageToStderr(io, .note, "to disable auto includes, use the option /:auto-includes none", .{});
+                    std.process.exit(1);
+                },
+            };
+        }
+
+        return self.resolved_include_paths.?;
+    }
+};
+
+const GetIncludePathsError = error{
+    MsvcIncludesNotFound,
+    CannotResolveCachePath,
+    MingwIncludesNotFound,
+    UnsupportedAutoIncludesMachineType,
+    MingwIncludesExtractionFailed,
+    OutOfMemory,
+};
+
+fn getIncludePaths(
+    arena: std.mem.Allocator,
+    io: Io,
+    env_map: *const std.process.Environ.Map,
+    auto_includes_option: cli.Options.AutoIncludes,
+    zig_lib_dir_option: cli.Options.ZigLibDir,
+    target_machine_type: std.coff.IMAGE.FILE.MACHINE,
+) GetIncludePathsError![]const []const u8 {
     var includes = auto_includes_option;
     if (builtin.target.os.tag != .windows) {
         switch (includes) {
@@ -688,6 +748,21 @@ fn getIncludePaths(allocator: std.mem.Allocator, io: Io, env_map: *std.process.E
         }
     }
 
+    const includes_arch: std.Target.Cpu.Arch = switch (target_machine_type) {
+        .AMD64 => .x86_64,
+        .I386 => .x86,
+        .ARMNT => .thumb,
+        .ARM64 => .aarch64,
+        .ARM64EC => .aarch64,
+        .ARM64X => .aarch64,
+        .IA64, .EBC => {
+            return error.UnsupportedAutoIncludesMachineType;
+        },
+        // The above cases are exhaustive of all the `MachineType`s supported (see supported_targets in cvtres.zig)
+        // This is enforced by the argument parser in cli.zig.
+        else => unreachable,
+    };
+
     while (true) {
         switch (includes) {
             .none => return &[_][]const u8{},
@@ -696,7 +771,7 @@ fn getIncludePaths(allocator: std.mem.Allocator, io: Io, env_map: *std.process.E
                 // that .any and .msvc should be dealt with on non-Windows targets before this point,
                 // since getting MSVC include paths uses Windows-only APIs.
                 if (builtin.target.os.tag != .windows) unreachable;
-                return auto_includes.getMsvcIncludePaths(allocator, io) catch |err| switch (err) {
+                return auto_includes.getMsvcIncludePaths(arena, io) catch |err| switch (err) {
                     error.OutOfMemory => |e| return e,
                     error.MsvcIncludesNotFound => {
                         if (includes == .any) {
@@ -709,16 +784,47 @@ fn getIncludePaths(allocator: std.mem.Allocator, io: Io, env_map: *std.process.E
                 };
             },
             .gnu => {
+                // TODO: support getting mingw includes when !embed_mingw_includes && !zig_lib_dir_option
+
+                if (build_options.zig_lib_dir_option and zig_lib_dir_option != null) {
+                    const target_query: std.Target.Query = .{
+                        .os_tag = .windows,
+                        .cpu_arch = includes_arch,
+                        .abi = .gnu,
+                    };
+                    const target = std.zig.resolveTargetQueryOrFatal(io, target_query);
+                    const is_native_abi = target_query.isNativeAbi();
+                    const detected_libc = std.zig.LibCDirs.detect(
+                        arena,
+                        io,
+                        zig_lib_dir_option.?,
+                        &target,
+                        is_native_abi,
+                        true,
+                        null,
+                        env_map,
+                    ) catch |err| switch (err) {
+                        error.OutOfMemory => |e| return e,
+                        else => return error.MingwIncludesNotFound,
+                    };
+                    return detected_libc.libc_include_dir_list;
+                }
+
+                if (!build_options.embed_mingw_includes) return error.MingwIncludesNotFound;
+
                 const include_path = include_path: {
                     const root_node = std.Progress.start(io, .{
                         .root_name = "auto includes",
                     });
                     defer root_node.end();
-                    break :include_path try auto_includes.extractMingwIncludes(allocator, io, env_map, root_node);
+                    break :include_path auto_includes.extractMingwIncludes(arena, io, env_map, root_node) catch {
+                        // TODO: Store the actual caught error somewhere so the caller can surface it
+                        return error.MingwIncludesExtractionFailed;
+                    };
                 };
-                errdefer allocator.free(include_path);
+                errdefer arena.free(include_path);
 
-                var include_paths = try allocator.alloc([]const u8, 1);
+                var include_paths = try arena.alloc([]const u8, 1);
                 include_paths[0] = include_path;
                 return include_paths;
             },

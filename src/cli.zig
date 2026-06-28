@@ -1,4 +1,5 @@
 const std = @import("std");
+const build_options = @import("build_options");
 const Io = std.Io;
 const code_pages = @import("code_pages.zig");
 const SupportedCodePage = code_pages.SupportedCodePage;
@@ -83,6 +84,13 @@ pub const usage_string2_after_command_name =
     \\                            except the architecture is ignored.
     \\                            Use the targets subcommand to see the list of all
     \\                            supported target architectures.
+    // zig fmt: off
+++ if (build_options.zig_lib_dir_option)
+    \\  /:zig-lib-dir <path>      Path to Zig lib directory (to pull MinGW includes from
+    \\                            if needed).
+else
+    "" ++
+    // zig_fmt: on
     \\
     \\Subcommands:
     \\  :targets           Output a list of all supported /:target values.
@@ -195,6 +203,7 @@ pub const Options = struct {
     /// Currently only used by the windres subcommand
     print_version_and_exit: bool = false,
     subcommand: Subcommand = .none,
+    zig_lib_dir: ZigLibDir = if (build_options.zig_lib_dir_option) null else {},
 
     pub const IoSource = union(enum) {
         stdio: Io.File,
@@ -230,6 +239,7 @@ pub const Options = struct {
             }
         }
     };
+    pub const ZigLibDir = if (build_options.zig_lib_dir_option) ?[]const u8 else void;
 
     /// Does not check that identifier contains only valid characters
     pub fn define(self: *Options, identifier: []const u8, value: []const u8) !void {
@@ -655,6 +665,19 @@ pub fn parse(allocator: Allocator, io: Io, args: []const []const u8, diagnostics
                     break :blk input_format;
                 };
                 input_format_context = .{ .index = arg_i, .option_len = ":input-format".len, .arg = arg, .value = value };
+                arg_i += value.index_increment;
+                continue :next_arg;
+            } else if (build_options.zig_lib_dir_option and std.ascii.startsWithIgnoreCase(arg_name, ":zig-lib-dir")) {
+                const value = arg.value(":zig-lib-dir".len, arg_i, args) catch {
+                    var err_details = Diagnostics.ErrorDetails{ .arg_index = arg_i, .arg_span = arg.missingSpan() };
+                    try err_details.msg.print(allocator, "missing value after {s}{s} option", .{ arg.prefixSlice(), arg.optionWithoutPrefix(":depfile-fmt".len) });
+                    try diagnostics.append(err_details);
+                    arg_i += 1;
+                    break :next_arg;
+                };
+                const path = try allocator.dupe(u8, value.slice);
+                errdefer allocator.free(path);
+                options.zig_lib_dir = path;
                 arg_i += value.index_increment;
                 continue :next_arg;
             } else if (std.ascii.startsWithIgnoreCase(arg_name, ":depfile-fmt")) {

@@ -1,15 +1,18 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const build_options = @import("build_options");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const windows = std.os.windows;
 const L = std.unicode.utf8ToUtf16LeStringLiteral;
 const WindowsPathSpace = std.Io.Threaded.WindowsPathSpace;
 
-const compressed_mingw_includes = @import("compressed_mingw_includes").data;
+const compressed_mingw_includes = if (build_options.embed_mingw_includes) @import("compressed_mingw_includes").data else {};
 const include_ver = 2;
 
-pub fn extractMingwIncludes(allocator: Allocator, io: Io, env_map: *std.process.Environ.Map, maybe_progress: ?std.Progress.Node) ![]const u8 {
+pub fn extractMingwIncludes(allocator: Allocator, io: Io, env_map: *const std.process.Environ.Map, maybe_progress: ?std.Progress.Node) ![]const u8 {
+    if (!build_options.embed_mingw_includes) @compileError("embedded mingw includes are disabled in this build");
+
     const resinator_cache_path = try getCachePath(allocator, "resinator", env_map) orelse return error.CannotResolveCachePath;
     defer allocator.free(resinator_cache_path);
 
@@ -50,7 +53,7 @@ pub fn extractMingwIncludes(allocator: Allocator, io: Io, env_map: *std.process.
     return std.fs.path.join(allocator, &.{ resinator_cache_path, "include" });
 }
 
-pub fn getCachePath(allocator: Allocator, appname: []const u8, env_map: *std.process.Environ.Map) error{OutOfMemory}!?[]const u8 {
+pub fn getCachePath(allocator: Allocator, appname: []const u8, env_map: *const std.process.Environ.Map) error{OutOfMemory}!?[]const u8 {
     switch (builtin.os.tag) {
         .windows => {
             const local_app_data = env_map.get("LOCALAPPDATA") orelse return null;

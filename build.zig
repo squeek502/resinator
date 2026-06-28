@@ -9,8 +9,16 @@ pub fn build(b: *std.Build) void {
         .optimize = mode,
     });
     const aro_module = aro.module("aro");
+
     const compressed_mingw_includes = b.dependency("compressed_mingw_includes", .{});
     const compressed_mingw_includes_module = compressed_mingw_includes.module("compressed_mingw_includes");
+    const embed_mingw_includes = b.option(bool, "embed-mingw-includes", "Embed a set of compressed MinGW includes in the binary (default: true)") orelse true;
+    const zig_lib_dir_option = b.option(bool, "zig-lib-dir-option", "Add a /:zig-lib-dir option as a way of specifying MinGW include paths (default: false)") orelse false;
+
+    const build_options = b.addOptions();
+    build_options.addOption(bool, "embed_mingw_includes", embed_mingw_includes);
+    build_options.addOption(bool, "zig_lib_dir_option", zig_lib_dir_option);
+
     const resinator = b.addModule("resinator", .{
         .root_source_file = b.path("src/resinator.zig"),
         .target = target,
@@ -29,7 +37,10 @@ pub fn build(b: *std.Build) void {
         }),
     });
     exe.root_module.addImport("aro", aro_module);
-    exe.root_module.addImport("compressed_mingw_includes", compressed_mingw_includes_module);
+    exe.root_module.addOptions("build_options", build_options);
+    if (embed_mingw_includes) {
+        exe.root_module.addImport("compressed_mingw_includes", compressed_mingw_includes_module);
+    }
     b.installArtifact(exe);
 
     const test_filters = b.option([]const []const u8, "test-filter", "Skip tests that do not match any filter") orelse &[0][]const u8{};
@@ -37,6 +48,7 @@ pub fn build(b: *std.Build) void {
         .root_module = resinator,
         .filters = test_filters,
     });
+    exe_tests.root_module.addOptions("build_options", build_options);
     const run_exe_tests = b.addRunArtifact(exe_tests);
 
     var reference_files = b.addWriteFiles();
