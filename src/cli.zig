@@ -336,6 +336,9 @@ pub const Options = struct {
         if (self.coff_options.define_external_symbol) |symbol_name| {
             self.allocator.free(symbol_name);
         }
+        if (build_options.zig_lib_dir_option and self.zig_lib_dir != null) {
+            self.allocator.free(self.zig_lib_dir.?);
+        }
     }
 
     pub fn dumpVerbose(self: *const Options, writer: *std.Io.Writer) !void {

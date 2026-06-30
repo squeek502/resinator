@@ -27,6 +27,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "aro", .module = aro_module },
         },
     });
+    resinator.addOptions("build_options", build_options);
 
     const exe = b.addExecutable(.{
         .name = "resinator",
@@ -48,7 +49,6 @@ pub fn build(b: *std.Build) void {
         .root_module = resinator,
         .filters = test_filters,
     });
-    exe_tests.root_module.addOptions("build_options", build_options);
     const run_exe_tests = b.addRunArtifact(exe_tests);
 
     var reference_files = b.addWriteFiles();
