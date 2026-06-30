@@ -85,11 +85,13 @@ pub const usage_string2_after_command_name =
     \\                            Use the targets subcommand to see the list of all
     \\                            supported target architectures.
     // zig fmt: off
-++ if (build_options.zig_lib_dir_option)
+++ (if (build_options.zig_lib_dir_option)
+    \\
     \\  /:zig-lib-dir <path>      Path to Zig lib directory (to pull MinGW includes from
     \\                            if needed).
+    \\
 else
-    "" ++
+    "\n") ++
     // zig_fmt: on
     \\
     \\Subcommands:
