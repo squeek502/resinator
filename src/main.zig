@@ -797,7 +797,7 @@ fn getIncludePaths(
                     const detected_libc = std.zig.LibCDirs.detect(
                         arena,
                         io,
-                        zig_lib_dir_option.?,
+                        .{ .root_dir = .cwd(), .sub_path = zig_lib_dir_option.? },
                         &target,
                         is_native_abi,
                         true,
