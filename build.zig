@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub fn build(b: *std.Build) void {
+pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const mode = b.standardOptimizeOption(.{});
 
@@ -10,8 +10,6 @@ pub fn build(b: *std.Build) void {
     });
     const aro_module = aro.module("aro");
 
-    const compressed_mingw_includes = b.dependency("compressed_mingw_includes", .{});
-    const compressed_mingw_includes_module = compressed_mingw_includes.module("compressed_mingw_includes");
     const embed_mingw_includes = b.option(bool, "embed-mingw-includes", "Embed a set of compressed MinGW includes in the binary (default: true)") orelse true;
     const zig_lib_dir_option = b.option(bool, "zig-lib-dir-option", "Add a /:zig-lib-dir option as a way of specifying MinGW include paths (default: false)") orelse false;
 
@@ -40,6 +38,8 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addImport("aro", aro_module);
     exe.root_module.addOptions("build_options", build_options);
     if (embed_mingw_includes) {
+        const compressed_mingw_includes = b.dependency("compressed_mingw_includes", .{});
+        const compressed_mingw_includes_module = compressed_mingw_includes.module("compressed_mingw_includes");
         exe.root_module.addImport("compressed_mingw_includes", compressed_mingw_includes_module);
     }
     b.installArtifact(exe);
@@ -210,7 +210,11 @@ pub fn build(b: *std.Build) void {
                 }),
             });
             release_exe.root_module.addImport("aro", aro_module);
-            release_exe.root_module.addImport("compressed_mingw_includes", compressed_mingw_includes_module);
+            if (embed_mingw_includes) {
+                const compressed_mingw_includes = b.dependency("compressed_mingw_includes", .{});
+                const compressed_mingw_includes_module = compressed_mingw_includes.module("compressed_mingw_includes");
+                exe.root_module.addImport("compressed_mingw_includes", compressed_mingw_includes_module);
+            }
 
             const triple = release_target.zigTriple(b.allocator) catch unreachable;
             const install_dir = b.pathJoin(&.{ "release", triple });
