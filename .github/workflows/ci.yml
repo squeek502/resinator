@@ -18,7 +18,7 @@ jobs:
           submodules: true
       - uses: mlugg/setup-zig@v2
         with:
-          version: 0.17.0-dev.1257+67b05e521
+          version: 0.17.0-dev.2307+392b17125
       - uses: ilammy/msvc-dev-cmd@v1
         if: ${{ matrix.os == 'windows-latest' }}
         with:

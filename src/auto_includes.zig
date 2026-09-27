@@ -315,7 +315,7 @@ pub const LatestMsvcToolsDir = struct {
 
         lib_dir_buf.appendSliceAssumeCapacity(installation_path);
 
-        if (!std.fs.path.isSep(lib_dir_buf.getLast() orelse return error.PathNotFound)) {
+        if (!std.fs.path.isSep(lib_dir_buf.last() orelse return error.PathNotFound)) {
             lib_dir_buf.appendAssumeCapacity('\\');
         }
         const installation_path_with_trailing_sep_len = lib_dir_buf.items.len;
@@ -512,7 +512,7 @@ fn openKey(root_key: windows.HKEY, key_path: [:0]const u16, options: OpenKeyOpti
         } } },
         &key,
     );
-    switch (@as(windows.Win32Error, @enumFromInt(open_result))) {
+    switch (@as(windows.Win32Error, @fromBackingInt(@intCast(open_result)))) {
         .SUCCESS => return key,
         else => return error.KeyNotFound,
     }
@@ -535,7 +535,7 @@ fn getRegistryStringValue(
         @ptrCast(buf.ptr),
         &value_size,
     );
-    switch (@as(windows.Win32Error, @enumFromInt(query_result))) {
+    switch (@as(windows.Win32Error, @fromBackingInt(@intCast(query_result)))) {
         .SUCCESS => {
             switch (value_type) {
                 .SZ, .EXPAND_SZ => {},
